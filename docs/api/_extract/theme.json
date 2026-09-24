@@ -1,0 +1,319 @@
+{
+  "module": "theme",
+  "generatedFrom": [
+    "opsd/src/hub/theme.rs",
+    "opsd/src/hub/mod.rs",
+    "opsd/src/hub/auth.rs",
+    "opsd/src/hub/share.rs",
+    "opsd/src/protocol.rs"
+  ],
+  "prefix": "控制台接口（/api/v1/themes ...）整体挂在 /{安全入口}/ 之下，即实际路径为 /<安全入口>/api/v1/...；安全入口是路径第一段。认证：会话 Cookie opsd_session（HttpOnly; Secure; SameSite=Strict; Path=/<入口>/; Max-Age=28800），非 GET/HEAD 需带请求头 x-csrf-token 与会话 CSRF 一致，且 Origin 必须等于主控 origin，否则 403。未登录对接口返回 401 {\"error\":\"请先登录\"}。分享面接口（/share/{token}/...）位于安全入口之外，凭分享令牌（门禁按 sha256 摘要查找）放行；令牌无效时门禁直接丢弃、不产生响应。",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1/themes",
+      "handler": "theme::list_themes",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": false, "dto": null, "fields": []},
+      "responses": [
+        {
+          "status": 200,
+          "dto": "inline",
+          "fields": [
+            {"name": "themes", "type": "array<installed>", "optional": false, "nullable": false, "description": "已安装主题列表，按 short 字典序排列"},
+            {"name": "short", "type": "string", "optional": false, "nullable": false, "description": "主题唯一标识"},
+            {"name": "name", "type": "Localized", "optional": false, "nullable": false, "description": "多语言名称"},
+            {"name": "description", "type": "Localized", "optional": true, "nullable": true, "description": "多语言描述"},
+            {"name": "version", "type": "string", "optional": true, "nullable": true, "description": "版本号"},
+            {"name": "author", "type": "Localized", "optional": true, "nullable": true, "description": "多语言作者信息"},
+            {"name": "surfaces", "type": "array<string>", "optional": false, "nullable": false, "description": "主题覆盖的界面，枚举值：share / console"},
+            {"name": "has_assets", "type": "boolean", "optional": false, "nullable": false, "description": "包级主题是否已解压出资源目录"},
+            {"name": "installed_at", "type": "integer", "optional": false, "nullable": false, "description": "安装时间 Unix 秒"},
+            {"name": "digest", "type": "string", "optional": false, "nullable": false, "description": "内容摘要（sha256 hex）"},
+            {"name": "fields", "type": "array<field>", "optional": false, "nullable": false, "description": "配置项声明，取自 manifest.configuration.data（无则空数组）"}
+          ]
+        }
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录或会话过期"}
+      ],
+      "sideEffects": "只读，不写库、不产生任务。",
+      "evidence": "opsd/src/hub/theme.rs:460"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/themes/active",
+      "handler": "theme::read_active",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": false, "dto": null, "fields": []},
+      "responses": [
+        {
+          "status": 200,
+          "dto": "inline",
+          "fields": [
+            {"name": "console", "type": "object", "optional": false, "nullable": false, "description": "控制台界面当前启用主题（describe 输出）"},
+            {"name": "share", "type": "object", "optional": false, "nullable": false, "description": "分享页界面当前启用主题（describe 输出）"}
+          ]
+        }
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录或会话过期"}
+      ],
+      "sideEffects": "只读。",
+      "evidence": "opsd/src/hub/theme.rs:488"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/themes/active",
+      "handler": "theme::activate",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {
+        "required": true,
+        "dto": "Activate",
+        "fields": [
+          {"name": "surface", "type": "string", "optional": false, "nullable": false, "description": "界面，枚举值：console / share"},
+          {"name": "short", "type": "string", "optional": false, "nullable": false, "description": "要启用的主题 short；default 表示回到内置主题"},
+          {"name": "settings", "type": "object<string,value>", "optional": true, "nullable": false, "description": "主题配置键值对，键为配置项 key；省略则用声明默认值补齐"}
+        ]
+      },
+      "responses": [
+        {
+          "status": 200,
+          "dto": "inline",
+          "fields": [
+            {"name": "short", "type": "string", "optional": false, "nullable": false, "description": "已启用的主题 short（default 时同名字符串）"},
+            {"name": "settings", "type": "object<string,value>", "optional": true, "nullable": false, "description": "实际生效的设置（含默认值补齐）；回落到内置主题时响应为 {\"short\":\"default\"} 不含 settings"}
+          ]
+        }
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录或会话过期"},
+        {"status": 403, "body": "文本 '请求来源或 CSRF 校验失败'（非 JSON）", "condition": "Origin 不匹配或缺少/错误的 x-csrf-token"},
+        {"status": 400, "body": "{\"error\":\"未知界面：<x>\"}", "condition": "surface 不是 console 或 share"},
+        {"status": 400, "body": "{\"error\":\"主题未安装\"}", "condition": "short 不是 default 且未安装该主题"},
+        {"status": 400, "body": "{\"error\":\"该主题未声明支持这个界面\"}", "condition": "主题未声明覆盖目标界面"},
+        {"status": 400, "body": "{\"error\":\"主题设置体积过大\"}", "condition": "合并默认值后设置编码为 JSON 字符串的长度 > MAX_SETTINGS_BYTES（32 KiB）"}
+      ],
+      "sideEffects": "写库（settings 桶，theme_console / theme_share 记录当前 short，以及 theme_settings_<short> 记录设置）、删除启用记录回落到 default；打印日志。无幂等键要求，重复 PUT 会用新值覆盖。",
+      "evidence": "opsd/src/hub/theme.rs:570"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/themes/console",
+      "handler": "theme::install_console_theme",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {
+        "required": true,
+        "dto": "Manifest",
+        "fields": [
+          {"name": "short", "type": "string", "optional": false, "nullable": false, "description": "唯一标识：只含大小写字母/数字/_/-，长度 1-48，不得为 default"},
+          {"name": "name", "type": "Localized", "optional": false, "nullable": false, "description": "多语言名称"},
+          {"name": "description", "type": "Localized", "optional": true, "nullable": true, "description": "多语言描述"},
+          {"name": "version", "type": "string", "optional": true, "nullable": true, "description": "版本号"},
+          {"name": "author", "type": "Localized", "optional": true, "nullable": true, "description": "作者信息"},
+          {"name": "preview", "type": "string", "optional": true, "nullable": true, "description": "预览图"},
+          {"name": "surfaces", "type": "array<string>", "optional": false, "nullable": false, "description": "界面枚举，含 console"},
+          {"name": "tokens", "type": "Tokens", "optional": true, "nullable": true, "description": "令牌覆盖，field: light / dark（每项 map<string,string>）；声明了 console 则必须提供"},
+          {"name": "configuration", "type": "Configuration", "optional": true, "nullable": true, "description": "托管配置项声明；type 仅接受 managed"}
+        ]
+      },
+      "responses": [
+        {
+          "status": 200,
+          "dto": "inline",
+          "fields": [
+            {"name": "short", "type": "string", "optional": false, "nullable": false, "description": "已安装的主题 short"}
+          ]
+        }
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录或会话过期"},
+        {"status": 403, "body": "文本（plain，非 JSON）", "condition": "Origin / x-csrf-token 校验失败"},
+        {"status": 400, "body": "{\"error\":\"<校验消息>\"}", "condition": "清单校验失败（标识非法/缺 surfaces/控制台主题缺 tokens/令牌含非法字符/配置 type 非 managed/未知配置类型 等），或未声明支持控制台"}
+      ],
+      "sideEffects": "写库（themes 桶），digest 为主控对序列化 Manifest 计算的 sha256，不受信任调用方影响。short 相同时覆盖既有记录（无幂等键）。内容型为 JSON 请求体（不是 multipart）。整个 console 路由处于全局 1 MiB 默认体积限制之下。",
+      "evidence": "opsd/src/hub/theme.rs:521, 522"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/themes/share",
+      "handler": "theme::install_share_theme",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {
+        "required": true,
+        "dto": "bytes",
+        "fields": [
+          {"name": "(请求体)", "type": "binary", "optional": false, "nullable": false, "description": "主题包 zip 的原始字节，非 multipart。该路由在默认 1 MiB 限制之后合并并单独设置 DefaultBodyLimit=MAX_PACKAGE_BYTES（20 MiB）。包含 index.html 与根目录 theme.json"}
+        ]
+      },
+      "responses": [
+        {
+          "status": 200,
+          "dto": "inline",
+          "fields": [
+            {"name": "short", "type": "string", "optional": false, "nullable": false, "description": "安装的主题 short"},
+            {"name": "digest", "type": "string", "optional": false, "nullable": false, "description": "主控对原始字节流计算的 sha256"}
+          ]
+        }
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录或会话过期"},
+        {"status": 403, "body": "文本（plain，非 JSON）", "condition": "Origin / x-csrf-token 校验失败"},
+        {"status": 413, "body": "文本 \"Failed to buffer the request body\"（axum 默认，非本模块错误体）", "condition": "请求体超过 MAX_PACKAGE_BYTES（20 MiB，由 DefaultBodyLimit 在进入 handlebar 前拒绝）"},
+        {"status": 400, "body": "{\"error\":\"请求体为空\"}", "condition": "空请求体"},
+        {"status": 400, "body": "{\"error\":\"主题包不是有效的 zip\"}", "condition": "无法作为 zip 打开"},
+        {"status": 400, "body": "{\"error\":\"<校验/结构消息>\"}", "condition": "目录缺 theme.json / 解析失败 / 校验失败 / 未声明 Share / 根缺 index.html / 越界路径 / 解压后总大小超 MAX_EXTRACTED_BYTES（64 MiB）"}
+      ],
+      "sideEffects": "解压到临时目录再就位，写库（themes 桶）+ 落资源文件；short 冲突（已安装同 short）时覆盖旧记录并覆盖资源目录。无幂等键。/form：主控依赖控制体。",
+      "evidence": "opsd/src/hub/theme.rs:531, 532"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/themes/{short}",
+      "handler": "theme::remove_theme",
+      "auth": "session",
+      "pathParams": [
+        {"name": "short", "type": "string", "required": true, "description": "主题 short；default 保留不可删"}
+      ],
+      "queryParams": [],
+      "request": {"required": false, "dto": null, "fields": []},
+      "responses": [
+        {
+          "status": 200,
+          "dto": "inline",
+          "fields": [
+            {"name": "ok", "type": "boolean", "optional": false, "nullable": false, "description": "恒为 true"}
+          ]
+        }
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录或会话过期"},
+        {"status": 403, "body": "文本（plain，非 JSON）", "condition": "Origin / x-csrf-token 校验失败"},
+        {"status": 400, "body": "{\"error\":\"内置主题不可删除\"}", "condition": "short 为 default（忽略大小写）"},
+        {"status": 400, "body": "{\"error\":\"主题不存在\"}", "condition": "未安装该 short"}
+      ],
+      "sideEffects": "写库（themes 桶删除；删除 theme_settings_<short> 设置的记录；若被删的是启用中的主题则同时清除启用记录回落到 default），若 has_assets 删除资源目录。",
+      "evidence": "opsd/src/hub/theme.rs:546"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/theme/{*path}",
+      "handler": "theme::share_theme_asset",
+      "auth": "share-token",
+      "pathParams": [
+        {"name": "token", "type": "string", "required": true, "description": "分享令牌明文，门禁按摘要校验"},
+        {"name": "path", "type": "string", "required": true, "description": "主题资源相对路径（资源目录内），可含子路径"}
+      ],
+      "queryParams": [],
+      "request": {"required": false, "dto": null, "fields": []},
+      "responses": [
+        {
+          "status": 200,
+          "dto": "binary",
+          "description": "返回主题资源原始字节 + Content-Type（按扩展名推测：js/mjs→text/javascript，css→text/css，html→text/html; charset=utf-8，svg→image/svg+xml，json→application/json，png→image/png，jpg/jpeg→image/jpeg，webp→image/webp，woff2→font/woff2，其余→application/octet-stream），并带响应头 Content-Security-Policy=share_csp()（default-src 'none'; 只放行 self）
+\n"
+        }
+      ],
+      "errorBranches": [
+        {"status": 404, "body": "空正文", "condition": "令牌无效/已过期/被撤销（门禁直接丢弃）或 path 含 .. 或以 / 开头，或当前未启用包级分享主题（has_assets=false），或资源读取失败"},
+        {"status": 404, "body": "空正文", "condition": "启用的分享主题不属于有效的活动令牌时"}
+      ],
+      "sideEffects": "只读。路径必须落在该主题资源目录内。",
+      "evidence": "opsd/src/hub/theme.rs:636"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/data/theme",
+      "handler": "theme::share_theme",
+      "auth": "share-token",
+      "pathParams": [
+        {"name": "token", "type": "string", "required": true, "description": "分享令牌明文"}
+      ],
+      "queryParams": [],
+      "request": {"required": false, "dto": null, "fields": []},
+      "responses": [
+        {
+          "status": 200,
+          "dto": "inline",
+          "fields": [
+            {"name": "short", "type": "string", "optional": false, "nullable": false, "description": "启用的分享页主题 short；未启用时 'default'"},
+            {"name": "name", "type": "Localized", "optional": false, "nullable": false, "description": "主题名；default 时 {\"zh-CN\":\"内置主题\"}"},
+            {"name": "tokens", "type": "Tokens", "optional": true, "nullable": true, "description": "令牌值，未启用为 null"},
+            {"name": "settings", "type": "object<string,value>", "optional": false, "nullable": false, "description": "公开可读的主题设置（不得含密钥）"},
+            {"name": "fields", "type": "array<field>", "optional": false, "nullable": false, "description": "配置项声明（公开可读）"}
+          ]
+        }
+      ],
+      "errorBranches": [
+        {"status": 404, "body": "空正文", "condition": "令牌无效/过期/被撤销"}
+      ],
+      "sideEffects": "只读。公开可读，不得放入密钥。",
+      "evidence": "opsd/src/hub/theme.rs:630"
+    }
+  ],
+  "sharedTypes": [
+    {
+      "name": "Localized",
+      "fields": [
+        {"name": "(Plain)", "type": "string", "optional": false, "nullable": false, "description": "普通字符串形式"},
+        {"name": "(Map)", "type": "object<string,string>", "optional": false, "nullable": false, "description": "{\"zh-CN\": \"...\", \"en\": \"...\"} 形式；#[serde(untagged)] 二选一"}
+      ]
+    },
+    {
+      "name": "Surface",
+      "fields": [
+        {"name": "(enum)", "type": "string", "optional": false, "nullable": false, "description": "#[serde(rename_all=\"lowercase\")] 代码字面，线上枚举值：share / console"}
+      ]
+    },
+    {
+      "name": "Tokens",
+      "fields": [
+        {"name": "light", "type": "object<string,string>", "optional": true, "nullable": false, "description": "浅色令牌：CSS 自定义属性名 → 值；#[serde(default)]"},
+        {"name": "dark", "type": "object<string,string>", "optional": true, "nullable": false, "description": "深色令牌，同上"}
+      ]
+    },
+    {
+      "name": "Field",
+      "fields": [
+        {"name": "key", "type": "string", "optional": false, "nullable": false, "description": "配置项标识（1-48 字符，非空）"},
+        {"name": "name", "type": "Localized", "optional": false, "nullable": false, "description": "配置项显示名"},
+        {"name": "type", "type": "string", "optional": false, "nullable": false, "description": "枚举值 switch/select/number/string/text；#[serde(rename=\"type\")] 对应 Rust 字段 kind"},
+        {"name": "default", "type": "any", "optional": true, "nullable": false, "description": "默认值；#[serde(default)]，可为任意 JSON 值"},
+        {"name": "help", "type": "Localized", "optional": true, "nullable": true, "description": "帮助文本；#[serde(default)]"},
+        {"name": "options", "type": "string", "optional": true, "nullable": true, "description": "select 的选项（逗号分隔），仅 select 使用；#[serde(default)]"}
+      ]
+    },
+    {
+      "name": "Manifest",
+      "fields": [
+        {"name": "short", "type": "string", "optional": false, "nullable": false, "description": "唯一标识：大小写字母/数字/_/-，1-48 字符，不得为 default"},
+        {"name": "name", "type": "Localized", "optional": false, "nullable": false, "description": "多语言名称"},
+        {"name": "description", "type": "Localized", "optional": true, "nullable": true, "description": "#[serde(default)]"},
+        {"name": "version", "type": "string", "optional": true, "nullable": true, "description": ""},
+        {"name": "author", "type": "Localized", "optional": true, "nullable": true, "description": ""},
+        {"name": "preview", "type": "string", "optional": true, "nullable": true, "description": ""},
+        {"name": "surfaces", "type": "array<Surface>", "optional": false, "nullable": false, "description": "必须非空"},
+        {"name": "tokens", "type": "Tokens", "optional": true, "nullable": true, "description": "仅控制台使用；控制台主题必须提供"},
+        {"name": "configuration", "type": "Configuration", "optional": true, "nullable": true, "description": "仅控制台；type 仅接受 managed"}
+      ]
+    },
+    {
+      "name": "Configuration",
+      "fields": [
+        {"name": "type", "type": "string", "optional": true, "nullable": false, "description": "默认 'managed'，首版只接受 managed。对应 Rust 字段 type（原生关键字 r#type）"},
+        {"name": "data", "type": "array<Field>", "optional": true, "nullable": false, "description": "#{serde(default)] 配置项声明列表"}
+      ]
+    }
+  ],
+  "notes": "1) 体积上限（源码常量）：MAX_PACKAGE_BYTES=20 MiB（主题包上传上限），MAX_EXTRACTED_BYTES=64 MiB（解压后总量，防解压炸弹），MAX_SETTINGS_BYTES=32768（配置值 JSON 编码字节数上限）。\n2) POST /api/v1/themes/share 的超限路径有两个需要区分：路由层 DefaultBodyLimit=max 609507432320 实际上触发点在此，请求体大于 20 MiB 时被 DefaultBodyLimit 拒绝，返回 413、正文为 axum 默认文本 \"Failed to buffer the request body\"（非本模块 JSON 错误体）；handler 内另有一条 anyhow ensure(package.len()<=MAX_PACKAGE_BYTES) 会把这种情况转成 400，但正常该分支几乎不会遇到。文档渲染时以 413 为准。\n3) 上传 content-type：控制台主题 POST /console 是 JSON；分享页主题 POST /share 是原始字节（zip），交接 curl 直接发送，不做 multipart 边界，也不解析 Content-Type，直接读 Bytes。\n4) {short} 取值与冲突：仅 ASCII 大小写字母/数字/下划线/连字符，长度 1-48 字符，且不可为 default（大小写不敏感，DEFAULT 保留给内置主题）；同一 short 重复安装会覆盖旧记录与资源目录（无独立幂等键）；删除激活中的主题会自动回落到内置主题。\n5) 未启用包级分享主题时 GET /share/{token}/data/theme 仍返回 {short:'default', name:{'zh-CN':'内置主题'}, tokens:null, settings:{}, fields:[]}（不报错）；而 GET /share/{token}/theme/{*path} 直接返回 404。\n6) 认证横切（theme.rs 与共享 auth.rs）：要求会话 Cookie opsd_session + 非 GET/HEAD 的 x-csrf-token 与 Origin 校验；未登录 401 {\"error\":\"请先登录\"}，Origin/CSRF 失败 403 纯文本（非本、模块 JSON）。分享面/i18n：恒在安全入口之外，凭分享令牌（门禁按 sha256 摘要查找，即 auth 的 entrance）放行，令牌无效时门禁直接丢弃不产生响应。\n7) sha256 digest：见 protocol.rs 的 digest()（hex 编码）。\n8) 本模块 endpoint 不涉 agent-mtls。"
+}

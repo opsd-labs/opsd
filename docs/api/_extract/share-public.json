@@ -1,0 +1,311 @@
+{
+  "module": "share-public",
+  "generatedFrom": [
+    "src/hub/share.rs",
+    "src/entrance.rs",
+    "src/hub/mod.rs",
+    "src/hub/metrics.rs",
+    "src/hub/theme.rs"
+  ],
+  "prefix": "分享公开面 /share/{token}/...。整体位于安全入口之外：/api/v1 下的控制台路径统一挂在 /{安全入口}/ 之下，而分享面凭分享令牌直接放行，不经过安全入口（见 src/hub/mod.rs:498-502、src/entrance.rs:213-223）。令牌有效性由最外层门禁（Gate）按摘要（sha256）常量时间校验，无效令牌与错误入口一样被直接丢弃连接、不产生任何 HTTP 响应（src/entrance.rs:224-237）。公开面页面自身接口（/share/{token}/data/* 与页面/资源）仅凭分享令牌授权，不需要 Cookie 或 API Key；机器接口（/share/{token}/api/v1/public/*）需要分享令牌（放行）+ Authorization: Bearer <API Key> 双重校验，且两者节点范围取交集（src/hub/share.rs:61-100）。",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/share/{token}/",
+      "handler": "share::share_index_page",
+      "auth": "share-token",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌明文。无效令牌被门禁直接丢弃连接，不会到达本处理函数。" }
+      ],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "stream", "fields": [], "description": "text/html; charset=utf-8 的分享页 HTML。若启用了包级分享主题，则返回主题入口 HTML 并带独立 CSP 头（src/hub/theme.rs:677-695）；否则回落内置 share.html。" }
+      ],
+      "errorBranches": [
+        { "status": 404, "body": "纯文本 \"分享页尚未构建\"（无 JSON error 包装）", "condition": "读取 s.web/share.html 失败（内置页未构建且未启用主题）" },
+        { "status": 0, "body": "无响应（连接被直接丢弃）", "condition": "令牌无效/分享被全局关闭之外的情况由门禁处理；本函数本身不检查分享开关" }
+      ],
+      "sideEffects": "只读。不写库、不广播、不产生任务。返回 HTML（主题或内置页）。无缓存响应头（源码未设置 Cache-Control / ETag）。",
+      "evidence": "src/hub/share.rs:472-484"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/assets/{*path}",
+      "handler": "share::share_asset",
+      "auth": "share-token",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌。实际不会被使用（路径提取被忽略），门禁已预先校验。" },
+        { "name": "path", "type": "string", "description": "构建产物 assets 目录内的相对路径（可含子目录），文件读取前会做安全校验。" }
+      ],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "stream", "fields": [], "description": "文件二进制，Content-Type 依扩展名：js→text/javascript、css→text/css、svg→image/svg+xml、json→application/json、woff2→font/woff2、其他→application/octet-stream（src/hub/share.rs:499-507）。" }
+      ],
+      "errorBranches": [
+        { "status": 404, "body": "空正文（无 JSON、无文本）", "condition": "path 包含 \"..\" 或以 / 开头（防目录穿越，src/hub/share.rs:492-494）；或目标文件读取失败（src/hub/share.rs:496-498）" }
+      ],
+      "sideEffects": "只读磁盘文件。无缓存响应头。",
+      "evidence": "src/hub/share.rs:488-508"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/data/summary",
+      "handler": "share::data_summary",
+      "auth": "share-token",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌明文。" }
+      ],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "site", "type": "SitePublic", "optional": false, "nullable": false, "description": "站点公开属性。读取失败时回落到 SitePublic 默认值。" },
+          { "name": "node_count", "type": "integer", "optional": false, "nullable": false, "description": "令牌可见（未撤销、未隐藏、且在令牌节点范围内）的节点数。" },
+          { "name": "online_count", "type": "integer", "optional": false, "nullable": false, "description": "其中在线的节点数（存在活跃通道连接）。" },
+          { "name": "generated_at", "type": "integer", "optional": false, "nullable": false, "description": "响应生成时的 Unix 秒时间戳。" }
+        ] }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"中文消息\"}", "condition": "分享页已关闭（ensure_enabled，src/hub/share.rs:133-140）；错误正文由 ApiError 统一包装（src/hub/mod.rs:560-565）" },
+        { "status": 404, "body": "{\"error\":\"分享链接无效或已失效\"}", "condition": "令牌不存在于分享索引（token_of，src/hub/share.rs:122-131）" },
+        { "status": 500, "body": "{\"error\":\"分享索引不可用\"}", "condition": "索引读写锁中毒（src/hub/share.rs:124-126）" }
+      ],
+      "sideEffects": "只读。不写库、不广播。",
+      "evidence": "src/hub/share.rs:143-161"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/data/nodes",
+      "handler": "share::data_nodes",
+      "auth": "share-token",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌明文。" }
+      ],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "nodes", "type": "array<PublicNode>", "optional": false, "nullable": false, "description": "可见节点列表，按权重降序、再按名称升序（src/hub/share.rs:118）。" }
+        ] }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"分享页已关闭\"}", "condition": "分享功能关闭" },
+        { "status": 404, "body": "{\"error\":\"分享链接无效或已失效\"}", "condition": "令牌无效" },
+        { "status": 500, "body": "{\"error\":\"分享索引不可用\"}", "condition": "索引锁中毒" }
+      ],
+      "sideEffects": "只读。",
+      "evidence": "src/hub/share.rs:163-171"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/data/records",
+      "handler": "share::data_records",
+      "auth": "share-token",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌明文。" }
+      ],
+      "queryParams": [
+        { "name": "node", "type": "string", "required": true, "default": null, "description": "节点编号。" },
+        { "name": "from", "type": "integer", "required": true, "default": null, "description": "起始 Unix 秒。" },
+        { "name": "to", "type": "integer", "required": true, "default": null, "description": "结束 Unix 秒。" },
+        { "name": "step", "type": "integer", "required": false, "default": 300, "description": "步长（秒），default_step=300，运行时 clamp 到 [60,86400]。" }
+      ],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "node", "type": "string", "optional": false, "nullable": false, "description": "回显请求的节点编号。" },
+          { "name": "tier", "type": "string", "optional": false, "nullable": false, "description": "选用的层级：raw(step<300)、m5(step<3600)、h1(其余)。" },
+          { "name": "step", "type": "integer", "optional": false, "nullable": false, "description": "实际使用的步长（clamp 后）。" },
+          { "name": "points", "type": "array<Point>", "optional": false, "nullable": false, "description": "降采样后的曲线点。缺失区间自然断开，不插值不补零。" }
+        ] }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"...\"}", "condition": "分享页已关闭；或节点不在令牌范围（\"该节点不在分享范围内\"）；或 to<=from（\"结束时间必须晚于开始时间\"）；或 (to-from)/step>MAX_POINTS(2000)（\"区间与步长组合返回点数过多\"）。全部 check()→bad()→400（src/hub/share.rs:186-199, 571-577）" },
+        { "status": 404, "body": "{\"error\":\"分享链接无效或已失效\"}", "condition": "令牌无效" },
+        { "status": 500, "body": "{\"error\":\"分享索引不可用\"}", "condition": "索引锁中毒" }
+      ],
+      "sideEffects": "只读，查指标历史。不写库、不广播。",
+      "evidence": "src/hub/share.rs:186-212"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/api/v1/public/summary",
+      "handler": "share::public_summary",
+      "auth": "share-token + agent-mtls",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌明文（限定可见节点范围）。" }
+      ],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "node_count", "type": "integer", "optional": false, "nullable": false, "description": "令牌范围与 API Key 节点范围交集后可见节点数。" },
+          { "name": "online_count", "type": "integer", "optional": false, "nullable": false, "description": "其中在线数。" },
+          { "name": "generated_at", "type": "integer", "optional": false, "nullable": false, "description": "Unix 秒。" }
+        ] }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"分享页已关闭\"}", "condition": "分享页已关闭" },
+        { "status": 401, "body": "{\"error\":\"缺少 API Key\" 或 \"API Key 无效\"}", "condition": "缺少 Authorization: Bearer 头或密钥摘要未匹配/已撤销（src/hub/share.rs:66-75）" },
+        { "status": 404, "body": "{\"error\":\"分享链接无效或已失效\"}", "condition": "令牌无效" },
+        { "status": 500, "body": "{\"error\":\"分享索引不可用\"}", "condition": "索引锁中毒" }
+      ],
+      "sideEffects": "读库（读取 API Key、节点）；可能写回 key.last_used 到 api_keys 桶（仅当距上次更新超 60 秒时，src/hub/share.rs:76-84）。不广播。",
+      "evidence": "src/hub/share.rs:215-233"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/api/v1/public/nodes",
+      "handler": "share::public_nodes",
+      "auth": "share-token + agent-mtls",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌明文。" }
+      ],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "nodes", "type": "array<PublicNode>", "optional": false, "nullable": false, "description": "交集后可访问节点详情列表。" }
+        ] }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"分享页已关闭\"}", "condition": "分享关闭" },
+        { "status": 401, "body": "{\"error\":\"缺少 API Key\" 或 \"API Key 无效\"}", "condition": "无/无效 Bearer 密钥" },
+        { "status": 404, "body": "{\"error\":\"分享链接无效或已失效\"}", "condition": "令牌无效" },
+        { "status": 500, "body": "{\"error\":\"分享索引不可用\"}", "condition": "索引锁中毒" }
+      ],
+      "sideEffects": "只读；可能写回 API Key lastUsed（同 author关键）。",
+      "evidence": "src/hub/share.rs:235-249"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/api/v1/public/recent/{id}",
+      "handler": "share::public_recent",
+      "auth": "share-token + agent-mtls",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌明文。" },
+        { "name": "id", "type": "string", "description": "节点编号。" }
+      ],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "node", "type": "PublicNode", "optional": false, "nullable": false, "description": "该节点最近一次采样折算的公开结构。" }
+        ] }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"该节点不在访问范围内\" 或 \"节点不可见\"}", "condition": "节点不在 API Key 交集范围，或令牌下该节点不可见（src/hub/share.rs:260-265）" },
+        { "status": 401, "body": "{\"error\":\"缺少 API Key\" 或 \"API Key 无效\"}", "condition": "无/无效 Bearer 密钥" },
+        { "status": 404, "body": "{\"error\":\"分享链接无效或已失效\"}", "condition": "令牌无效" },
+        { "status": 500, "body": "{\"error\":\"分享索引不可用\"}", "condition": "索引锁中毒" }
+      ],
+      "sideEffects": "只读；可能写回 API key lastUsed。",
+      "evidence": "src/hub/share.rs:252-267"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/api/v1/public/records",
+      "handler": "share::public_records",
+      "auth": "share-token + agent-mtls",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌明文。" }
+      ],
+      "queryParams": [
+        { "name": "node", "type": "string", "required": true, "default": null, "description": "节点编号。" },
+        { "name": "from", "type": "integer", "required": true, "default": null, "description": "起始 Unix 秒。" },
+        { "name": "to", "type": "integer", "required": true, "default": null, "description": "结束 Unix 秒。" },
+        { "name": "step", "type": "integer", "required": false, "default": 300, "description": "步长，clamp [60,86400]。" }
+      ],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "node", "type": "string", "optional": false, "nullable": false, "description": "节点编号。" },
+          { "name": "tier", "type": "string", "optional": false, "nullable": false, "description": "层级：raw / m5 / h1。" },
+          { "name": "step", "type": "integer", "optional": false, "nullable": false, "description": "实际步长。" },
+          { "name": "points", "type": "array<Point>", "optional": false, "nullable": false, "description": "降采样后的曲线点。" }
+        ] }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"...\"}", "condition": "分享关闭；或节点不在 API Key 交集范围（\"该节点不在访问范围内\"）；或 data_records 的 to<=from / 点数过多 校验" },
+        { "status": 401, "body": "{\"error\":\"缺少 API Key\" 或 \"API Key 无效\"}", "condition": "无/无效 Bearer 密钥" },
+        { "status": 404, "body": "{\"error\":\"分享链接无效或已失效\"}", "condition": "令牌无效" },
+        { "status": 500, "body": "{\"error\":\"分享索引不可用\"}", "condition": "索引锁中毒" }
+      ],
+      "sideEffects": "只读，复用 data_records 逻辑（src/hub/share.rs:283）。可能写回 key lastUsed。",
+      "evidence": "src/hub/share.rs:269-284"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{token}/api/v1/public/metrics",
+      "handler": "share::public_metrics",
+      "auth": "share-token + agent-mtls",
+      "pathParams": [
+        { "name": "token", "type": "string", "description": "分享令牌明文。" }
+      ],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "stream", "fields": [], "description": "Prometheus 文本格式平文，Content-Type: text/plain; version=0.0.4; charset=utf-8（src/hub/share.rs:300-307）。标签 node=\"<id>\",display_name=\"<name>\"，不输出地址。缺失的采样不输出样本行。" }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"分享页已关闭\"}", "condition": "分享关闭" },
+        { "status": 401, "body": "{\"error\":\"缺少 API Key\" 或 \"API Key 无效\"}", "condition": "无/无效 Bearer 密钥" },
+        { "status": 404, "body": "{\"error\":\"分享链接无效或已失效\"}", "condition": "令牌无效" },
+        { "status": 500, "body": "{\"error\":\"分享索引不可用\"}", "condition": "索引锁中毒" }
+      ],
+      "sideEffects": "只读；可能写回 key lastUsed。",
+      "evidence": "src/hub/share.rs:287-308"
+    }
+  ],
+  "sharedTypes": [
+    {
+      "name": "SitePublic",
+      "fields": [
+        { "name": "name", "type": "string", "optional": false, "nullable": false, "description": "站点名称。未配置时默认 \"opsd\"。" },
+        { "name": "description", "type": "string", "optional": false, "nullable": false, "description": "站点描述，默认 \"节点状态\"。" },
+        { "name": "footer", "type": "string", "optional": false, "nullable": false, "description": "页脚自定义文字（不允许 HTML），默认空。" }
+      ]
+    },
+    {
+      "name": "PublicNode",
+      "fields": [
+        { "name": "id", "type": "string", "optional": false, "nullable": false, "description": "节点编号。" },
+        { "name": "name", "type": "string", "optional": false, "nullable": false, "description": "节点显示名。" },
+        { "name": "online", "type": "boolean", "optional": false, "nullable": false, "description": "是否在线（存在通道连接）。" },
+        { "name": "region", "type": "string", "optional": true, "nullable": true, "description": "区域，可缺省可 null。" },
+        { "name": "group", "type": "string", "optional": true, "nullable": true, "description": "分组，可缺省可 null。" },
+        { "name": "tags", "type": "array<string>", "optional": false, "nullable": false, "description": "标签列表。" },
+        { "name": "weight", "type": "integer", "optional": false, "nullable": false, "description": "排序权重。" },
+        { "name": "remark", "type": "string", "optional": true, "nullable": true, "description": "公开备注（内部字段 public_remark 的公开别名），可缺省可 null。" },
+        { "name": "cpu_usage", "type": "number", "optional": true, "nullable": true, "description": "CPU 使用百分比，无采样为 null（不是 0）。" },
+        { "name": "memory_used", "type": "integer", "optional": true, "nullable": true, "description": "已用内存字节，无采样为 null。" },
+        { "name": "memory_total", "type": "integer", "optional": true, "nullable": true, "description": "内存总量字节，无采样为 null。" },
+        { "name": "disk_used", "type": "integer", "optional": true, "nullable": true, "description": "磁盘总已用字节（累加各挂载点），无采样为 null。" },
+        { "name": "disk_total", "type": "integer", "optional": true, "nullable": true, "description": "磁盘总容量字节，无采样为 null。" },
+        { "name": "load1", "type": "number", "optional": true, "nullable": true, "description": "1 分钟平均负载，无采样为 null。" },
+        { "name": "net_rx_bytes_per_second", "type": "integer", "optional": true, "nullable": true, "description": "入站速率，各网卡求和后取整，无采样为 null。" },
+        { "name": "net_tx_bytes_per_second", "type": "integer", "optional": true, "nullable": true, "description": "出站速率，各网卡求和后取整，无采样为 null。" },
+        { "name": "uptime", "type": "integer", "optional": true, "nullable": true, "description": "运行时长秒，无采样为 null。" },
+        { "name": "metrics_at", "type": "integer", "optional": true, "nullable": true, "description": "最近一次成功采样的接收时刻，无采样为 null。" }
+      ]
+    },
+    {
+      "name": "Point",
+      "fields": [
+        { "name": "at", "type": "integer", "optional": false, "nullable": false, "description": "时间戳秒。" },
+        { "name": "cpu_usage", "type": "number", "optional": false, "nullable": false, "description": "CPU 使用百分比。" },
+        { "name": "memory_used", "type": "integer", "optional": false, "nullable": false, "description": "已用内存字节。" },
+        { "name": "memory_total", "type": "integer", "optional": false, "nullable": false, "description": "内存总量字节。" },
+        { "name": "swap_used", "type": "integer", "optional": false, "nullable": false, "description": "已用交换字节。" },
+        { "name": "load1", "type": "number", "optional": false, "nullable": false, "description": "1 分钟平均负载。" },
+        { "name": "disk_read_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "磁盘读速率。" },
+        { "name": "disk_write_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "磁盘写速率。" },
+        { "name": "net_rx_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "入站速率。" },
+        { "name": "net_tx_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "出站速率。" }
+      ]
+    }
+  ],
+  "notes": "1) 认证：分享面完全不使用控制台会话 Cookie/CSRF/Origin 校验——那些只针对 /{安全入口}/ 下的控制台界面。分享面在入口之外，靠令牌放行。页面接口（/data/*）仅凭令牌；机器接口（/api/v1/public/*）额外要求 Authorization: Bearer <API Key>（authorize_key，src/hub/share.rs:50-100），两者取节点范围交集。/agent、/renew、/verify 属于 Agent mTLS 面，不在此模块。2) 令牌无效行为：门禁对无效令牌与错误入口完全一致——直接丢弃连接不产生任何 HTTP 响应（src/hub/mod.rs:527-535、src/entrance.rs:212-237），因此令牌无效时既非 404 也非 400。若令牌有效但不在分享索引（token_of 找不到），才返回 404 正文 {\"error\":\"分享链接无效或已失效\"}——但令牌本来就通过索引校验才放行，故正常情况下此处不触发。3) 公开白名单（PublicNode）：刻意不包括 public_addresses、overlay_address、ssh_port、capabilities、inventory、hidden、revoked、last_seen、address_version 及任何凭据/token，见 src/hub/share.rs:622-645 与测试 src/hub/share.rs:827-850。4) 缓存响应头：源码中 share 模块所有响应均未设置 Cache-Control / ETag / Last-Modified / Expires，分享数据接口每次都是实时查询数据库与内存状态，不应被代理缓存。确认无任何缓存头。5) data_records 与 public_records 响应体一致，public_records 先做双重鉴权再复用 data_records（src/hub/share.rs:283）。6) step 默认 300，经 clamp [60,86400]；层级映射 tier_for_step：step<300→raw、<3600→m5、else→h1；点数上限 MAX_POINTS=2000。7) /share/{token}（无结尾斜杠）被 301 永久重定向到 /share/{token}/（src/hub/mod.rs:460-465），此处作为行为记录。8) 公开 metrics 的 Content-Type 严格为 'text/plain; version=0.0.4; charset=utf-8'。9) 门禁对分享入口同样施加按来源失败限速（src/entrance.rs:104-124），无效令牌会被限速后拖慢并仍无响应。10) 数据面与机器面都先执行 ensure_enabled（src/hub/share.rs:133-140），分享整体关闭时返回 400（web check→bad）。"
+}

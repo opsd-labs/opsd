@@ -1,0 +1,168 @@
+{
+  "module": "auth-audit",
+  "generatedFrom": [
+    "opsd/src/hub/auth.rs",
+    "opsd/src/hub/audit.rs",
+    "opsd/src/hub/mod.rs",
+    "opsd/src/protocol.rs",
+    "opsd/src/entrance.rs"
+  ],
+  "prefix": "所有 /api/v1 路径都实际挂在 /{安全入口}/ 之下（入口是路径第一段，长度为 16 的随机字符，见 hub/mod.rs 的 nest(&prefix, console) 与 gate 按首段校验）。因此登录/登出/me/审计的真实路径是 /{安全入口}/api/v1/...。认证：会话 Cookie（opsd_session）+ CSRF 头（x-csrf-token，非 GET/HEAD 必需）+ Origin 校验（非 GET/HEAD 必需）。/api/v1/auth/login 位于 public 路由（不经 auth::require 中间件，但仍在入口前缀下，且自身做 Origin 校验与登录限流）；其余三个（logout/me/audit）位于 private 路由，套了 auth::require 中间件。分享面 /share/{token}/... 与代理端 Agent mTLS 面（/agent、/renew、/verify）位于入口之外，不含在本模块端点内。",
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "handler": "auth::login",
+      "auth": "none",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {
+        "required": true,
+        "dto": "Login",
+        "fields": [
+          { "name": "password", "type": "string", "optional": false, "nullable": false, "description": "管理员密码，与初始化时写入的 Argon2 哈希比对" }
+        ]
+      },
+      "responses": [
+        {
+          "status": 200,
+          "dto": "Session",
+          "fields": [
+            { "name": "csrf", "type": "string", "optional": false, "nullable": false, "description": "本次会话的 CSRF 令牌，后续带副作用请求需回传 x-csrf-token 头" },
+            { "name": "expires", "type": "integer", "optional": false, "nullable": false, "description": "会话过期时间（Unix 秒时间戳），= now()+28800" }
+          ]
+        }
+      ],
+      "errorBranches": [
+        { "status": 403, "body": "{\"error\":\"请求来源不匹配\"}", "condition": "请求的 origin 头不等于配置的 s.origin（OPSD_ORIGIN）时先于一切校验返回" },
+        { "status": 429, "body": "{\"error\":\"请稍后重试\"}", "condition": "login_limits 中 300 秒窗口内的独立来源 IP 数量超过 4096 时返回" },
+        { "status": 429, "body": "{\"error\":\"登录尝试过于频繁\"}", "condition": "同一来源 IP 在 300 秒窗口内尝试次数 >10 时返回" },
+        { "status": 400, "body": "{\"error\":\"未初始化\"}", "condition": "控制库中 auth/admin 哈希不存在" },
+        { "status": 401, "body": "{\"error\":\"密码错误\"}", "condition": "Argon2 校验失败" },
+        { "status": 400, "body": "{\"error\":\"密码验证失败\"}", "condition": "spawn_blocking 校验线程崩溃（极少数）" }
+      ],
+      "sideEffects": "写库：在 sessions 桶以 digest(key) 为键存入 Session{csrf,expires}（key 为 64 字符随机 hex）。下发 set-cookie 响应头设置 opsd_session。每成功/失败尝试都会累加来源 IP 的登录计数（无成功重置逻辑，300 秒窗口）。",
+      "evidence": "hub/auth.rs:64-123, hub/mod.rs:428"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "handler": "auth::logout",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        {
+          "status": 200,
+          "dto": "inline",
+          "fields": [
+            { "name": "ok", "type": "boolean", "optional": false, "nullable": false, "description": "恒为 true" }
+          ]
+        }
+      ],
+      "errorBranches": [
+        { "status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "auth::require 中间件未找到有效会话（见 notes）" },
+        { "status": 403, "body": "请求来源或 CSRF 校验失败（纯文本，非 JSON）", "condition": "非 GET/HEAD 请求中 origin 头不匹配或 x-csrf-token 头与 session.csrf 不符" }
+      ],
+      "sideEffects": "写库：若请求带 opsd_session Cookie，删除 sessions 桶中对应键（digest(key)）。下发 set-cookie 把 opsd_session cookie 置空（Max-Age=0）做清除。",
+      "evidence": "hub/auth.rs:127-139, hub/mod.rs:350"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/me",
+      "handler": "auth::me",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        {
+          "status": 200,
+          "dto": "Session",
+          "fields": [
+            { "name": "csrf", "type": "string", "optional": false, "nullable": false, "description": "当前会话的 CSRF 令牌" },
+            { "name": "expires", "type": "integer", "optional": false, "nullable": false, "description": "会话过期时间（Unix 秒）" }
+          ]
+        }
+      ],
+      "errorBranches": [
+        { "status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "auth::require 中间件未发现会话" }
+      ],
+      "sideEffects": "无写库。GET 走 require 时仅校验会话存在，不做 CSRF/Origin 校验。",
+      "evidence": "hub/auth.rs:124-126, hub/mod.rs:349"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit",
+      "handler": "audit::query",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [
+        { "name": "from", "type": "integer", "required": false, "default": null, "description": "时间下界（Unix 秒），at >= from" },
+        { "name": "to", "type": "integer", "required": false, "default": null, "description": "时间上界（Unix 秒），at <= to" },
+        { "name": "node", "type": "string", "required": false, "default": null, "description": "按 node_id 精确筛选" },
+        { "name": "category", "type": "string", "required": false, "default": null, "description": "按 category 精确筛选" },
+        { "name": "result", "type": "string", "required": false, "default": null, "description": "按 result 精确筛选" },
+        { "name": "limit", "type": "integer", "required": false, "default": 200, "description": "返回条数上限，默认 200，硬上限 1000（>1000 截断为 1000）" }
+      ],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        {
+          "status": 200,
+          "dto": "query-result",
+          "fields": [
+            { "name": "records", "type": "array<AuditRecord>", "optional": false, "nullable": false, "description": "筛选并按 at 倒序后的审计记录数组，每个元素对象见 sharedTypes 的 AuditRecord" },
+            { "name": "retention_seconds", "type": "integer", "optional": false, "nullable": false, "description": "审计保留时长，恒为 31536000（365 天）" }
+          ]
+        }
+      ],
+      "errorBranches": [
+        { "status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "auth::require 中间件未发现会话" },
+        { "status": 400, "body": "{\"error\":\"<具体消息>\"}", "condition": "查询参数解析失败（axum Query 反序列化错误，经 ApiError From<anyhow> 转 400）" }
+      ],
+      "sideEffects": "只读，不产生任务、不写库、不广播事件。GET 不需 CSRF 头。",
+      "evidence": "hub/audit.rs:101-110, hub/mod.rs:391"
+    }
+  ],
+  "sharedTypes": [
+    {
+      "name": "Session",
+      "fields": [
+        { "name": "csrf", "type": "string", "optional": false, "nullable": false, "description": "会话 CSRF 令牌（uuid），写回 x-csrf-token 头" },
+        { "name": "expires", "type": "integer", "optional": false, "nullable": false, "description": "会话过期 Unix 秒时间戳" }
+      ]
+    },
+    {
+      "name": "AuditEntry",
+      "fields": [
+        { "name": "actor", "type": "string", "optional": false, "nullable": false, "description": "操作者标识。首版只有本地管理员，通常为固定标识（如“管理员”）" },
+        { "name": "node_id", "type": "string", "optional": false, "nullable": false, "description": "被操作节点编号" },
+        { "name": "category", "type": "string", "optional": false, "nullable": false, "description": "动作类别：会话/文件/数据库/存储/防火墙/容器/分享页/主题等" },
+        { "name": "target", "type": "string", "optional": false, "nullable": false, "description": "被操作对象描述，例如“读取 /etc/hosts”" },
+        { "name": "result", "type": "string", "optional": false, "nullable": false, "description": "结果语义：已开始/已结束/成功/失败（来源不同，可能是其他词，见 notes）" },
+        { "name": "detail", "type": "string", "optional": false, "nullable": false, "description": "补充说明；不得写入凭据、环境变量、SQL 正文或文件内容" },
+        { "name": "source", "type": "string", "optional": false, "nullable": false, "description": "来源 IP（peer.address.ip() 的字符串）" },
+        { "name": "bytes", "type": "integer", "optional": false, "nullable": false, "description": "涉及字节数" },
+        { "name": "duration", "type": "integer", "optional": false, "nullable": false, "description": "耗时（秒）" }
+      ]
+    },
+    {
+      "name": "AuditRecord",
+      "fields": [
+        { "name": "actor", "type": "string", "optional": false, "nullable": false, "description": "由 AuditEntry #[serde(flatten)] 展开，见 AuditEntry" },
+        { "name": "node_id", "type": "string", "optional": false, "nullable": false, "description": "见 AuditEntry" },
+        { "name": "category", "type": "string", "optional": false, "nullable": false, "description": "见 AuditEntry" },
+        { "name": "target", "type": "string", "optional": false, "nullable": false, "description": "见 AuditEntry" },
+        { "name": "result", "type": "string", "optional": false, "nullable": false, "description": "见 AuditEntry" },
+        { "name": "detail", "type": "string", "optional": false, "nullable": false, "description": "见 AuditEntry" },
+        { "name": "source", "type": "string", "optional": false, "nullable": false, "description": "见 AuditEntry" },
+        { "name": "bytes", "type": "integer", "optional": false, "nullable": false, "description": "见 AuditEntry" },
+        { "name": "duration", "type": "integer", "optional": false, "nullable": false, "description": "见 AuditEntry" },
+        { "name": "at", "type": "integer", "optional": false, "nullable": false, "description": "落库时间（Unix 秒），排序与时间筛选的基准（filter 用 record.at）" },
+        { "name": "id", "type": "string", "optional": false, "nullable": false, "description": "审计记录 id（uuid 字符串）" }
+      ]
+    }
+  ],
+  "notes": "【横切约定】（同为本契约最易出错处，逐条确认）\n1) 会话 Cookie：名字 opsd_session；属性 HttpOnly; Secure; SameSite=Strict; Path=/{安全入口}/; Max-Age=28800（8 小时）。Path 限定在 安全入口 之下，浏览器不会把它发给分享面——这是“分享页拿不到控制台凭据”的落点（auth.rs:112-118 注释）。登出时 set-cookie opsd_session=; Max-Age=0 清除。会话在服务端 sessions 桶以 digest(key) 为键存储 {...expires}，expires > now() 才有效。\n2) CSRF 头：名字为 x-csrf-token，需等于 Session.csrf。校验失败返回 403，正文是**纯文本**“请求来源或 CSRF 校验失败”（非 JSON），见 auth.rs:45-55。\n3) Origin 校验：仅对非 GET/HEAD（含 POST）请求生效；要求 origin 头严格等于 State.origin（来自 OPSD_ORIGIN，CLI 默认 https://localhost:65535）。失配返回 403 纯文本，见 auth.rs:48,70。login 端点自身额外先做一次 Origin 校验，失配返回 403 {{error:\"请求来源不匹配\"}}（auth.rs:70-72）。注意 GET 请求**不做** Origin/CSRF 校验。\n4) auth::require 对未登录返回 401 {\"error\":\"请先登录\"}（auth.rs:37-44）。\n5) 登录限流（login_limits）：300 秒窗口内去重来源 IP 总数 >4096 → 429 {\"error\":\"请稍后重试\"}；单 IP 次数 >10 → 429 {\"error\":\"登录尝试过于频繁\"}。计数按 peer.address.ip() 聚合（auth.rs:73-89）。\n6) 脱敏：a) 审计模块**本身刻意只记元数据**（actor/node_id/category/target/result/detail/source/bytes/duration），detail 注释明确不得写入凭据、环境变量、SQL 正文、文件内容（audit.rs:23-25）。b) 管理 API 任务正文脱敏在 protocol.rs:396-405 的 TaskEnvelope::redacted()：仅把 Action::StackCreate/StackPlan 的 content 替换为“[配置正文已隐藏]”；该动作返回的是任务视图，管理面 tasks/task/切节点 actions 均走它。审计记录不经过 redacted()。\n{\"generatedFrom\" 之外尚需确认的：} 审计 result 字段语义在其它调用点可能填入“已提交/已存在/已开始…”等词，来源不限于 audit.rs 内部，本模块未穷举全部写入点，分类与 result 取值枚举以实际生成为准。AuditQuery 的 from/to 为 Unix 秒 i64。字段名均为 snake_case（源未使用 rename_all，JSON 名即 Rust 字段名）。\nAgent mTLS 面（/agent、/renew、/verify）与分享面 /share/... 不在本模块端点内；/api/v1/enroll 走 mTLS 前的公开面（AGENT_PATHS 精确白名单，entrance.rs:138），也不属于本模块。"
+}

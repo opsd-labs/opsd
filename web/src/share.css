@@ -1,0 +1,195 @@
+/* 分享页样式。只复用 style.css 的令牌，不引入控制台的布局。 */
+.share-body {
+  background: var(--bg);
+  color: var(--ink);
+}
+.share-shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.share-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.share-header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.share-header h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.share-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.share-group > h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.share-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+.share-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+  background: var(--surface);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.share-card.is-selected {
+  border-color: var(--accent);
+  background: var(--selected);
+}
+.share-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.share-name {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-name:hover {
+  color: var(--accent);
+}
+.share-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+.share-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+.share-metrics > div {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.share-metrics dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.share-metrics dd {
+  margin: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.share-bar {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--neutral-bg);
+  overflow: hidden;
+}
+.share-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.share-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 12px;
+  margin: 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.share-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+}
+.share-facts dt {
+  color: var(--muted);
+}
+.share-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.share-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.share-tags li {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--affiliation-line);
+  border-radius: var(--radius-control);
+  padding: 0 6px;
+}
+.share-foot {
+  font-size: 11px;
+}
+.share-detail {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.share-error {
+  border: 1px solid var(--status-danger-bg);
+  background: var(--status-danger-bg);
+  color: var(--danger);
+  border-radius: var(--radius-surface);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.share-footer {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .share-shell {
+    padding: 16px 10px 32px;
+  }
+  .share-cards {
+    grid-template-columns: 1fr;
+  }
+}

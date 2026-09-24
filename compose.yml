@@ -1,0 +1,29 @@
+services:
+  hub:
+    build: .
+    restart: unless-stopped
+    environment:
+      OPSD_ORIGIN: ${OPSD_ORIGIN:-https://localhost:65535}
+      # 独立 MariaDB 使用 mysql:// 格式，凭据通过部署环境注入。
+      # OPSD_DATABASE_URL: ${OPSD_DATABASE_URL}
+    ports:
+      # 控制台端口。安全入口不受端口影响，端口号本身不是安全措施。
+      - "${OPSD_BIND:-127.0.0.1}:65535:65535"
+      - "8444:8444"
+    volumes:
+      - ./data:/var/lib/opsd
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    healthcheck:
+      # 健康检查走容器内的回环监听，不经安全入口，因此也不构成绕过入口的门路。
+      test: ["CMD", "/usr/local/bin/opsd-hub", "probe"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

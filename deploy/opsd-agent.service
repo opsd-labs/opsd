@@ -1,0 +1,19 @@
+[Unit]
+Description=opsd 无头节点执行服务
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+StateDirectory=opsd-agent
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/opsd-agent --data-dir /var/lib/opsd-agent run
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=100s
+LimitNOFILE=16384
+
+[Install]
+WantedBy=multi-user.target

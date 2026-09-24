@@ -1,0 +1,14 @@
+# OpenAPI 契约的 lint 配置。契约源文件是 ../docs/api/openapi.yaml。
+#
+# 只有 error 会让 `npm run api:lint` 失败；warning 照常打印，用作提示。
+extends:
+  - recommended
+rules:
+  # 分享面刻意保留结尾斜杠：服务端显式路由 /share/{token}/，并把不带斜杠的请求永久重定向过去
+  # （见 src/hub/mod.rs 的 share_routes）。契约必须与实现一致，所以这条风格规则在这里关掉。
+  no-path-trailing-slash: off
+  # 本项目的契约以 paths 为准，目前没有生成式客户端。等真的需要 operations 类型时再统一补
+  # operationId，而不是现在给 62 个操作各起一个没人用的名字。
+  operation-operationId: off
+  # 仓库未附许可证文件，与契约正确性无关。
+  info-license: off

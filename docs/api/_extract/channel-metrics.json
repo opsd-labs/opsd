@@ -1,0 +1,200 @@
+{
+  "module": "channel-metrics",
+  "generatedFrom": [
+    "opsd/src/hub/channel.rs",
+    "opsd/src/hub/metrics.rs",
+    "opsd/src/hub/mod.rs",
+    "opsd/src/hub/auth.rs",
+    "opsd/src/store.rs",
+    "opsd/src/protocol.rs"
+  ],
+  "prefix": "控制在安全入口之下：浏览器 API 统一挂在 /{安全入口}/ 下（入口是路径第一段），故上述 /api/v1/... 实际访问路径为 /{安全入口}/api/v1/...。全部接口在 private Router 上并经过 auth::require 门禁（会话 Cookie + GET/HEAD 免 CSRF；非 GET 校验 Origin 与 X-CSRF-Token 头）。session 认证：Cookie 名为 opsd_session，HttpOnly; Secure; SameSite=Strict; Path=/{entry}/；CSRF=Session.csrf，经非 GET 请求 X-CSRF-Token 头或本模块流的 csrf 查询参数传递。stream 是 WebSocket 升级（非 SSE）。",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1/nodes/{id}/stream",
+      "handler": "channel::browser_stream",
+      "auth": "session",
+      "pathParams": [
+        { "name": "id", "type": "string", "description": "节点 ID" }
+      ],
+      "queryParams": [
+        { "name": "kind", "type": "string", "required": true, "default": null, "description": "流类型：container / shell / file_list / file_read / file_write" },
+        { "name": "container", "type": "string", "required": false, "default": null, "description": "仅在 kind=container 时必填，容器编号" },
+        { "name": "path", "type": "string", "required": false, "default": null, "description": "仅在 kind=file_list/file_read/file_write 时必填，文件或目录路径" },
+        { "name": "offset", "type": "integer", "required": false, "default": null, "description": "仅在 kind=file_read/file_write 时使用；默认 0" },
+        { "name": "limit", "type": "integer", "required": false, "default": "1048576", "description": "仅在 kind=file_read/file_write 时使用；默认 1 MiB（DEFAULT_READ_LIMIT）" },
+        { "name": "workdir", "type": "string", "required": false, "default": null, "description": "仅在 kind=shell 时使用，会话起始目录" },
+        { "name": "csrf", "type": "string", "required": true, "default": null, "description": "会话 CSRF 值，须等于 Session.csrf" },
+        { "name": "command", "type": "string", "required": false, "default": null, "description": "容器终端内执行的命令；缺省时上层把它包成 command=[\"/bin/sh\"]" }
+      ],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 101, "dto": "stream", "fields": [], "description": "WebSocket 升级（非 SSE）。上行与下行均为二进制文本帧（最多 65536 字节/帧）。下行：节点回传的字节即 raw 文本（终端/文件内容）；会话结束由节点侧 StreamClose 触发时，服务端发一个 JSON 文本帧 {\"error\": <string|null>} 后关闭。kind=file_read 内容为 base64。帧不携带帧类型标识，客户端需按会话阶段自行判定。" }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"中文消息\"}", "condition": "origin 头与 s.origin 不一致或 q.csrf 不等于会话 csrf（消息『终端来源或授权无效』）；未知 flow kind；container 缺少容器编号；file_list/file_read/file_write 缺 path；节点当前无活动通道（消息『节点离线』）。非 GET 写操作还可能在门禁处 403" },
+        { "status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未携带有效会话 Cookie（由 auth::require 中间件产生）" },
+        { "status": 403, "body": "请求来源或 CSRF 校验失败（纯文本）", "condition": "非 GET 方法且 Origin 或 X-CSRF-Token 不匹配（auth::require；本接口为 GET 一般不触发）" }
+      ],
+      "sideEffects": "建立 WebSocket 会话。HostShell/FileList/FileRead/FileWrite 在开启时写一条审计（result=已开始），结束时补一条（result=已结束，含 bytes 传输量与 duration）。内容上行经 tx 转发给 Agent；下行从 s.streams 广播转发。断开语义：socket 关闭、Agent 侧流关闭、或会话超时（sleep((session.expires-now()).max(0)) 秒）时结束。session 过期自动断线。",
+      "evidence": "opsd/src/hub/channel.rs:385"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/metrics/overview",
+      "handler": "channel::metrics_overview",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "clock_skew_warn_seconds", "type": "integer", "optional": false, "nullable": false, "description": "固定 60（CLOCK_SKEW_WARN）" },
+          { "name": "nodes", "type": "array<MetricsRecord>", "optional": false, "nullable": false, "description": "所有已上报最新指标节点的最新 MetricsRecord 列表；未上报的节点不出现（没有对应的对象，不是 0）" }
+        ] }
+      ],
+      "errorBranches": [],
+      "sideEffects": "只读内存 latest_metrics，不写库、不生成任务、不广播事件。",
+      "evidence": "opsd/src/hub/channel.rs:59"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/metrics/status",
+      "handler": "channel::metrics_status",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "tiers", "type": "array<object>", "optional": false, "nullable": false, "description": "对 raw/m5/h1 三个层级各一个对象" }
+        ], "description": "tiers 每项对象含字段：tier(string: raw|m5|h1)、bucket_seconds(integer: 15/300/3600)、retention_seconds(integer: 604800/7776000/31536000)、records(integer 记录数)、oldest(integer|null 最早时间，无记录时为 null)" }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"中文消息\"}", "condition": "数据库查询失败时由 anyhow 转 BAD_REQUEST" }
+      ],
+      "sideEffects": "只读 metrics 表汇总（COUNT/MIN）。",
+      "evidence": "opsd/src/hub/channel.rs:68"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/nodes/{id}/metrics",
+      "handler": "channel::metrics_history",
+      "auth": "session",
+      "pathParams": [
+        { "name": "id", "type": "string", "description": "节点 ID" }
+      ],
+      "queryParams": [
+        { "name": "from", "type": "integer", "required": true, "default": null, "description": "起始时刻（Unix 秒）" },
+        { "name": "to", "type": "integer", "required": true, "default": null, "description": "结束时刻（Unix 秒），须大于 from" },
+        { "name": "step", "type": "integer", "required": false, "default": 60, "description": "期望点间距（秒），clamp 到 [15,86400]；同时决定降采样层级" }
+      ],
+      "request": { "required": false, "dto": null, "fields": [] },
+      "responses": [
+        { "status": 200, "dto": "inline", "fields": [
+          { "name": "node_id", "type": "string", "optional": false, "nullable": false, "description": "路径中的节点 ID" },
+          { "name": "tier", "type": "string", "optional": false, "nullable": false, "description": "实际使用的层级：raw|m5|h1" },
+          { "name": "step", "type": "integer", "optional": false, "nullable": false, "description": "clamp 后的步长" },
+          { "name": "from", "type": "integer", "optional": false, "nullable": false, "description": "请求的 from" },
+          { "name": "to", "type": "integer", "optional": false, "nullable": false, "description": "请求的 to" },
+          { "name": "truncated", "type": "boolean", "optional": false, "nullable": false, "description": "是否因 MAX_POINTS 截断" },
+          { "name": "points", "type": "array<MetricsPoint>", "optional": false, "nullable": false, "description": "抽稀后的点列" }
+        ] }
+      ],
+      "errorBranches": [
+        { "status": 400, "body": "{\"error\":\"结束时间必须晚于开始时间\"}", "condition": "to<=from" },
+        { "status": 400, "body": "{\"error\":\"区间与步长组合返回点数过多\"}", "condition": "(to-from)/step > MAX_POINTS(2000)" },
+        { "status": 400, "body": "{\"error\":\"中文消息\"}", "condition": "数据库查询失败（anyhow 转 BAD_REQUEST）" }
+      ],
+      "sideEffects": "只读 metrics 表，按 tier 分层（step<300→raw, <3600→m5, 其余→h1）。降采样桶内标量取平均、明细取最后一次；无数据区间不插值不补零，直接缺点。",
+      "evidence": "1. opsd/src/hub/channel.rs:31"
+    }
+  ],
+  "sharedTypes": [
+    {
+      "name": "MetricsRecord",
+      "fields": [
+        { "name": "node_id", "type": "string", "optional": false, "nullable": false, "description": "节点 ID" },
+        { "name": "received_at", "type": "integer", "optional": false, "nullable": false, "description": "主控收到该帧的时刻（秒）" },
+        { "name": "clock_offset", "type": "integer", "optional": false, "nullable": false, "description": "估算时钟偏移（秒），正值表示 Agent 时钟落后；包含单向时延" },
+        { "name": "sample", "type": "MetricsSample", "optional": false, "nullable": true, "description": "采样；采集失败时为 null（此时 error 有值），历史不写零值" },
+        { "name": "error", "type": "string", "optional": true, "nullable": true, "description": "采集失败原因；无失败时缺省/为 null" }
+      ]
+    },
+    {
+      "name": "MetricsSample",
+      "fields": [
+        { "name": "at", "type": "integer", "optional": false, "nullable": false, "description": "采样时刻（秒，Agent 本地时钟）" },
+        { "name": "cpu_usage", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "cpu_per_core", "type": "array<number>", "optional": false, "nullable": false, "description": "" },
+        { "name": "load1", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "load5", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "load15", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "memory_total", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "memory_used", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "memory_available", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "swap_total", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "swap_used", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "disks", "type": "array<DiskUsage>", "optional": false, "nullable": false, "description": "" },
+        { "name": "disk_read_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "disk_write_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "interfaces", "type": "array<InterfaceRate>", "optional": false, "nullable": false, "description": "" },
+        { "name": "uptime", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "processes", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "tcp_connections", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "udp_connections", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "peers", "type": "array<PeerLatency>", "optional": true, "nullable": false, "description": "多数采样为空，探测稀疏时沿用上一次结果" }
+      ]
+    },
+    {
+      "name": "MetricsPoint",
+      "fields": [
+        { "name": "at", "type": "integer", "optional": false, "nullable": false, "description": "桶时刻（秒）" },
+        { "name": "cpu_usage", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "memory_used", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "memory_total", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "swap_used", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "load1", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "disk_read_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "disk_write_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "net_rx_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "所有网卡 rx 求和" },
+        { "name": "net_tx_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "所有网卡 tx 求和" }
+      ]
+    },
+    {
+      "name": "PeerLatency",
+      "fields": [
+        { "name": "node_id", "type": "string", "optional": false, "nullable": false, "description": "" },
+        { "name": "address", "type": "string", "optional": false, "nullable": false, "description": "" },
+        { "name": "method", "type": "string", "optional": false, "nullable": false, "description": "icmp 或 tcp" },
+        { "name": "latency_ms", "type": "number", "optional": true, "nullable": true, "description": "没测到则为 null/缺省（绝不补 0，0 表示同机）" },
+        { "name": "reachable", "type": "boolean", "optional": false, "nullable": false, "description": "" },
+        { "name": "error", "type": "string", "optional": true, "nullable": true, "description": "不可达原因" },
+        { "name": "probed_at", "type": "integer", "optional": true, "nullable": false, "description": "测量时刻，可早于采样时刻" }
+      ]
+    },
+    {
+      "name": "InterfaceRate",
+      "fields": [
+        { "name": "name", "type": "string", "optional": false, "nullable": false, "description": "" },
+        { "name": "rx_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "tx_bytes_per_second", "type": "number", "optional": false, "nullable": false, "description": "" },
+        { "name": "rx_errors", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "tx_errors", "type": "integer", "optional": false, "nullable": false, "description": "" }
+      ]
+    },
+    {
+      "name": "DiskUsage",
+      "fields": [
+        { "name": "mount", "type": "string", "optional": false, "nullable": false, "description": "" },
+        { "name": "filesystem", "type": "string", "optional": false, "nullable": false, "description": "" },
+        { "name": "total", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "used", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "inode_total", "type": "integer", "optional": false, "nullable": false, "description": "" },
+        { "name": "inode_used", "type": "integer", "optional": false, "nullable": false, "description": "" }
+      ]
+    }
+  ],
+  "notes": "1. 本模块无 share / agent-mtls 接口；四个接口全在 private Router（auth::require）之下，认证身份为登录会话。stream 是 WebSocket 升级而非 SSE。2. browser_stream 的鉴权在 GET 方法下由门禁免 CSRF 放行到 handler，handler 内再校验 Origin==s.origin 且 q.csrf==会话 csrf。批量鉴权细节见 auth.rs。3. decimate/from_sample 中，字段名全部保持源码 snake_case（MetricsPoint 无 rename），即 JSON 键即这些字段名。4. metrics_overview 的 nodes 用 MetricsRecord 原样序列化（无 rename），字段名即 MetricsRecord 字段名。5. '未知不等于 0' 语义：history 在无数据时不生成点（缺字段，非 null）；overview 只列出真正上报过的节点（缺节点，非 0）；采集失败时 sample 为 null。未在源码发现任何在缺少数据时写入 0 的分支。6. metrics_history 的 from/to/step 均为 UNIX 秒整数。step clamp 在 [15,86400]。7. metrics_status 的 oldest 为 Option<i64>（COUNT/MIN），无记录时 JSON 里出现 null 而非缺键。8. 错误正文默认 {\"error\":...}（ApiError into_response），但 auth::require 的 403 是纯文本；401 用 {\"error\":\"请先登录\"}。9. StreamTarget/StreamKind 为 serde tagged/rename_all 的内部 Frame 结构，不直接暴露为浏览器 JSON 请求体；kind 查询参数用的是手工字符串到 StreamKind 的映射。10. browser_stream 的 max_message_size 为 65536，握手前发送的 Frame::StreamOpen 走 s.channels 的 mpsc。"
+}

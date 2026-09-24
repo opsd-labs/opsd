@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>节点状态</title>
+    <script>
+      // 分享页有自己的明暗偏好，不复用控制台的存储键。
+      try {
+        const t = localStorage.getItem("opsd.share.theme") || "system";
+        document.documentElement.dataset.theme =
+          t === "system"
+            ? matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light"
+            : t;
+      } catch {}
+    </script>
+  </head>
+  <body class="share-body">
+    <div id="share"></div>
+    <script type="module" src="/src/share/main.ts"></script>
+  </body>
+</html>

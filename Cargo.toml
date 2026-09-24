@@ -1,0 +1,62 @@
+[workspace]
+members = ["."]
+resolver = "3"
+
+[package]
+name = "opsd"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# 四后端故障矩阵尚未通过，正式构建只开放防火墙发现和计划。
+experimental-firewall = []
+
+[dependencies]
+anyhow = "1"
+argon2 = "0.5"
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+fs2 = "0.4"
+hex = "0.4"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
+ipnet = { version = "2", features = ["serde"] }
+# 仅用于 statvfs（磁盘容量与 inode），std 没有对应封装。
+libc = "0.2"
+rand = "0.8"
+rcgen = { version = "0.14", features = ["x509-parser"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "mysql", "any"] }
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+time = "0.3"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "limit"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+x509-parser = "0.18"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "opsd-hub"
+path = "src/bin/hub.rs"
+
+[[bin]]
+name = "opsd-agent"
+path = "src/bin/agent.rs"

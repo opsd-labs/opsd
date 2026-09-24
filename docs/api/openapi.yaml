@@ -1,0 +1,4866 @@
+openapi: 3.1.0
+info:
+  title: opsd 控制台 HTTP API
+  version: 1.0.0
+  summary: 主控控制台的浏览器接口契约
+  description: |
+    本文档是 opsd 主控 HTTP 接口的**契约源文件**。`web/src/generated/api.ts` 由它生成，
+    漂移检查会阻止生成物与它不一致；因此接口变更必须先改这里。
+
+    ## 路径与安全入口
+
+    控制台整体挂在 `/{安全入口}/` 之下，安全入口是路径第一段（16 位随机字符，可在设置页轮换）。
+    因此下列 `/api/v1/...` 路径的**真实地址都带该前缀**，本文件通过 server 变量的形式表达，
+    不在每条路径里重复。首段不匹配的请求由门禁直接断连，不产生 HTTP 响应。
+
+    入口之外只有两个面：一次性注册（`/api/v1/enroll`，经白名单精确放行）与分享页（`/share/{token}/...`，
+    凭各自令牌放行）。二者在对应操作上用 `servers` 覆盖。
+
+    ## 认证
+
+    会话 Cookie `opsd_session`（HttpOnly、Secure、SameSite=Strict、Path=/{安全入口}/、8 小时）配合
+    CSRF 头 `x-csrf-token`。**非 GET/HEAD 请求**还必须满足 `Origin` 精确等于 `OPSD_ORIGIN`。
+
+    - 未登录：`401` + `{"error":"请先登录"}`。
+    - CSRF 或 Origin 失败：`403`，正文是**纯文本**，不是 JSON。
+    - Cookie 的 Path 被限定在安全入口之下，浏览器不会把它发给分享面。
+
+    ## 错误约定
+
+    业务错误统一为 `{"error":"<中文消息>"}`；具体状态码与文案见各操作。注意三类例外：
+    门禁的 `403` 是纯文本；控制台面的 `413`（请求体超过 1MB）由 `DefaultBodyLimit` 直接产生；
+    **请求体的框架级拒绝**——JSON 语法错误、字段缺失或类型不符、Content-Type 不对——在进入处理函数之前
+    就由 axum 的 `Json` 提取器产生，正文是**纯文本**，状态码分别为 400 / 422 / 415，不是 `{"error"}`。
+    各写操作列出的 `400` 只覆盖处理函数内部的校验失败。
+
+    错误响应一律不含凭据、环境变量、SQL 正文与文件内容。
+
+    ## 变更与幂等
+
+    产生变更的操作都带 `task_id`，但状态码分两档：**只有节点操作
+    `POST /api/v1/nodes/{id}/actions` 返回 `202`**；文件（`/nodes/{id}/files`）、主机盘点、
+    数据库巡检、存储集群等其余变更接口都是 `200`。以各操作自身的响应表为准，不要按这一句推断。
+    提交时提供 `idempotency_key`：同节点 + 同键 + 同参数摘要 → 返回已存在的任务（不重复执行）；
+    同节点 + 同键 + **不同**参数摘要 → `400`「幂等键已用于不同参数」。这是 `400` 而不是 `409`。
+
+    ## 资源标识
+
+    资源一律用 `node_id + resource_id` 定位，不存在跨节点按名称操作。`node_id` 是路径参数 `{id}`。
+
+    ## 不在本文档范围内
+
+    以下端点存在，但不是浏览器/机器 HTTP 契约，刻意不收录（不要据此认为它们不存在）：
+    `GET /agent` 是 Agent 的常驻 WebSocket 通道，其内部协议与本文档分离，只要求协议版本、目标节点与身份绑定；
+    `GET /api/v1/health` 是只绑定回环的运维健康检查，不经安全入口，返回 `{"status":"ok"}`；
+    `GET /{安全入口}` → 301 跳转到 `/{安全入口}/`，是静态入口重定向而不是接口。
+servers:
+  - url: https://{host}/{entrance}
+    description: 控制台面。分享面与注册不在这个 server 下。
+    variables:
+      host:
+        default: localhost:65535
+        description: 主控 HTTPS 监听地址（OPSD_ORIGIN 的 host 部分）
+      entrance:
+        default: 安全入口占位
+        description: 16 位安全入口路径段，改后旧地址立即失效
+  - url: https://{host}
+    description: 入口之外的公开面：一次性注册与分享页。
+    variables:
+      host:
+        default: localhost:65535
+        description: 主控 HTTPS 监听地址
+tags:
+  - name: auth
+    description: 会话
+  - name: nodes
+    description: 节点目录
+  - name: tasks
+    description: 任务与幂等
+  - name: events
+    description: 事件流
+  - name: metrics
+    description: 指标
+  - name: agent
+    description: Agent 注册与续期（mTLS，非浏览器接口）
+  - name: share
+    description: 分享页与公开数据
+  - name: theme
+    description: 主题
+  - name: audit
+    description: 审计
+  - name: storage
+    description: 存储与存储集群
+  - name: database
+    description: 数据库只读巡检
+security:
+  - sessionCookie: []
+    csrfToken: []
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: 管理员登录
+      description: 入口之下但不需要会话。自身先做一次 Origin 校验，并按来源 IP 限流。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功，同时下发 opsd_session Cookie。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: 密码错误。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Origin 不匹配，返回 {"error":"请求来源不匹配"}。这是登录自身的校验，早于其他检查。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: 登录过于频繁或来源过多。正文为「登录尝试过于频繁」或「请稍后重试」。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: 退出登录
+      description: 删除服务端会话并清除 Cookie。无请求体。
+      responses:
+        "200":
+          description: 已退出。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      summary: 读取当前会话
+      description: GET 不做 CSRF/Origin 校验，只校验会话存在。
+      responses:
+        "200":
+          description: 当前会话。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/nodes:
+    get:
+      tags: [nodes]
+      summary: 节点列表
+      description: 返回全部节点（含已撤销）及其在线判定。在线判定由 last_seen 与在线通道共同决定，不在 Node 结构体内。
+      responses:
+        "200":
+          description: 节点条目数组。
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NodeEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/nodes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/NodeId"
+    put:
+      tags: [nodes]
+      summary: 更新节点
+      description: 更新节点登记信息，随后向未撤销节点重新下发地址与探测目标任务。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Registration"
+      responses:
+        "200":
+          description: 更新后的节点。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+    delete:
+      tags: [nodes]
+      summary: 撤销节点
+      description: 置 revoked=true 并断开在线通道，不物理删除记录。
+      responses:
+        "200":
+          description: 已撤销。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/enrollment-tokens:
+    post:
+      tags: [nodes]
+      summary: 签发一次性注册令牌
+      description: 令牌 600 秒内有效、一次性使用，绑定到新生成的 node_id。每次调用都新建令牌，不参与幂等。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Registration"
+      responses:
+        "200":
+          description: 令牌与 CA 指纹。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrollmentToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/peer-addresses:
+    get:
+      tags: [nodes]
+      summary: 读取节点地址集合
+      description: |
+        未撤销节点的去重排序公网地址集合，带版本号。
+        该记录由后台对账任务写入（60 秒周期，失败只记日志），所以**全新控制库在首次对账成功前
+        返回的是 200 + 正文 null**，不是空对象。消费方必须容忍 null。
+      responses:
+        "200":
+          description: 地址集合；后台对账尚未写入过时为 null。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/PeerAddressSet"
+                  - type: "null"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/nodes/{id}/actions:
+    parameters:
+      - $ref: "#/components/parameters/NodeId"
+    post:
+      tags: [tasks]
+      summary: 提交节点操作
+      description: |
+        所有节点变更的统一入口。提交前校验幂等键长度、节点存在/未撤销/在线，
+        并拒绝外部提交 peer_sync（地址集合只能由节点目录生成）。
+        返回 202 与 task_id；任务由调度循环投递给节点。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Submit"
+      responses:
+        "202":
+          description: 已受理。重放相同幂等键与相同参数时返回同一 task_id。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAccepted"
+        "400":
+          description: |
+            参数或状态不满足：幂等键长度无效、节点不可用、节点离线、地址集合只能由节点目录生成、
+            验证节点必须是另一个在线节点、幂等键已用于不同参数。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/nodes/{id}/files:
+    parameters:
+      - $ref: "#/components/parameters/NodeId"
+    post:
+      tags: [tasks]
+      summary: 提交结构化文件操作
+      description: |
+        只接受 put / remove / rename / mkdir / chmod / chown 六类结构化操作，不接受任意命令。
+        注意与 actions 的差异：本端点**不校验节点是否存在或在线**，节点不存在也会落库为待投递任务；
+        成功返回 200（不是 202），并写审计。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileSubmit"
+      responses:
+        "200":
+          description: 已受理。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/tasks:
+    get:
+      tags: [tasks]
+      summary: 任务列表
+      description: 按创建时间倒序。参数正文中的 StackCreate / StackPlan 配置正文已被替换为「[配置正文已隐藏]」。
+      responses:
+        "200":
+          description: 任务数组。
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/tasks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TaskId"
+    get:
+      tags: [tasks]
+      summary: 任务详情
+      responses:
+        "200":
+          description: 任务。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskEnvelope"
+        "400":
+          description: 查无此任务时也返回 400「任务不存在」，历史原因不是 404。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/tasks/{id}/events:
+    parameters:
+      - $ref: "#/components/parameters/TaskId"
+    get:
+      tags: [tasks]
+      summary: 任务事件
+      description: 按事件序号升序返回，无分页、无数量上限；任务不存在时返回空数组。
+      responses:
+        "200":
+          description: 事件数组。
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskEvent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/events:
+    get:
+      tags: [events]
+      summary: 控制台事件流
+      description: |
+        SSE 流（text/event-stream）。每帧 data 是一个带 type 判别字段的 JSON 对象：
+        tasks / nodes / metrics / storage / database / task（带完整任务对象）/ resync（订阅滞后时提示重新拉取）。
+        没有重连补传机制：断线期间的事件不会补发，客户端必须重新拉取状态。
+      responses:
+        "200":
+          description: SSE 流。流在会话过期时长后由服务端关闭。
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ConsoleEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/audit:
+    get:
+      tags: [audit]
+      summary: 查询审计记录
+      description: 审计只记元数据，detail 依约定不含凭据、环境变量、SQL 正文与文件内容。
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+          description: 时间下界（Unix 秒），at >= from
+        - name: to
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+          description: 时间上界（Unix 秒），at <= to
+        - name: node
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 node_id 精确筛选
+        - name: category
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按类别精确筛选
+        - name: result
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按结果精确筛选
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 200, maximum: 1000 }
+          description: 返回条数上限，默认 200，硬上限 1000
+      responses:
+        "200":
+          description: 审计记录与保留期。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [records, retention_seconds]
+                properties:
+                  records:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditRecord"
+                  retention_seconds:
+                    type: integer
+                    description: 审计保留时长，恒为 365 天秒数
+                    const: 31536000
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/settings/entrance:
+    get:
+      tags: [auth]
+      summary: 读取安全入口
+      responses:
+        "200":
+          description: 当前安全入口；无记录时为空串。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntranceValue"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [auth]
+      summary: 轮换安全入口
+      description: 校验通过后立即生效，旧地址失效，用户需用新入口重新访问。新入口不写日志。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntranceValue"
+      responses:
+        "200":
+          description: 生效后的入口与是否发生变化。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntranceUpdate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/enroll:
+    post:
+      tags: [agent]
+      summary: Agent 一次性注册
+      description: |
+        入口之外的白名单路径，凭一次性令牌放行，不依赖会话。Agent 在拿到客户端证书之前调用。
+        成功后令牌立即失效（防重放），并签发 90 天客户端证书。
+      servers:
+        - url: https://{host}
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrollRequest"
+      responses:
+        "200":
+          description: 节点编号与客户端证书。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrollResponse"
+        "400":
+          description: 令牌已被使用、CSR 签名失败或 CA 文件缺失。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: 注册令牌无效或过期。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /renew:
+    post:
+      tags: [agent]
+      summary: Agent 证书续期
+      description: Agent mTLS 面（独立监听、要求客户端证书），不属于浏览器接口。身份由证书解析，不改节点状态、不产生任务。
+      servers:
+        - url: https://{host}
+          description: Agent mTLS 监听地址，要求客户端证书。
+          variables:
+            host:
+              default: 0.0.0.0:8444
+              description: Agent mTLS 监听地址，默认 0.0.0.0:8444（--agent-listen 可改）
+      security:
+        - agentMtls: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenewRequest"
+      responses:
+        "200":
+          description: 续期后的客户端证书。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenewResponse"
+        "400":
+          description: 身份校验失败（无证书、未登记、已过期、节点已撤销）或 CSR 无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /verify:
+    post:
+      tags: [agent]
+      summary: 全新连接验证
+      description: |
+        Agent mTLS 面。向 witness 节点下发探测帧并轮询结果，用于在防火墙变更后从一条**全新连接**验证可达性。
+        最多轮询 6 秒；失败原因写在 400 正文里。
+      servers:
+        - url: https://{host}
+          description: Agent mTLS 监听地址，要求客户端证书。
+          variables:
+            host:
+              default: 0.0.0.0:8444
+              description: Agent mTLS 监听地址，默认 0.0.0.0:8444（--agent-listen 可改）
+      security:
+        - agentMtls: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyRequest"
+      responses:
+        "200":
+          description: 验证通过。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyResponse"
+        "400":
+          description: witness 不可选、验证节点不在线、未登记可探测地址、通道断开、验证失败或超时。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/nodes/{id}/stream:
+    get:
+      tags: [events]
+      summary: 节点会话流（WebSocket 升级，非 SSE）
+      description: |
+        建立到节点的实时会话通道。这是 WebSocket 升级（101）而不是 SSE：GET 由门禁免 CSRF 放行到处理器，
+        处理器内再校验 Origin 头精确等于主控来源且 csrf 查询参数等于会话 CSRF，不满足在升级前返回 400
+        「终端来源或授权无效」。连接建立后上下行均为文本帧，帧不携带类型标识，客户端按会话阶段自行判定。
+
+        **帧 payload 一律是 base64（STANDARD），上下行都是**：主控原样转发字符串，节点侧统一解码。
+        解码后按 kind 分别是——container / shell 为终端字节流（文本按 UTF-8 解读）；
+        file_list 为一帧 JSON {"path":..., "entries":[...]}；file_read 为一帧原始字节；
+        file_write 的上行是待写入的原始字节分块，写完后再收到一帧解码后为 JSON 收据
+        {"staged":..., "size":..., "digest":...}。文件内容在解码后才是原始字节，不要按文本直接使用帧内容。
+
+        帧大小上限 65536 字节只作用于**上行**（服务端对接收帧的限制）；下行单帧没有这个上限，
+        file_read 默认一次可送出 1 MiB，base64 后约 1.4 MB 字符。
+
+        会话结束（节点侧 StreamClose 触发）时，服务端先发一个**明文** JSON 文本帧
+        {"error": <string|null>} 再关闭连接——这是唯一的非 base64 下行帧；
+        socket 关闭、Agent 流关闭或会话超时（服务端按会话剩余时长限时）同样结束会话。
+        HostShell / FileList / FileRead / FileWrite 会话开启与结束时各写一条审计（已开始 / 已结束，含传输量与时长）。
+      parameters:
+        - $ref: "#/components/parameters/NodeId"
+        - name: kind
+          in: query
+          required: true
+          schema: { type: string, enum: [container, shell, file_list, file_read, file_write] }
+          description: 流类型。
+        - name: container
+          in: query
+          required: false
+          schema: { type: string }
+          description: 仅在 kind=container 时必填，容器编号。
+        - name: path
+          in: query
+          required: false
+          schema: { type: string }
+          description: 仅在 kind=file_list / file_read / file_write 时必填，文件或目录路径。
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+          description: 仅在 kind=file_read / file_write 时使用，默认 0。
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 1048576 }
+          description: 仅在 kind=file_read / file_write 时使用，单次读取上限，默认 1 MiB。
+        - name: workdir
+          in: query
+          required: false
+          schema: { type: string }
+          description: 仅在 kind=shell 时使用，会话起始目录。
+        - name: csrf
+          in: query
+          required: true
+          schema: { type: string }
+          description: 会话 CSRF 值，必须等于 Session.csrf。GET 下 CSRF 走查询参数传递。
+        - name: command
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            容器终端内执行的命令。只接受 "/bin/sh" 或 "/bin/bash"，并作为单元素 argv 传递；
+            缺省按 ["/bin/sh"] 处理。其它值会在节点侧被拒绝（「首版容器终端仅支持 sh 或 bash」）并结束会话。
+      responses:
+        "101":
+          description: |
+            WebSocket 升级成功。握手鉴权：会话 Cookie 通过门禁、Origin 头等于主控来源、
+            csrf 查询参数等于会话 CSRF；不满足会在升级前返回 400。
+            上下行均为文本帧，payload 一律 base64（STANDARD），不携带帧类型标识，解码规则见操作描述。
+            帧大小上限 65536 字节只作用于上行；唯一的非 base64 下行帧是收尾的明文 {"error": <string|null>}。
+            节点侧 StreamClose 触发时先发该收尾帧再关闭连接；socket 关闭、Agent 流关闭或会话超时同样结束会话。
+        "400":
+          description: |
+            握手或参数不满足，正文为 {"error":"<中文消息>"}：Origin 头不等于主控来源或 csrf 不等于会话 CSRF
+            （消息「终端来源或授权无效」）、未知流类型、kind=container 缺容器编号、
+            file_list / file_read / file_write 缺 path、或节点当前无活动通道（消息「节点离线」）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/metrics/overview:
+    get:
+      tags: [metrics]
+      summary: 各节点最新指标总览
+      description: 只读内存中的最近指标，不写库、不生成任务、不广播事件。只列出真正上报过指标的节点，未上报的节点不出现（缺失而非 0）。
+      responses:
+        "200":
+          description: 最新指标与时钟偏移告警阈值。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [clock_skew_warn_seconds, nodes]
+                properties:
+                  clock_skew_warn_seconds:
+                    type: integer
+                    const: 60
+                    description: 时钟偏移告警阈值（秒），固定 60；偏移超过它提示管理员。
+                  nodes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MetricsRecord"
+                    description: 所有已上报最新指标节点的最新 MetricsRecord 列表。
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/metrics/status:
+    get:
+      tags: [metrics]
+      summary: 指标层级保留状态
+      description: 只读汇总各层级（raw / m5 / h1）的记录数与最早时间，用于观察保留策略是否按预期生效。
+      responses:
+        "200":
+          description: 三个层级的汇总，每项一条。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tiers]
+                properties:
+                  tiers:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MetricsTierInfo"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/nodes/{id}/metrics:
+    get:
+      tags: [metrics]
+      summary: 节点指标历史
+      description: |
+        只读指标表：按步长选择层级（step<300 用 raw，<3600 用 m5，其余用 h1）并抽稀。
+        降采样桶内标量取平均、明细取最后一次；区间内没有数据的时段不插值、不补零，直接缺空。
+      parameters:
+        - $ref: "#/components/parameters/NodeId"
+        - name: from
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+          description: 起始时刻（Unix 秒）。
+        - name: to
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+          description: 结束时刻（Unix 秒），必须晚于 from。
+        - name: step
+          in: query
+          required: false
+          schema: { type: integer, format: int64, default: 60 }
+          description: 期望点间距（秒），默认 60；实际值被 clamp 到 [15, 86400]，同时决定降采样层级。
+      responses:
+        "200":
+          description: 抽稀后的指标点列与查询元信息。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [node_id, tier, step, from, to, truncated, points]
+                properties:
+                  node_id:
+                    type: string
+                    description: 路径中的节点编号。
+                  tier:
+                    type: string
+                    enum: [raw, m5, h1]
+                    description: 实际使用的层级，由 clamp 后的步长决定。
+                  step:
+                    type: integer
+                    description: clamp 到 [15, 86400] 后的实际步长（秒）。
+                  from:
+                    type: integer
+                    format: int64
+                    description: 请求的起始时刻（Unix 秒）。
+                  to:
+                    type: integer
+                    format: int64
+                    description: 请求的结束时刻（Unix 秒）。
+                  truncated:
+                    type: boolean
+                    description: 是否因超过单次查询点数上限 MAX_POINTS（2000）而截断。
+                  points:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MetricsPoint"
+        "400":
+          description: |
+            参数不满足或查询失败：to<=from 时正文为 {"error":"结束时间必须晚于开始时间"}；
+            (to-from)/step 超过 MAX_POINTS（2000）时正文为 {"error":"区间与步长组合返回点数过多"}；
+            数据库查询失败时由内部错误统一映射为 400。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/share/settings:
+    get:
+      tags: [share]
+      summary: 读取分享设置
+      description: GET 不做 CSRF/Origin 校验,只校验会话存在;只读进程内共享设置,不写库、不产生任务、无需幂等键。
+      responses:
+        "200":
+          description: 当前分享设置:enabled 为分享页整体开关,site 为站点公开信息。读锁失败时回落默认值(enabled=false 与默认站点),不报错。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [share]
+      summary: 更新分享设置
+      description: 写 control.db 并同步内存,分享门禁立即生效;不产生任务、无需幂等键,写库失败同其他内部错误一样折算 400。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShareSettingsInput"
+      responses:
+        "200":
+          description: 回显写入后的设置。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareSettings"
+        "400":
+          description: |
+            站点名称超过 60 字符(「站点名称过长」)、站点描述超过 200 字符(「站点描述过长」)、页脚文字超过 200 字符(「页脚文字过长」),
+            或数据库写入失败(正文为错误信息原文)。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+  /api/v1/share/tokens:
+    get:
+      tags: [share]
+      summary: 分享令牌列表
+      description: 按 created_at 降序返回全部令牌(含已撤销)。**列表只含摘要与元数据,绝不包含明文令牌**——明文只在创建响应中出现一次,之后无法取回。GET 不做 CSRF/Origin 校验。
+      responses:
+        "200":
+          description: 令牌记录数组。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareTokenList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [share]
+      summary: 创建分享令牌
+      description: |
+        生成明文令牌,控制库只存 sha256 摘要。**明文仅此一次返回,之后无法再取回**。
+        落库后重建门禁内存索引,新令牌立即对 /share/{token}/ 生效。不产生任务、无需幂等键。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShareTokenInput"
+      responses:
+        "200":
+          description: 明文令牌与令牌记录。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareTokenCreated"
+        "400":
+          description: |
+            label trim 后为空或超过 60 字符(「分享名称长度不合法」)、expires_hours 不在 1..=8760 内(「有效时长不合法」),
+            或数据库写入/索引重建失败(正文为错误信息原文)。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+  /api/v1/share/tokens/{id}:
+    delete:
+      tags: [share]
+      summary: 撤销分享令牌
+      description: 软删除:revoked 置 true,记录仍留在列表;重建门禁内存索引,撤销立即生效。不产生任务、无需幂等键。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: 分享令牌记录 id
+      responses:
+        "200":
+          description: 已撤销,ok 恒为 true。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+        "400":
+          description: |
+            id 在令牌桶中查不到(「分享令牌不存在」,本项目怪异:不存在返回 400 而非 404),
+            或数据库读写/索引重建失败(正文为错误信息原文)。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+  /api/v1/share/keys:
+    get:
+      tags: [share]
+      summary: API 密钥列表
+      description: 按 created_at 降序返回全部密钥(含已撤销)。**列表只含摘要与元数据,绝不包含明文密钥**——明文只在创建响应中出现一次,之后无法取回。GET 不做 CSRF/Origin 校验。
+      responses:
+        "200":
+          description: 密钥记录数组。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [share]
+      summary: 创建 API 密钥
+      description: |
+        生成明文密钥(opsd_ 前缀),控制库只存 sha256 摘要。**明文仅此一次返回,之后无法再取回**。
+        密钥授权走 DB 直查,不维护内存索引,无需刷新。不产生任务、无需幂等键。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiKeyInput"
+      responses:
+        "200":
+          description: 明文密钥与密钥记录。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyCreated"
+        "400":
+          description: label trim 后为空或超过 60 字符(「密钥名称长度不合法」),或数据库写入失败(正文为错误信息原文)。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+  /api/v1/share/keys/{id}:
+    delete:
+      tags: [share]
+      summary: 撤销 API 密钥
+      description: 软删除:revoked 置 true,记录仍留在列表;授权每次读库过滤,撤销立即生效。不产生任务、无需幂等键。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: API Key 记录 id
+      responses:
+        "200":
+          description: 已撤销,ok 恒为 true。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+        "400":
+          description: |
+            id 在密钥桶中查不到(「API Key 不存在」,不存在返回 400 而非 404),
+            或数据库读写失败(正文为错误信息原文)。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+  /share/{token}/:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文。门禁按摘要常量时间校验，无效令牌与错误入口一样被直接丢弃连接、不产生任何 HTTP 响应。
+    get:
+      tags: [share]
+      summary: 分享页首页
+      description: |
+        返回分享页 HTML（text/html; charset=utf-8）。启用了包级分享主题时返回主题入口 HTML 并带独立 CSP 头，
+        否则回落内置 share.html。只读，不写库、不广播、不产生任务；不设置缓存响应头。
+        带结尾斜杠的 /share/{token}/ 是分享面入口；不带斜杠的 /share/{token} 会先被 301 永久重定向到此处。
+        令牌无效时门禁直接丢弃连接、没有常规 HTTP 响应，因此不会出现 401 或 404 JSON。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 分享页 HTML 正文。
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: |
+            纯文本「分享页尚未构建」（无 JSON error 包装）：读取 s.web/share.html 失败，即内置页未构建且未启用分享主题。
+            令牌无效时门禁会直接丢弃连接、没有常规 HTTP 响应，不会到达本处理函数。
+          content:
+            text/plain:
+              schema:
+                type: string
+                const: 分享页尚未构建
+  /share/{token}/assets/{path}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文。实际不会被处理函数使用（路径提取被忽略），门禁已预先校验。
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+        description: 构建产物 assets 目录内的相对路径，可含子目录；读取前做防目录穿越校验。
+    get:
+      tags: [share]
+      summary: 分享页构建产物静态资源
+      description: |
+        只读磁盘文件，返回 assets 目录下的静态文件二进制，Content-Type 依扩展名：
+        js→text/javascript、css→text/css、svg→image/svg+xml、json→application/json、woff2→font/woff2、其他→application/octet-stream。
+        不设置缓存响应头；响应体是构建产物原文，绝不包含令牌、凭据或服务端路径信息。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 文件二进制，Content-Type 依扩展名而定（见操作描述）。
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: |
+            空正文（无 JSON、无文本）：path 包含 ".." 或以 / 开头（防目录穿越），或目标文件读取失败。
+  /share/{token}/data/summary:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文。
+    get:
+      tags: [share]
+      summary: 分享页站点与节点概况
+      description: |
+        页面接口（application/json），仅凭分享令牌放行，不需要 Cookie 或 API Key。只读，不写库、不广播；
+        site 读取失败时回落到 SitePublic 默认值。不设置缓存响应头，不应被代理缓存。
+        响应刻意只含站点公开属性与计数，不含任何内部地址、资源细节与凭据。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 站点公开属性与令牌可见节点计数。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareSummary"
+        "400":
+          description: 分享页已关闭（ensure_enabled 校验），正文 {"error":"分享页已关闭"}；错误统一由 ApiError 包装为 JSON。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /share/{token}/data/nodes:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文。
+    get:
+      tags: [share]
+      summary: 分享页可见节点列表
+      description: |
+        页面接口（application/json），仅凭分享令牌放行。只返回公开白名单字段（见 PublicNode），刻意不包含内部地址、资源细节与凭据；
+        节点为未撤销、未隐藏且在令牌范围内者，按权重降序、再按名称升序。只读，不设置缓存响应头。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 可见节点数组。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareNodes"
+        "400":
+          description: 分享页已关闭，正文 {"error":"分享页已关闭"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /share/{token}/data/records:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文。
+      - name: node
+        in: query
+        required: true
+        schema: { type: string }
+        description: 节点编号，须在令牌可见范围内。
+      - name: from
+        in: query
+        required: true
+        schema: { type: integer, format: int64 }
+        description: 起始 Unix 秒。
+      - name: to
+        in: query
+        required: true
+        schema: { type: integer, format: int64 }
+        description: 结束 Unix 秒，必须晚于 from。
+      - name: step
+        in: query
+        required: false
+        schema: { type: integer, default: 300 }
+        description: 步长（秒），默认 300，运行时 clamp 到 [60, 86400]。
+    get:
+      tags: [share]
+      summary: 分享页指标历史降采样
+      description: |
+        页面接口（application/json），仅凭分享令牌放行。只读查指标历史，不写库、不广播；不设置缓存响应头。
+        点数上限 2000；缺失区间自然断开，不插值不补零。响应刻意不含节点地址、资源细节与凭据。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 回显节点编号、选用层级、实际步长与降采样曲线点。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareRecords"
+        "400":
+          description: |
+            分享页已关闭，正文 {"error":"分享页已关闭"}；节点不在令牌范围，正文 {"error":"该节点不在分享范围内"}；
+            to<=from，正文 {"error":"结束时间必须晚于开始时间"}；或 (to-from)/step 超过 2000 点，正文 {"error":"区间与步长组合返回点数过多"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /share/{token}/api/v1/public/summary:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文（限定可见节点范围）。
+    get:
+      tags: [share]
+      summary: 公开节点概况（机器接口）
+      description: |
+        机器接口（application/json），双授权：分享令牌放行 **加上** Authorization: Bearer <API Key>，
+        可见节点范围为令牌范围与 API Key 节点范围的交集。只读，仅可能写回 key.last_used（距上次更新超 60 秒时）。
+        API Key 经摘要校验；响应只含交集内的计数，不含节点地址、资源细节与凭据。不设置缓存响应头，不应被代理缓存。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 交集可见节点计数，量值不经缓存，实时读取。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareSummaryBase"
+        "400":
+          description: 分享页已关闭，正文 {"error":"分享页已关闭"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: '缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /share/{token}/api/v1/public/nodes:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文（限定可见节点范围）。
+    get:
+      tags: [share]
+      summary: 公开节点列表（机器接口）
+      description: |
+        机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
+        只返回可达交集内各节点详情；字段与页面接口同一套公开白名单（PublicNode），刻意不含内部地址、资源细节与凭据。
+        只读，可能写回 API Key 的 lastUsed。不设置缓存响应头。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 交集后可访问节点数组。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareNodes"
+        "400":
+          description: 分享页已关闭，正文 {"error":"分享页已关闭"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: '缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /share/{token}/api/v1/public/recent/{id}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文（限定可见节点范围）。
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: 节点编号，须同时落在令牌范围与 API Key 节点范围内。
+    get:
+      tags: [share]
+      summary: 单节点最近采样（机器接口）
+      description: |
+        机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
+        返回该节点最近一次采样折算的公开结构（字段同 PublicNode）：无采样的指标字段为 null 而不是 0，
+        metrics_at 给出最近一次成功采样时刻供调用方判断新鲜度。刻意不含内部地址、资源细节与凭据。
+        只读，可能写回 API Key 的 lastUsed；不设置缓存响应头。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 单个节点的公开结构与最近采样时刻。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareRecent"
+        "400":
+          description: |
+            节点不在 API Key 与令牌的交集范围内，正文 {"error":"该节点不在访问范围内"}；
+            或节点已撤销/被隐藏/不在令牌范围内，正文 {"error":"节点不可见"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: '缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /share/{token}/api/v1/public/records:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文（限定可见节点范围）。
+      - name: node
+        in: query
+        required: true
+        schema: { type: string }
+        description: 节点编号，须同时落在令牌范围与 API Key 节点范围内。
+      - name: from
+        in: query
+        required: true
+        schema: { type: integer, format: int64 }
+        description: 起始 Unix 秒。
+      - name: to
+        in: query
+        required: true
+        schema: { type: integer, format: int64 }
+        description: 结束 Unix 秒，必须晚于 from。
+      - name: step
+        in: query
+        required: false
+        schema: { type: integer, default: 300 }
+        description: 步长（秒），默认 300，运行时 clamp 到 [60, 86400]。
+    get:
+      tags: [share]
+      summary: 公开指标历史降采样（机器接口）
+      description: |
+        机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
+        双重鉴权通过后复用页面接口的降采样逻辑，故 200 响应体与 /share/{token}/data/records 完全一致，
+        但拒绝文案不同：节点不在访问范围内时是 {"error":"该节点不在访问范围内"}。
+        点数上限 2000，缺失区间自然断开、不插值不补零；只读，可能写回 API Key 的 lastUsed；不设置缓存响应头。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 节点编号、选用层级、实际步长与降采样曲线点，与页面接口 /data/records 同形。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareRecords"
+        "400":
+          description: |
+            分享页已关闭，正文 {"error":"分享页已关闭"}；节点不在 API Key 与令牌的交集范围内，正文 {"error":"该节点不在访问范围内"}；
+            或复用逻辑返回的 {"error":"该节点不在分享范围内"}；to<=from，正文 {"error":"结束时间必须晚于开始时间"}；
+            或 (to-from)/step 超过 2000 点，正文 {"error":"区间与步长组合返回点数过多"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: '缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /share/{token}/api/v1/public/metrics:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文（限定可见节点范围）。
+    get:
+      tags: [share]
+      summary: 公开 Prometheus 指标（机器接口）
+      description: |
+        机器接口，双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
+        返回 Prometheus 文本格式平文（Content-Type: text/plain; version=0.0.4; charset=utf-8），
+        每条样本只带 node 与 display_name 两个标签，**不输出地址**；缺失的采样不输出样本行，
+        面板上表现为断档而不是被记成 0。只读，可能写回 API Key 的 lastUsed；不设置缓存响应头。
+      servers:
+        - url: https://{host}
+          description: 主控 HTTPS 监听地址
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: |
+            Prometheus 文本格式平文（# HELP / # TYPE 与样本行），Content-Type 严格为 text/plain; version=0.0.4; charset=utf-8。
+            指标为 opsd_node_online、opsd_node_cpu_usage_percent、opsd_node_memory_used_bytes、opsd_node_memory_total_bytes、
+            opsd_node_disk_used_bytes、opsd_node_disk_total_bytes、opsd_node_load1、
+            opsd_node_network_receive_bytes_per_second、opsd_node_network_transmit_bytes_per_second、opsd_node_uptime_seconds。
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          description: 分享页已关闭，正文 {"error":"分享页已关闭"}（JSON，不是 Prometheus 文本）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: '缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/themes:
+    get:
+      tags: [theme]
+      summary: 列出已安装主题
+      description: 返回全部已安装主题（含配置项声明），按 short 字典序排列；启用状态见 /api/v1/themes/active。
+      responses:
+        "200":
+          description: 已安装主题列表。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/themes/active:
+    get:
+      tags: [theme]
+      summary: 读取两个界面的启用主题
+      description: 返回控制台与分享页当前启用主题的 describe 输出；未启用时回落到内置主题形态。
+      responses:
+        "200":
+          description: 两个界面各自的启用主题描述。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeActive"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [theme]
+      summary: 切换启用主题
+      description: |
+        按界面写入启用记录与设置；short 为 default（大小写不敏感）时清除启用记录回到内置主题。
+        无幂等键要求，重复提交以新值覆盖；设置合并声明默认值后编码为 JSON 字符串的长度不得超过
+        MAX_SETTINGS_BYTES（32 KiB）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThemeActivateRequest"
+      responses:
+        "200":
+          description: 已生效的主题与设置。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeActivateResult"
+        "400":
+          description: |
+            surface 不是 console 或 share（「未知界面：<x>」）；short 非 default 且未安装（「主题未安装」）；
+            主题未声明覆盖目标界面（「该主题未声明支持这个界面」）；合并默认值后的设置编码超过
+            MAX_SETTINGS_BYTES（32 KiB，「主题设置体积过大」）。这是 400 而不是 404。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/themes/console:
+    post:
+      tags: [theme]
+      summary: 安装控制台主题（令牌级）
+      description: |
+        清单直接以 JSON 提交，不携带资源文件；校验通过后入库，digest 为主控对序列化清单计算的 sha256。
+        short 相同时覆盖既有记录（无幂等键）。short 只能含大小写字母/数字/下划线/连字符（1-48 字符），
+        不得为 default（大小写不敏感）。整个路由处于控制台面默认 1 MiB 请求体上限之下。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThemeManifest"
+      responses:
+        "200":
+          description: 已安装的主题 short。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeInstallConsoleResult"
+        "400":
+          description: |
+            清单校验失败（short 为空/超 48 字符/含非法字符/为 default、surfaces 为空、控制台主题缺
+            tokens、令牌名不以 -- 开头或令牌值含不允许的字符与写法、configuration.type 非 managed、
+            配置项 key 或类型非法，正文为具体校验消息）；或清单未声明支持控制台
+            （「该主题未声明支持控制台」）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+  /api/v1/themes/share:
+    post:
+      tags: [theme]
+      summary: 安装分享页主题包（zip 原始字节）
+      description: |
+        请求体为主题包 zip 的原始字节，非 multipart，也不解析 Content-Type，直接读字节流；
+        包根目录必须含 theme.json 与 index.html。先解压到临时目录、校验通过后再就位，
+        同 short 覆盖旧记录与资源目录（无幂等键）。包体积上限 MAX_PACKAGE_BYTES（20 MiB），
+        解压后总量上限 MAX_EXTRACTED_BYTES（64 MiB，防解压炸弹）。
+      requestBody:
+        required: true
+        description: 主题包 zip 的原始字节。
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: 已安装的主题 short 与内容摘要。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeInstallShareResult"
+        "400":
+          description: |
+            请求体为空（「请求体为空」）、主题包不是有效的 zip（「主题包不是有效的 zip」）、根目录缺
+            theme.json、theme.json 解析失败、清单校验失败、清单未声明支持分享页、根目录缺 index.html、
+            包内越界路径、解压后总大小超 64 MiB 上限。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          description: 请求体超过 MAX_PACKAGE_BYTES（20 MiB），由路由层 DefaultBodyLimit 在进入处理函数前拒绝；正文是 axum 默认纯文本，不是本模块的 JSON 错误体。
+          content:
+            text/plain:
+              schema:
+                type: string
+                const: Failed to buffer the request body
+  /api/v1/themes/{short}:
+    parameters:
+      - name: short
+        in: path
+        required: true
+        schema: { type: string }
+        description: 主题唯一标识，仅大小写字母/数字/下划线/连字符，长度 1-48；default 保留给内置主题。
+    delete:
+      tags: [theme]
+      summary: 删除主题
+      description: |
+        删除主题记录、该主题已保存的设置（theme_settings_<short>）与资源目录；删除的正好是启用中的
+        主题时同时清除启用记录、回落到内置主题。内置主题 default（忽略大小写）保留不可删。
+      responses:
+        "200":
+          description: 已删除。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+        "400":
+          description: short 为 default（忽略大小写，「内置主题不可删除」）；或未安装该主题（「主题不存在」）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /share/{token}/data/theme:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文，门禁按 sha256 摘要查找。
+    get:
+      tags: [theme]
+      summary: 读取分享页公开主题数据
+      description: |
+        返回分享页当前启用主题的 describe 输出：short、名称、令牌、公开设置与配置项声明。
+        设置与配置项声明公开可读，不得放入密钥；未启用包级主题时同样返回内置主题形态
+        （short 为 default），不报错。
+      servers:
+        - url: https://{host}
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 分享页主题公开数据。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeDescribe"
+        "404":
+          description: 令牌无效、过期或被撤销（门禁直接丢弃，不产生业务响应）。空正文。
+  /share/{token}/theme/{path}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: 分享令牌明文，门禁按 sha256 摘要查找。
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+        description: 主题资源相对路径（资源目录内），可含子路径。
+    get:
+      tags: [theme]
+      summary: 读取分享页主题资源
+      description: |
+        返回主题资源原始字节。Content-Type 按扩展名推测：js/mjs→text/javascript、css→text/css、
+        html→text/html; charset=utf-8、svg→image/svg+xml、json→application/json、png→image/png、
+        jpg/jpeg→image/jpeg、webp→image/webp、woff2→font/woff2，其余→application/octet-stream；
+        并附独立 CSP 响应头（default-src 'none'，只放行 self，内联样式例外）。路径必须落在该主题
+        资源目录内；未启用包级分享主题时本端点恒 404。
+      servers:
+        - url: https://{host}
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security: []
+      responses:
+        "200":
+          description: 主题资源原始字节，带按扩展名推测的 Content-Type 与 CSP 响应头。
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: |
+            令牌无效/过期/被撤销、path 包含 .. 或以 / 开头、当前未启用包级分享主题（has_assets=false）、
+            或资源读取失败。空正文。
+  /api/v1/storage/readiness:
+    get:
+      tags: [storage]
+      summary: 存储预检报告
+      description: |
+        结论式报告：逐节点给出适合等级与原因、一致性检查、推荐拓扑，以及总体是否可直接进入部署计划。
+        只读：读 DB 里节点、在线通道与内存盘点缓存，不改库、不下发任务、不广播事件。
+        未采集的节点标为「待采集」，不会被当作不适合。
+      responses:
+        "200":
+          description: 预检报告。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          description: 内部盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/nodes/{id}/host-inspect:
+    parameters:
+      - $ref: "#/components/parameters/NodeId"
+    post:
+      tags: [storage]
+      summary: 触发节点主机盘点
+      description: |
+        只读操作但走任务机制以便看到执行结果：写库登记 HostInspect 任务，任务为 Pending 时向该节点通道下发，
+        并广播 events。成功返回 200 + task_id（不是 202）。幂等键用于去重同一个盘点动作。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HostInspectRequest"
+      responses:
+        "200":
+          description: 已接受任务的 id，供任务面板回溯。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAccepted"
+        "400":
+          description: |
+            同节点同 idempotency_key 已用于参数不同的动作时返回「幂等键已用于不同参数」；
+            其他错误（如任务入库失败）返回对应 DB 错误信息。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/storage/clusters:
+    get:
+      tags: [storage]
+      summary: 集群定义列表
+      description: |
+        已定义集群列表；每个集群的 secret_key 一律删除并替换为 has_secret_key 布尔（密钥不回传）。
+        同时返回固定的镜像仓库前缀、文件系统与最小节点数，界面据此生成选择项。
+      responses:
+        "200":
+          description: 集群列表与固定常量。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [clusters, image_prefix, filesystem, min_nodes]
+                properties:
+                  clusters:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ClusterListItem"
+                  image_prefix:
+                    type: string
+                    const: pgsty/silo
+                    description: 允许的镜像仓库前缀，固定为 pgsty/silo。
+                  filesystem:
+                    type: string
+                    const: xfs
+                    description: 固定文件系统，xfs。
+                  min_nodes:
+                    type: integer
+                    const: 4
+                    description: 分布式部署允许的最小节点数。
+                additionalProperties: false
+        "400":
+          description: 列集群失败，正文为对应 DB 错误信息。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [storage]
+      summary: 保存集群定义
+      description: |
+        只写定义，不碰任何节点。created_at 由服务端填写：新建时设为当前时间，已存在则保留旧值。
+        校验失败返回 400 与中文校验消息。成功返回 200。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterSpec"
+      responses:
+        "200":
+          description: 保存后的集群定义，含服务端填写的 created_at；secret_key 原样回传（保存的是全量定义）。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cluster]
+                properties:
+                  cluster:
+                    $ref: "#/components/schemas/ClusterSpec"
+                additionalProperties: false
+        "400":
+          description: |
+            validate_spec 任一校验失败（集群名称长度不合法 / 名称只能包含字母数字连字符下划线 /
+            节点数不足 / 节点列表存在重复 / 镜像标签不合法 / 不接受 latest 标签 /
+            标签应形如 RELEASE.<时间戳> 或具体版本号 / 必须给出集群对外服务地址 /
+            访问凭据不合法：密钥至少 16 个字符），或保存失败时返回对应 DB 错误信息。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/storage/plans:
+    post:
+      tags: [storage]
+      summary: 生成部署计划
+      description: |
+        计划精确列出将被清空的每一块设备及其计划时的容量，并带 fingerprint 指纹与 5 分钟有效期
+        （expires = now()+300）。本步只把「将要发生什么」固化下来，不写任何节点。
+        生成时逐一校验集群定义存在、节点存在 / 未撤销 / 在线 / 已盘点 / 有可用盘、各节点盘数一致。
+        成功返回 200 + plan。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterRefRequest"
+      responses:
+        "200":
+          description: 生成的部署计划。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [plan]
+                properties:
+                  plan:
+                    $ref: "#/components/schemas/Plan"
+                additionalProperties: false
+        "400":
+          description: |
+            正文为对应中文消息：集群定义不存在 / 节点不存在：<id> / 节点已撤销：<id> /
+            节点离线，不能纳入计划：<id> / 节点尚未盘点，不能纳入计划：<id> /
+            节点没有可用磁盘，不能纳入计划：<name> /
+            各节点可用磁盘数量不一致（<数量列表>），请先补齐再部署 / 保存计划失败（DB 错误信息）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "500":
+          description: 盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/storage/plans/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: 计划 id。
+    get:
+      tags: [storage]
+      summary: 读取部署计划
+      description: 返回计划全文与是否已过期（expired = plan.expires <= now()）。只读 storage_plans 桶。
+      responses:
+        "200":
+          description: 计划全文与过期标志。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [plan, expired]
+                properties:
+                  plan:
+                    $ref: "#/components/schemas/Plan"
+                  expired:
+                    type: boolean
+                    description: 计划是否已过期（expires <= now()）。
+                additionalProperties: false
+        "400":
+          description: 按 id 查不到计划时返回「计划不存在」。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/storage/plans/apply:
+    post:
+      tags: [storage]
+      summary: 执行部署计划
+      description: |
+        逐节点串行执行：每节点按「磁盘准备 → 容器部署」两步各下发一个任务（各生成一个 task_id）。
+        任一节点任一步失败即记录到 plan.failed（写审计「已阻断后续节点」）并阻断后续节点，整单返回 400。
+        执行前按节点实时盘点重新核对：节点离线、盘点丢失、设备消失、容量变化、设备不再是无使用痕迹状态、
+        指纹不一致，任何一项不符即整单拒绝。破坏性计划（destructive=true）必须显式确认
+        acknowledge_destructive=true 才能执行。全部成功时写含「不可逆磁盘格式化」的审计。
+        返回 200（不是 202）与本次下发清单。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoragePlanApplyRequest"
+      responses:
+        "200":
+          description: 本次执行的计划 id、每个节点每个已下发步骤的记录与已完整执行完成的节点列表。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoragePlanApplyResult"
+        "400":
+          description: |
+            执行前校验或执行中失败，正文为对应中文消息：计划不存在 / 集群定义已不存在，请重新生成计划 /
+            计划已过期，请重新生成 / 该计划包含不可逆的磁盘格式化，必须显式确认后才能执行 /
+            计划已有失败节点，不能继续执行 / 节点 <name> 已离线，计划作废 /
+            节点 <name> 的盘点结果已丢失，计划作废 / 设备 <path> 在 <name> 上已不存在，计划作废 /
+            设备 <path> 容量已变化（计划 <n> 字节，实际 <n> 字节），计划作废 /
+            设备 <path> 已不再是无使用痕迹的状态，计划作废 / 计划的设备清单已被修改，请重新生成 /
+            节点 <name> 执行失败，已阻断后续节点：<reason>。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "500":
+          description: 盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/storage/status:
+    post:
+      tags: [storage]
+      summary: 触发集群状态采集
+      description: |
+        登记 StorageStatus 任务并下发给集群中首个在线节点（通道不可用即 400）。
+        成功返回 200 + task_id（不是 202），label 固定为「状态」。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterRefRequest"
+      responses:
+        "200":
+          description: 已下发的状态采集任务。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageTaskAccepted"
+        "400":
+          description: |
+            正文为对应中文消息：集群不存在 / 集群没有在线节点 / 节点通道不可用 / 任务入库失败（DB 错误信息）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/storage/buckets:
+    post:
+      tags: [storage]
+      summary: 创建或删除存储桶
+      description: |
+        桶是集群级操作，在任一在线节点执行即可，不逐节点下发。remove=true 时删除桶而非创建。
+        成功返回 200 + task_id（不是 202），label 固定为「桶」。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BucketRequest"
+      responses:
+        "200":
+          description: 已下发的桶任务。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageTaskAccepted"
+        "400":
+          description: |
+            正文为对应中文消息：集群不存在 / 集群没有在线节点 / 节点通道不可用 / 任务入库失败（DB 错误信息）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/storage/users:
+    post:
+      tags: [storage]
+      summary: 创建或删除集群访问用户
+      description: |
+        用户是集群级操作，下发到任一在线节点执行，不逐节点下发。remove=true 时删除用户，
+        policy 缺省 readwrite。成功返回 200 + task_id（不是 202），label 固定为「用户」。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserRequest"
+      responses:
+        "200":
+          description: 已下发的用户任务。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageTaskAccepted"
+        "400":
+          description: |
+            正文为对应中文消息：集群不存在 / 集群没有在线节点 / 节点通道不可用 / 任务入库失败（DB 错误信息）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/database/overview:
+    get:
+      tags: [database]
+      summary: 数据库只读巡检总览
+      description: |
+        只读视图:按名称排序返回各节点结论(不含已撤销节点)、跨节点一致性检查结论与汇总。
+        整个视图不含任何凭据类字段:configured 只是「已配置只读账号」的布尔标记,报告与审计均无
+        账号、密码、令牌字段,Agent 侧凭据只存在于节点本机。
+        未知项如实单列,绝不冒充正常:「未知不等于 0」由 null 值与 unknown 列表表达,不补 0。
+      responses:
+        "200":
+          description: 巡检总览。expected_cluster_size 取各报告的第一个非零期望成员数,全部为 0 时此值为 0。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Overview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          description: 巡检缓存不可用,正文 {"error":"巡检缓存不可用"}。内存巡检缓存读锁中毒时出现,正常情况不可达。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/nodes/{id}/db-inspect:
+    parameters:
+      - $ref: "#/components/parameters/NodeId"
+    post:
+      tags: [database]
+      summary: 下发数据库只读巡检
+      description: |
+        创建一次只读巡检任务:新建且节点在线时立即经 Agent 长连接下发并广播 database 事件,
+        离线时留待调度;不校验节点是否存在。幂等键去重:同节点 + 同键复用既有任务并返回
+        同一 task_id,不重复下发。审计记录只含对象与结果,不含 SQL 正文与凭据。
+        注意返回 200 而不是约定中的 202(历史原因,与文件面一致),task_id 可用于查询
+        /api/v1/tasks/{id} 的执行结果。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DbInspectRequest"
+      responses:
+        "200":
+          description: 已受理,正文为 {"task_id":"<任务 UUID>"}。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAccepted"
+        "400":
+          description: |
+            拒绝受理,正文为 {"error":"<中文消息>"}:同节点同键但参数摘要不同时报
+            「幂等键已用于不同参数」(历史原因 400 而非 409);accept_task 其余失败
+            (参数摘要不匹配、写入错误)同样映射为 400。请求体不是合法 JSON,或缺少/
+            类型不对 idempotency_key 时由框架默认拒绝,具体状态码与正文以框架行为为准
+            (源码未自定义)。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: opsd_session
+      description: 管理员会话。HttpOnly、Secure、SameSite=Strict，Path 限定在 /{安全入口}/ 之下。
+    csrfToken:
+      type: apiKey
+      in: header
+      name: x-csrf-token
+      description: 必须等于 Session.csrf。只对非 GET/HEAD 请求校验；失败返回 403 纯文本。
+    agentMtls:
+      type: mutualTLS
+      description: Agent 客户端证书（mTLS）。仅 Agent 监听面使用。
+  parameters:
+    NodeId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: 节点编号。所有资源一律以 node_id + resource_id 定位。
+    TaskId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: 任务 UUID。
+  responses:
+    Unauthorized:
+      description: 未登录。正文 {"error":"请先登录"}。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    OriginOrCsrfRejected:
+      description: Origin 或 CSRF 校验失败。注意正文是**纯文本**，不是 JSON。
+      content:
+        text/plain:
+          schema:
+            type: string
+            const: 请求来源或 CSRF 校验失败
+    BadRequest:
+      description: 参数或状态不满足，正文为 {"error":"<中文消息>"}；也可能是内部错误经统一映射后的 400。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: 请求体超过控制台面 1MB 上限。
+  schemas:
+    MetricsRecord:
+      type: object
+      description: 主控保存的某节点最近一次指标记录，含时钟偏移估计。
+      required: [node_id, received_at, clock_offset, sample]
+      properties:
+        node_id:
+          type: string
+          description: 节点编号。
+        received_at:
+          type: integer
+          format: int64
+          description: 主控收到该指标帧的时刻（Unix 秒）。
+        clock_offset:
+          type: integer
+          format: int64
+          description: 估算的时钟偏移（秒），正值表示 Agent 时钟落后；含单向网络时延，只用于识别明显偏差。
+        sample:
+          oneOf:
+            - $ref: "#/components/schemas/MetricsSample"
+            - type: "null"
+          description: 本次采样。采集失败时为 null（此时 error 有值），主控必须显示「采集失败」而不是 0。
+        error:
+          type: [string, "null"]
+          description: 采集失败原因；无失败时缺省或为 null。
+      additionalProperties: false
+    MetricsSample:
+      type: object
+      description: 一次主机指标采样。数值单位写在字段名中（bytes_per_second / 百分比），展示层无需再猜单位。
+      required:
+        - at
+        - cpu_usage
+        - cpu_per_core
+        - load1
+        - load5
+        - load15
+        - memory_total
+        - memory_used
+        - memory_available
+        - swap_total
+        - swap_used
+        - disks
+        - disk_read_bytes_per_second
+        - disk_write_bytes_per_second
+        - interfaces
+        - uptime
+        - processes
+        - tcp_connections
+        - udp_connections
+      properties:
+        at:
+          type: integer
+          format: int64
+          description: 采样时刻（秒，Agent 本地时钟）；主控据此估算时钟偏移。
+        cpu_usage:
+          type: number
+          description: CPU 使用率（百分比）。
+        cpu_per_core:
+          type: array
+          items: { type: number }
+          description: 每核 CPU 使用率。
+        load1:
+          type: number
+        load5:
+          type: number
+        load15:
+          type: number
+        memory_total:
+          type: integer
+          format: int64
+          description: 内存总量（字节）。
+        memory_used:
+          type: integer
+          format: int64
+          description: 已用内存（字节）。
+        memory_available:
+          type: integer
+          format: int64
+          description: 可用内存（字节）。
+        swap_total:
+          type: integer
+          format: int64
+          description: 交换分区总量（字节）。
+        swap_used:
+          type: integer
+          format: int64
+          description: 已用交换分区（字节）。
+        disks:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiskUsage"
+        disk_read_bytes_per_second:
+          type: number
+        disk_write_bytes_per_second:
+          type: number
+        interfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterfaceRate"
+        uptime:
+          type: integer
+          format: int64
+          description: 系统运行时长（秒）。
+        processes:
+          type: integer
+          format: int64
+          description: 进程数。
+        tcp_connections:
+          type: integer
+          format: int64
+          description: TCP 连接数。
+        udp_connections:
+          type: integer
+          format: int64
+          description: UDP 连接数。
+        peers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PeerLatency"
+          description: 到各对端的延迟。探测频率低于采样频率，多数采样为空，稀疏探测时沿用上一次结果。
+      additionalProperties: false
+    MetricsPoint:
+      type: object
+      description: 指标曲线上一个点。字段扁平、单位明确，便于直接绘图；缺失区间不插值不补零，直接缺点。
+      required:
+        - at
+        - cpu_usage
+        - memory_used
+        - memory_total
+        - swap_used
+        - load1
+        - disk_read_bytes_per_second
+        - disk_write_bytes_per_second
+        - net_rx_bytes_per_second
+        - net_tx_bytes_per_second
+      properties:
+        at:
+          type: integer
+          format: int64
+          description: 桶时刻（秒）。
+        cpu_usage:
+          type: number
+          description: CPU 使用率（百分比），桶内取平均。
+        memory_used:
+          type: integer
+          format: int64
+          description: 已用内存（字节）。
+        memory_total:
+          type: integer
+          format: int64
+          description: 内存总量（字节）。
+        swap_used:
+          type: integer
+          format: int64
+          description: 已用交换分区（字节）。
+        load1:
+          type: number
+        disk_read_bytes_per_second:
+          type: number
+        disk_write_bytes_per_second:
+          type: number
+        net_rx_bytes_per_second:
+          type: number
+          description: 所有网卡接收速率求和。
+        net_tx_bytes_per_second:
+          type: number
+          description: 所有网卡发送速率求和。
+      additionalProperties: false
+    PeerLatency:
+      type: object
+      description: 到单个对端节点的延迟测量结果。
+      required: [node_id, address, method, reachable]
+      properties:
+        node_id:
+          type: string
+        address:
+          type: string
+        method:
+          type: string
+          enum: [icmp, tcp]
+        latency_ms:
+          type: [number, "null"]
+          description: 延迟（毫秒）。没测到时为 null 或缺省，绝不补 0（0 表示同机）。
+        reachable:
+          type: boolean
+          description: 是否可达。
+        error:
+          type: [string, "null"]
+          description: 不可达原因。
+        probed_at:
+          type: integer
+          format: int64
+          description: 测量时刻，可早于采样时刻。
+      additionalProperties: false
+    InterfaceRate:
+      type: object
+      description: 单个网络接口的速率与累计错误。
+      required: [name, rx_bytes_per_second, tx_bytes_per_second, rx_errors, tx_errors]
+      properties:
+        name:
+          type: string
+          description: 接口名。
+        rx_bytes_per_second:
+          type: number
+        tx_bytes_per_second:
+          type: number
+        rx_errors:
+          type: integer
+          format: int64
+          description: 接收错误累计。
+        tx_errors:
+          type: integer
+          format: int64
+          description: 发送错误累计。
+      additionalProperties: false
+    DiskUsage:
+      type: object
+      description: 真实挂载点的容量与 inode 用量。
+      required: [mount, filesystem, total, used, inode_total, inode_used]
+      properties:
+        mount:
+          type: string
+          description: 挂载点。
+        filesystem:
+          type: string
+          description: 文件系统类型；底层为 /proc/mounts 的对应字段，块设备写入设备路径。
+        total:
+          type: integer
+          format: int64
+          description: 容量（字节）。
+        used:
+          type: integer
+          format: int64
+          description: 已用（字节）。
+        inode_total:
+          type: integer
+          format: int64
+          description: inode 总数。
+        inode_used:
+          type: integer
+          format: int64
+          description: 已用 inode 数。
+      additionalProperties: false
+    MetricsTierInfo:
+      type: object
+      description: 单个指标层级的保留状态汇总。
+      required: [tier, bucket_seconds, retention_seconds, records, oldest]
+      properties:
+        tier:
+          type: string
+          enum: [raw, m5, h1]
+          description: 层级名。
+        bucket_seconds:
+          type: integer
+          description: 桶宽（秒）：raw=15、m5=300、h1=3600。
+        retention_seconds:
+          type: integer
+          format: int64
+          description: 保留时长（秒）：raw=7 天、m5=90 天、h1=365 天。
+        records:
+          type: integer
+          format: int64
+          description: 该层级当前记录数。
+        oldest:
+          type: [integer, "null"]
+          format: int64
+          description: 最早一条记录的时刻（Unix 秒）；无记录时为 null。
+      additionalProperties: false
+    ShareSettingsInput:
+      description: 更新分享设置的请求体。是否拒绝未知字段未确认:源码未加 deny_unknown_fields,serde 默认忽略未知字段。
+      type: object
+      required: [enabled, site]
+      properties:
+        enabled:
+          type: boolean
+          description: 分享页整体开关。
+        site:
+          $ref: "#/components/schemas/SitePublic"
+          description: 站点公开信息;其下 name/description/footer 三者均必填。
+    ShareSettings:
+      type: object
+      required: [enabled, site]
+      properties:
+        enabled:
+          type: boolean
+          description: 分享页整体开关。
+        site:
+          $ref: "#/components/schemas/SitePublic"
+      additionalProperties: false
+    SitePublic:
+      type: object
+      required: [name, description, footer]
+      properties:
+        name:
+          type: string
+          maxLength: 60
+          description: 站点名称,缺省 "opsd";写入时超过 60 字符被拒。
+        description:
+          type: string
+          maxLength: 200
+          description: 站点描述,缺省 "节点状态";写入时超过 200 字符被拒。
+        footer:
+          type: string
+          maxLength: 200
+          description: 页脚自定义文字,不允许 HTML,缺省为空串;写入时超过 200 字符被拒。
+      additionalProperties: false
+    ShareTokenInput:
+      description: 创建分享令牌的请求体。是否拒绝未知字段未确认:源码无 deny_unknown_fields,serde 默认忽略未知字段。
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+          maxLength: 60
+          description: 分享名称,trim 后非空且不超过 60 字符,否则 400。
+        expires_hours:
+          type: [integer, "null"]
+          format: int64
+          minimum: 1
+          maximum: 8760
+          description: 有效小时数,范围 1..=8760(24*365);省略或 null 表示长期有效。
+        nodes:
+          type: [array, "null"]
+          items: { type: string }
+          description: 限定可见节点 id 列表;省略或 null 表示全部未隐藏节点。
+    ShareToken:
+      type: object
+      required: [id, label, digest, created_at, expires_at, nodes, revoked]
+      properties:
+        id:
+          type: string
+          description: 令牌记录 id。
+        label:
+          type: string
+          description: 分享名称。
+        digest:
+          type: string
+          description: sha256(明文令牌) 十六进制摘要,门禁常量时间查找用;明文永不落库、不再出现在任何响应中。
+        created_at:
+          type: integer
+          format: int64
+          description: 创建时间,Unix 秒。
+        expires_at:
+          type: [integer, "null"]
+          format: int64
+          description: 到期时间,Unix 秒;键恒存在,null 表示长期有效。
+        nodes:
+          type: [array, "null"]
+          items: { type: string }
+          description: 限定可见节点 id 列表;null 表示全部未隐藏节点。
+        revoked:
+          type: boolean
+          description: 是否已撤销;撤销后门禁立即失效,记录仍留在列表。
+      additionalProperties: false
+    ShareTokenList:
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShareToken"
+          description: 按 created_at 降序;只含摘要与元数据,绝不包含明文令牌(明文仅创建响应一次)。
+      additionalProperties: false
+    ShareTokenCreated:
+      type: object
+      required: [token, record]
+      properties:
+        token:
+          type: string
+          description: 明文令牌,仅此一次返回,之后无法再取回。
+        record:
+          $ref: "#/components/schemas/ShareToken"
+      additionalProperties: false
+    ApiKeyInput:
+      description: 创建 API 密钥的请求体。是否拒绝未知字段未确认:源码无 deny_unknown_fields,serde 默认忽略未知字段。
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+          maxLength: 60
+          description: 密钥名称,trim 后非空且不超过 60 字符,否则 400。
+        nodes:
+          type: [array, "null"]
+          items: { type: string }
+          description: 限定可见节点 id 列表;省略或 null 表示全部。
+    ApiKey:
+      type: object
+      required: [id, label, digest, created_at, last_used, revoked, nodes]
+      properties:
+        id:
+          type: string
+          description: 密钥记录 id。
+        label:
+          type: string
+          description: 密钥名称。
+        digest:
+          type: string
+          description: sha256(明文密钥) 十六进制摘要;明文永不落库、不再出现在任何响应中。
+        created_at:
+          type: integer
+          format: int64
+          description: 创建时间,Unix 秒。
+        last_used:
+          type: [integer, "null"]
+          format: int64
+          description: 最近一次机器接口使用时间,Unix 秒;从未使用或较上次写入相差不超过 60 秒时为 null 或旧值(只在相差超过 60 秒时才写回)。
+        revoked:
+          type: boolean
+          description: 是否已撤销。
+        nodes:
+          type: [array, "null"]
+          items: { type: string }
+          description: 限定可见节点 id 列表;null 表示全部(授权时与分享令牌范围取交集)。
+      additionalProperties: false
+    ApiKeyList:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiKey"
+          description: 按 created_at 降序;只含摘要与元数据,绝不包含明文密钥(明文仅创建响应一次)。
+      additionalProperties: false
+    ApiKeyCreated:
+      type: object
+      required: [key, record]
+      properties:
+        key:
+          type: string
+          description: 明文密钥(opsd_ 前缀),仅此一次返回,之后无法再取回。
+        record:
+          $ref: "#/components/schemas/ApiKey"
+          description: 密钥记录本身,last_used 为 null。
+      additionalProperties: false
+    PublicNode:
+      type: object
+      required:
+        - id
+        - name
+        - online
+        - region
+        - group
+        - tags
+        - weight
+        - remark
+        - cpu_usage
+        - memory_used
+        - memory_total
+        - disk_used
+        - disk_total
+        - load1
+        - net_rx_bytes_per_second
+        - net_tx_bytes_per_second
+        - uptime
+        - metrics_at
+      properties:
+        id:
+          type: string
+          description: 节点编号。
+        name:
+          type: string
+          description: 节点显示名。
+        online:
+          type: boolean
+          description: 是否在线（存在通道连接）。
+        region:
+          type: [string, "null"]
+          description: 区域，可缺省可 null。
+        group:
+          type: [string, "null"]
+          description: 分组，可缺省可 null。
+        tags:
+          type: array
+          items: { type: string }
+          description: 标签列表，缺省为空数组。
+        weight:
+          type: integer
+          format: int64
+          description: 排序权重。
+        remark:
+          type: [string, "null"]
+          description: 公开备注（内部字段 public_remark 的公开别名），可缺省可 null。
+        cpu_usage:
+          type: [number, "null"]
+          description: CPU 使用百分比，无采样为 null（不是 0）。
+        memory_used:
+          type: [integer, "null"]
+          format: int64
+          description: 已用内存字节，无采样为 null。
+        memory_total:
+          type: [integer, "null"]
+          format: int64
+          description: 内存总量字节，无采样为 null。
+        disk_used:
+          type: [integer, "null"]
+          format: int64
+          description: 磁盘总已用字节（累加各挂载点），无采样为 null。
+        disk_total:
+          type: [integer, "null"]
+          format: int64
+          description: 磁盘总容量字节，无采样为 null。
+        load1:
+          type: [number, "null"]
+          description: 1 分钟平均负载，无采样为 null。
+        net_rx_bytes_per_second:
+          type: [integer, "null"]
+          format: int64
+          description: 入站速率，各网卡求和后取整，无采样为 null。
+        net_tx_bytes_per_second:
+          type: [integer, "null"]
+          format: int64
+          description: 出站速率，各网卡求和后取整，无采样为 null。
+        uptime:
+          type: [integer, "null"]
+          format: int64
+          description: 运行时长秒，无采样为 null。
+        metrics_at:
+          type: [integer, "null"]
+          format: int64
+          description: |
+              最近一次**上报**指标的接收时刻（Unix 秒）；采集失败的上报同样会刷新它，此时各指标字段为 null。
+              从未上报过才是 null。它不是「最近一次成功采样」的时刻。
+      additionalProperties: false
+    Point:
+      type: object
+      required:
+        - at
+        - cpu_usage
+        - memory_used
+        - memory_total
+        - swap_used
+        - load1
+        - disk_read_bytes_per_second
+        - disk_write_bytes_per_second
+        - net_rx_bytes_per_second
+        - net_tx_bytes_per_second
+      properties:
+        at:
+          type: integer
+          format: int64
+          description: 时间戳（Unix 秒），取所在步长桶内**首条采样**自己的时间戳，不与桶边界对齐。
+        cpu_usage:
+          type: number
+          description: CPU 使用百分比。
+        memory_used:
+          type: integer
+          format: int64
+          description: 已用内存字节。
+        memory_total:
+          type: integer
+          format: int64
+          description: 内存总量字节。
+        swap_used:
+          type: integer
+          format: int64
+          description: 已用交换分区字节。
+        load1:
+          type: number
+          description: 1 分钟平均负载。
+        disk_read_bytes_per_second:
+          type: number
+          description: 磁盘读速率（字节/秒）。
+        disk_write_bytes_per_second:
+          type: number
+          description: 磁盘写速率（字节/秒）。
+        net_rx_bytes_per_second:
+          type: number
+          description: 入站速率（字节/秒），各网卡求和。
+        net_tx_bytes_per_second:
+          type: number
+          description: 出站速率（字节/秒），各网卡求和。
+      additionalProperties: false
+    ShareSummary:
+      type: object
+      required: [site, node_count, online_count, generated_at]
+      properties:
+        site:
+          $ref: "#/components/schemas/SitePublic"
+        node_count:
+          type: integer
+          format: int64
+          description: 令牌可见（未撤销、未隐藏且在令牌范围内）的节点数。
+        online_count:
+          type: integer
+          format: int64
+          description: 其中在线的节点数（存在活跃通道连接）。
+        generated_at:
+          type: integer
+          format: int64
+          description: 响应生成时的 Unix 秒时间戳。
+      additionalProperties: false
+    ShareSummaryBase:
+      type: object
+      description: 机器接口的汇总，刻意不下发站点信息（site），只给交集内的计数与生成时刻。
+      required: [node_count, online_count, generated_at]
+      properties:
+        node_count:
+          type: integer
+          format: int64
+          description: 令牌范围与 API Key 节点范围交集后的可见节点数。
+        online_count:
+          type: integer
+          format: int64
+          description: 其中在线的节点数（存在活跃通道连接）。
+        generated_at:
+          type: integer
+          format: int64
+          description: 响应生成时的 Unix 秒时间戳。
+      additionalProperties: false
+    ShareNodes:
+      type: object
+      required: [nodes]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicNode"
+          description: 可见节点列表，按权重降序、再按名称升序；只含公开白名单字段。
+      additionalProperties: false
+    ShareRecent:
+      type: object
+      required: [node]
+      properties:
+        node:
+          $ref: "#/components/schemas/PublicNode"
+          description: 该节点最近一次采样折算的公开结构；无采样的指标字段为 null 而不是 0。
+      additionalProperties: false
+    ShareRecords:
+      type: object
+      required: [node, tier, step, points]
+      properties:
+        node:
+          type: string
+          description: 回显请求的节点编号。
+        tier:
+          type: string
+          enum: [raw, m5, h1]
+          description: 选用的层级：step<300 为 raw、step<3600 为 m5、其余为 h1。
+        step:
+          type: integer
+          format: int64
+          description: 实际使用的步长（clamp 到 [60, 86400] 之后）。
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/Point"
+          description: 降采样后的曲线点，点数上限 2000；缺失区间自然断开，不插值不补零。
+      additionalProperties: false
+    ThemeSurface:
+      type: string
+      enum: [share, console]
+      description: 主题覆盖的界面。
+    ThemeLocalized:
+      description: 多语言文本，二选一：普通字符串，或语言代码到文本的映射（如 {"zh-CN":"...","en":"..."}）。
+      oneOf:
+        - type: string
+        - type: object
+          additionalProperties: { type: string }
+    ThemeTokens:
+      type: object
+      description: 控制台主题的令牌覆盖，键是 style.css 中的自定义属性名。
+      properties:
+        light:
+          type: object
+          additionalProperties: { type: string }
+          description: 浅色令牌：CSS 自定义属性名到值的映射。
+        dark:
+          type: object
+          additionalProperties: { type: string }
+          description: 深色令牌，同上。
+      additionalProperties: false
+    ThemeField:
+      type: object
+      description: 托管配置项声明。
+      required: [key, name, type]
+      properties:
+        key:
+          type: string
+          description: 配置项标识，非空且不超过 48 字符。
+        name:
+          $ref: "#/components/schemas/ThemeLocalized"
+          description: 配置项显示名。
+        type:
+          type: string
+          enum: [switch, select, number, string, text]
+          description: 配置项类型；select 必须给出 options。
+        default:
+          description: 默认值，可为任意 JSON 值。
+        help:
+          oneOf:
+            - $ref: "#/components/schemas/ThemeLocalized"
+            - type: "null"
+          description: 帮助文本，可为 null。
+        options:
+          type: [string, "null"]
+          description: 仅 select 使用：逗号分隔的选项列表。
+      additionalProperties: false
+    ThemeConfiguration:
+      type: object
+      description: 托管配置声明；首版只接受 managed，raw 不做。
+      properties:
+        type:
+          type: string
+          enum: [managed]
+          description: 配置托管方式，默认为 managed。
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThemeField"
+          description: 配置项声明列表，缺省为空数组。
+      additionalProperties: false
+    ThemeManifest:
+      type: object
+      description: 主题清单。控制台主题以此 JSON 提交；分享页主题包内的 theme.json 同构。
+      required: [short, name, surfaces]
+      properties:
+        short:
+          type: string
+          description: 唯一标识：只含大小写字母/数字/下划线/连字符，长度 1-48，不得为 default（大小写不敏感）。
+        name:
+          $ref: "#/components/schemas/ThemeLocalized"
+          description: 多语言名称。
+        description:
+          oneOf:
+            - $ref: "#/components/schemas/ThemeLocalized"
+            - type: "null"
+          description: 多语言描述，可为 null。
+        version:
+          type: [string, "null"]
+          description: 版本号，可为 null。
+        author:
+          oneOf:
+            - $ref: "#/components/schemas/ThemeLocalized"
+            - type: "null"
+          description: 多语言作者信息，可为 null。
+        preview:
+          type: [string, "null"]
+          description: 预览图，可为 null。
+        surfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThemeSurface"
+          description: 界面枚举，必须非空。
+        tokens:
+          oneOf:
+            - $ref: "#/components/schemas/ThemeTokens"
+            - type: "null"
+          description: 令牌覆盖，仅控制台主题使用；声明了 console 则必须提供。
+        configuration:
+          oneOf:
+            - $ref: "#/components/schemas/ThemeConfiguration"
+            - type: "null"
+          description: 托管配置项声明，仅控制台主题使用。
+      additionalProperties: false
+    ThemeInstalled:
+      type: object
+      description: 已安装主题的索引条目。
+      required: [short, name, surfaces, has_assets, installed_at, digest, fields]
+      properties:
+        short:
+          type: string
+          description: 主题唯一标识。
+        name:
+          $ref: "#/components/schemas/ThemeLocalized"
+          description: 多语言名称。
+        description:
+          oneOf:
+            - $ref: "#/components/schemas/ThemeLocalized"
+            - type: "null"
+          description: 多语言描述，可为 null。
+        version:
+          type: [string, "null"]
+          description: 版本号，可为 null。
+        author:
+          oneOf:
+            - $ref: "#/components/schemas/ThemeLocalized"
+            - type: "null"
+          description: 多语言作者信息，可为 null。
+        surfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThemeSurface"
+          description: 主题覆盖的界面。
+        has_assets:
+          type: boolean
+          description: 包级主题是否已解压出资源目录。
+        installed_at:
+          type: integer
+          format: int64
+          description: 安装时间（Unix 秒）。
+        digest:
+          type: string
+          description: 内容摘要（sha256 hex）。
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThemeField"
+          description: 配置项声明，取自 manifest.configuration.data，无则空数组。
+      additionalProperties: false
+    ThemeList:
+      type: object
+      required: [themes]
+      properties:
+        themes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThemeInstalled"
+          description: 已安装主题列表，按 short 字典序排列。
+      additionalProperties: false
+    ThemeDescribe:
+      type: object
+      description: 当前启用主题的 describe 输出；未启用时回落到内置主题形态。
+      required: [short, name, tokens, settings, fields]
+      properties:
+        short:
+          type: string
+          description: 启用的主题 short；未启用时为 default。
+        name:
+          $ref: "#/components/schemas/ThemeLocalized"
+          description: 主题名；内置主题为 {"zh-CN":"内置主题"}。
+        tokens:
+          oneOf:
+            - $ref: "#/components/schemas/ThemeTokens"
+            - type: "null"
+          description: 令牌值，未启用时为 null。
+        settings:
+          type: object
+          additionalProperties: true
+          description: 主题设置（含默认值补齐）。分享页主题的设置公开可读，不得放入密钥；未启用时为空对象。
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThemeField"
+          description: 配置项声明；未启用时为空数组。
+      additionalProperties: false
+    ThemeActive:
+      type: object
+      required: [console, share]
+      properties:
+        console:
+          $ref: "#/components/schemas/ThemeDescribe"
+          description: 控制台界面当前启用主题（describe 输出）。
+        share:
+          $ref: "#/components/schemas/ThemeDescribe"
+          description: 分享页界面当前启用主题（describe 输出）。
+      additionalProperties: false
+    ThemeActivateRequest:
+      type: object
+      required: [surface, short]
+      properties:
+        surface:
+          type: string
+          enum: [console, share]
+          description: 目标界面，大小写敏感。
+        short:
+          type: string
+          description: 要启用的主题 short；default（大小写不敏感）表示回到内置主题。
+        settings:
+          type: object
+          additionalProperties: true
+          description: 主题配置键值对，键为配置项 key；省略时用声明默认值补齐。
+      additionalProperties: false
+    ThemeActivateResult:
+      type: object
+      required: [short]
+      properties:
+        short:
+          type: string
+          description: 已启用的主题 short；回落到内置主题时同样为 default。
+        settings:
+          type: object
+          additionalProperties: true
+          description: 实际生效的设置（含默认值补齐）；回落到内置主题时响应不含此键。
+      additionalProperties: false
+    ThemeInstallConsoleResult:
+      type: object
+      required: [short]
+      properties:
+        short:
+          type: string
+          description: 已安装的主题 short；同 short 覆盖既有记录。
+      additionalProperties: false
+    ThemeInstallShareResult:
+      type: object
+      required: [short, digest]
+      properties:
+        short:
+          type: string
+          description: 安装的主题 short；同 short 覆盖旧记录与资源目录。
+        digest:
+          type: string
+          description: 主控对上传原始字节流计算的 sha256（hex），不信任调用方提供的校验值。
+      additionalProperties: false
+    Suitability:
+      type: string
+      description: 结论等级：可直接进入部署计划 / 有条件可用 / 硬性阻断 / 尚未采集（不算不适合）。
+      enum: [suitable, needs_work, unsuitable, pending]
+    Candidate:
+      type: object
+      required: [device, path, size, rotational]
+      properties:
+        device:
+          type: string
+          description: 设备名。
+        path:
+          type: string
+          description: 设备路径。
+        size:
+          type: integer
+          format: int64
+          description: 容量字节。
+        rotational:
+          type: boolean
+          description: 是否机械盘。
+        model:
+          type: [string, "null"]
+          description: 磁盘型号，可缺失或为 null。
+      additionalProperties: false
+    Rejected:
+      type: object
+      required: [device, reason]
+      properties:
+        device:
+          type: string
+          description: 设备名。
+        reason:
+          type: string
+          description: 拒绝原因。
+      additionalProperties: false
+    StorageNodeVerdict:
+      type: object
+      required: [node_id, name, online, suitability, reasons, candidates, rejected, gaps]
+      properties:
+        node_id:
+          type: string
+          description: 节点编号。
+        name:
+          type: string
+          description: 节点名。
+        online:
+          type: boolean
+          description: 是否在线。
+        suitability:
+          $ref: "#/components/schemas/Suitability"
+        reasons:
+          type: array
+          items: { type: string }
+          description: 逐条结论原因，界面直接展示。
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/Candidate"
+          description: 候选盘。
+        rejected:
+          type: array
+          items:
+            $ref: "#/components/schemas/Rejected"
+          description: 被拒盘及原因，便于运维核对。
+        collected_at:
+          type: [integer, "null"]
+          format: int64
+          description: 盘点时间（unix 秒），未采集为 null。
+        gaps:
+          type: array
+          items: { type: string }
+          description: 采集缺口。
+        link_mbps:
+          type: [integer, "null"]
+          format: int64
+          description: 该节点最快物理链路速率（Mbps），未采集为 null。
+      additionalProperties: false
+    Check:
+      type: object
+      required: [name, passed, detail]
+      properties:
+        name:
+          type: string
+          description: 检查项名。
+        passed:
+          type: boolean
+          description: 是否通过。
+        detail:
+          type: string
+          description: 不通过时的具体说明。
+      additionalProperties: false
+    Topology:
+      type: object
+      required:
+        [nodes, drives_per_node, drive_size, raw_capacity, parity, usable_capacity, parity_note]
+      properties:
+        nodes:
+          type: integer
+          description: 节点数。
+        drives_per_node:
+          type: integer
+          description: 每节点盘数。
+        drive_size:
+          type: integer
+          format: int64
+          description: 最小盘容量字节，容量按最小盘计算。
+        raw_capacity:
+          type: integer
+          format: int64
+          description: 原始裸容量。
+        parity:
+          type: integer
+          description: 纠删码校验盘数。
+        usable_capacity:
+          type: integer
+          format: int64
+          description: 扣除校验后的可用容量。
+        parity_note:
+          type: string
+          description: 校验说明，例如「共 N 块盘，校验 P 块；容量按最小盘 X 计算」。
+      additionalProperties: false
+    Report:
+      type: object
+      required: [generated_at, nodes, checks, ready, summary]
+      properties:
+        generated_at:
+          type: integer
+          format: int64
+          description: 报告生成时间（unix 秒）。
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageNodeVerdict"
+          description: 逐节点结论。
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Check"
+          description: 一致性检查项。
+        topology:
+          oneOf:
+            - $ref: "#/components/schemas/Topology"
+            - type: "null"
+          description: 推荐拓扑；条件不满足时为 null。
+        ready:
+          type: boolean
+          description: 总体是否可直接进入部署计划。
+        summary:
+          type: string
+          description: 面向运维的总结说明。
+      additionalProperties: false
+    ClusterSpec:
+      type: object
+      required: [name, nodes, image_tag, endpoint, access_key, secret_key]
+      properties:
+        name:
+          type: string
+          description: 集群名称，1-40 字符，仅字母、数字、连字符与下划线。
+        nodes:
+          type: array
+          items: { type: string }
+          description: 参与集群的节点编号，至少 4 个且不重复。
+        image_tag:
+          type: string
+          description: 固定 release 标签，不接受 latest；应形如 RELEASE.<时间戳> 或以数字开头，最长 80。
+        endpoint:
+          type: string
+          description: 对外服务地址，非空，用于生成分布式拓扑。
+        access_key:
+          type: string
+          description: 访问键名，至少 3 字符。
+        secret_key:
+          type: string
+          description: 访问键密钥，非空且至少 16 字符。
+        created_at:
+          type: integer
+          format: int64
+          description: 由服务端填写：新建时设为当前时间，已存在则保留旧值；客户端可不传。
+      additionalProperties: false
+    ClusterListItem:
+      type: object
+      required: [name, nodes, image_tag, endpoint, access_key, has_secret_key]
+      properties:
+        name:
+          type: string
+          description: 集群名称。
+        nodes:
+          type: array
+          items: { type: string }
+          description: 参与集群的节点编号。
+        image_tag:
+          type: string
+          description: 固定 release 标签。
+        endpoint:
+          type: string
+          description: 对外服务地址。
+        access_key:
+          type: string
+          description: 访问键名。
+        has_secret_key:
+          type: boolean
+          description: 密钥是否已设置（secret_key 非空时为 true）；secret_key 一律不回传。
+        created_at:
+          type: integer
+          format: int64
+          description: 服务端填写的创建时间。
+      additionalProperties: false
+    PlannedNode:
+      type: object
+      required: [node_id, name, devices, mounts]
+      properties:
+        node_id:
+          type: string
+          description: 节点编号。
+        name:
+          type: string
+          description: 节点名。
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageDeviceTarget"
+          description: 即将被清空的设备及计划时的容量。
+        mounts:
+          type: array
+          items: { type: string }
+          description: 该节点执行完成后对外提供的挂载点。
+      additionalProperties: false
+    Plan:
+      type: object
+      description: 存储部署计划，同时是「将要发生什么」的说明和执行的凭据。
+      required: [id, cluster, created_at, expires, fingerprint, nodes, image, destructive, irreversible_notice]
+      properties:
+        id:
+          type: string
+          description: 计划 id。
+        cluster:
+          type: string
+          description: 集群名。
+        created_at:
+          type: integer
+          format: int64
+          description: 计划创建时间（unix 秒）。
+        expires:
+          type: integer
+          format: int64
+          description: 有效期（unix 秒），生成时 = now()+300（5 分钟）；过期计划不能执行。
+        fingerprint:
+          type: string
+          description: 预检指纹，候选集合变化即失效，必须重新生成计划。
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlannedNode"
+          description: 计划内各节点步骤。
+        image:
+          type: string
+          description: 镜像引用，形如 pgsty/silo:<image_tag>。
+        destructive:
+          type: boolean
+          description: 是否包含不可逆步骤（本模块恒为 true）。
+        irreversible_notice:
+          type: string
+          description: 不可逆步骤告知，界面必须原文展示。
+        completed:
+          type: array
+          items: { type: string }
+          description: 已执行完成的节点 id 列表，缺省空数组。
+        failed:
+          type: array
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items: { type: string }
+          description: 失败节点与原因，元素为 [node_id, reason] 二元数组；非空即视为计划失败，阻断后续节点。缺省空数组。
+      additionalProperties: false
+    DispatchRecord:
+      type: object
+      required: [node, step, task_id]
+      properties:
+        node:
+          type: string
+          description: 节点名。
+        step:
+          type: string
+          enum: [磁盘准备, 容器部署]
+          description: 步骤名：先准备磁盘，成功后再部署容器。
+        task_id:
+          type: string
+          description: 该步骤对应任务 id，可在任务面板追溯。
+      additionalProperties: false
+    StorageTaskAccepted:
+      type: object
+      required: [task_id, node, label]
+      properties:
+        task_id:
+          type: string
+          description: 下发给集群节点的任务 id。
+        node:
+          type: string
+          description: 被选中执行任务的节点。
+        label:
+          type: string
+          description: 动作标签，由各操作固定：状态 / 桶 / 用户。
+      additionalProperties: false
+    HostInspectRequest:
+      type: object
+      required: [idempotency_key]
+      properties:
+        idempotency_key:
+          type: string
+          description: 幂等键，用于去重同一个盘点动作；同节点同键不同参数返回 400。
+      additionalProperties: false
+    ClusterRefRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: 集群定义名称。
+      additionalProperties: false
+    StoragePlanApplyRequest:
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id:
+          type: string
+          description: 要执行的计划 id。
+        acknowledge_destructive:
+          type: boolean
+          default: false
+          description: 破坏性确认字段（名称逐字为 acknowledge_destructive）；计划为破坏性时必须显式 true 才能执行，缺省 false 即拒绝。
+      additionalProperties: false
+    StoragePlanApplyResult:
+      type: object
+      required: [plan_id, dispatched, completed]
+      properties:
+        plan_id:
+          type: string
+          description: 本次执行的计划 id。
+        dispatched:
+          type: array
+          items:
+            $ref: "#/components/schemas/DispatchRecord"
+          description: 每个节点每个已下发步骤的记录。
+        completed:
+          type: array
+          items: { type: string }
+          description: 已完整执行完成的节点 id 列表。
+      additionalProperties: false
+    BucketRequest:
+      type: object
+      required: [cluster, bucket]
+      properties:
+        cluster:
+          type: string
+          description: 集群定义名称。
+        bucket:
+          type: string
+          description: 桶名。
+        remove:
+          type: boolean
+          default: false
+          description: true 时删除桶而非创建，缺省 false。
+      additionalProperties: false
+    UserRequest:
+      type: object
+      required: [cluster, user, secret]
+      properties:
+        cluster:
+          type: string
+          description: 集群定义名称。
+        user:
+          type: string
+          description: 访问用户名。
+        secret:
+          type: string
+          description: 用户密钥。
+        policy:
+          type: string
+          default: readwrite
+          description: 策略名，缺省 readwrite。
+        remove:
+          type: boolean
+          default: false
+          description: true 时删除用户，缺省 false。
+      additionalProperties: false
+    Overview:
+      type: object
+      required:
+        - generated_at
+        - nodes
+        - checks
+        - summary
+        - expected_cluster_size
+        - tone
+        - unknown_count
+      properties:
+        generated_at:
+          type: integer
+          format: int64
+          description: 本视图生成时刻(Unix 秒)。
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/DatabaseNodeVerdict"
+          description: 各节点结论,按名称排序,不含已撤销节点。
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+          description: 跨节点一致性检查结论(集群 UUID 不一致、节点 UUID 重复、成员数不一致、多数派不足、无人按时备份)。
+        summary:
+          type: string
+          description: 一句话总结(已巡检台数、异常数、未知数等),中文。
+        expected_cluster_size:
+          type: integer
+          description: 期望集群成员数,取自各报告 expected_cluster_size 的第一个非 0 值;全部为 0 时此值为 0。
+        tone:
+          $ref: "#/components/schemas/Tone"
+        unknown_count:
+          type: integer
+          description: 所有节点 unknown 字符串总数,用于一眼看出还有多少没看到。
+      additionalProperties: false
+    DatabaseNodeVerdict:
+      type: object
+      required:
+        - node_id
+        - name
+        - online
+        - collected_at
+        - configured
+        - tone
+        - findings
+        - unknown
+        - report
+      properties:
+        node_id:
+          type: string
+          description: 节点 ID。
+        name:
+          type: string
+          description: 节点显示名。
+        online:
+          type: boolean
+          description: 节点当前是否在线。
+        collected_at:
+          type: [integer, "null"]
+          format: int64
+          description: 最近一次巡检时刻(Unix 秒);null 表示从未巡检过,这不是 0。
+        configured:
+          type: boolean
+          description: Agent 本机是否配置了只读巡检账号;只是布尔标记,不含任何凭据本身。
+        tone:
+          $ref: "#/components/schemas/Tone"
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+          description: 已确定的问题列表,可为空数组。
+        unknown:
+          type: array
+          items: { type: string }
+          description: 未知项原因列表(尚未巡检/当前离线/未配置账号/某分区采集失败等),中文;界面必须展示,不能只显示 tone。
+        report:
+          oneOf:
+            - $ref: "#/components/schemas/DbInspectReport"
+            - type: "null"
+          description: 原始巡检报告全文,供界面展开细节;null 表示没有报告。
+      additionalProperties: false
+    Finding:
+      type: object
+      required: [tone, title, detail]
+      properties:
+        tone:
+          $ref: "#/components/schemas/Tone"
+        title:
+          type: string
+          description: 一句话标题(中文,如「集群成员数与期望不符」)。
+        detail:
+          type: string
+          description: 具体依据(中文,含实际值、期望值与阈值)。
+      additionalProperties: false
+    Tone:
+      type: string
+      description: 结论严重程度。只描述已确定的问题:未知不参与排序,无任何发现时为 ok。
+      enum: [ok, warning, critical]
+    DbInspectReport:
+      type: object
+      description: 原始巡检报告全文。Agent 只带回事实,阈值与比较在控制台完成;不含任何凭据类字段。
+      required: [collected_at, configured, galera, host, proxysql, backup, gaps]
+      properties:
+        collected_at:
+          type: integer
+          format: int64
+          description: 采集时刻(Unix 秒)。
+        configured:
+          type: boolean
+          description: Agent 本机是否配置了只读巡检账号;未配置时各分区 data 为 null 并带 reason。
+        galera:
+          $ref: "#/components/schemas/DbSection"
+        host:
+          $ref: "#/components/schemas/DbSection"
+        proxysql:
+          $ref: "#/components/schemas/DbSection"
+        backup:
+          $ref: "#/components/schemas/DbSection"
+        gaps:
+          type: array
+          items: { type: string }
+          description: 巡检过程中被跳过的部分与原因,可为空数组。
+      additionalProperties: false
+    DbSection:
+      type: object
+      description: |
+        分区式采集结果。data 为 null 即该分区未知(连不上/没权限/未配置)——这是「未知不等于 0」
+        的表达:不是缺字段、不是 0、不是 "unknown" 枚举,而是 data 为 null 且 reason 给出原因。
+      required: [data, reason]
+      properties:
+        data:
+          oneOf:
+            - $ref: "#/components/schemas/GaleraState"
+            - $ref: "#/components/schemas/DbHostState"
+            - $ref: "#/components/schemas/ProxySqlState"
+            - $ref: "#/components/schemas/BackupState"
+            - type: "null"
+          description: 采集到的事实;null 表示该分区未知,绝不补 0。
+        reason:
+          type: [string, "null"]
+          description: 采集失败或未配置时的具体原因(中文);已知时此值为 null。
+      additionalProperties: false
+    GaleraState:
+      type: object
+      description: Galera/wsrep 分区采集到的事实。
+      required:
+        - cluster_status
+        - cluster_size
+        - expected_cluster_size
+        - local_state
+        - local_state_comment
+        - ready
+        - connected
+        - desync
+        - flow_control_paused
+        - flow_control_paused_ns
+        - last_committed
+        - recv_queue
+        - send_queue
+        - cert_failures
+        - bf_aborts
+        - cluster_state_uuid
+        - node_uuid
+        - sst_donor
+        - provider_version
+        - incoming
+      properties:
+        cluster_status:
+          type: string
+          description: Primary / non-Primary / Disconnected。
+        cluster_size:
+          type: [integer, "null"]
+          description: 本节点看到的集群成员数;null 表示未知。
+        expected_cluster_size:
+          type: integer
+          description: 期望成员数,来自 Agent 本机巡检配置(默认 5,与告警规则一致);0 表示未知。
+        local_state:
+          type: [integer, "null"]
+          description: wsrep 本地状态码,4 = Synced;null 表示未知。
+        local_state_comment:
+          type: string
+          description: Synced / Donor/Desynced / Joining 等。
+        ready:
+          type: [boolean, "null"]
+          description: wsrep_ready;null 表示未知。
+        connected:
+          type: [boolean, "null"]
+          description: wsrep_connected;null 表示未知。
+        desync:
+          type: [boolean, "null"]
+          description: 是否处于 desync;null 表示未知。
+        flow_control_paused:
+          type: [number, "null"]
+          description: 流控暂停比例(0..1),超过 0.01 阈值才告警,恰好等于不算;null 表示未知。
+        flow_control_paused_ns:
+          type: [integer, "null"]
+          description: 流控暂停纳秒数;null 表示未知。
+        last_committed:
+          type: [integer, "null"]
+          description: 最后提交的事务序号;null 表示未知。
+        recv_queue:
+          type: [integer, "null"]
+          description: 接收队列长度;null 表示未知,不等于 0。告警阈值恒为 32。
+        send_queue:
+          type: [integer, "null"]
+          description: 发送队列长度;null 表示未知,不等于 0。
+        cert_failures:
+          type: [integer, "null"]
+          description: 认证失败累计值;null 表示未知,0 表示无冲突。
+        bf_aborts:
+          type: [integer, "null"]
+          description: BF 中止累计值;null 表示未知。
+        cluster_state_uuid:
+          type: [string, "null"]
+          description: 集群状态 UUID,跨节点一致性判断用;null 表示未知。
+        node_uuid:
+          type: [string, "null"]
+          description: 本节点 UUID,重复即疑似克隆;null 表示未知。
+        sst_donor:
+          type: [string, "null"]
+          description: SST donor;null 表示未知。
+        provider_version:
+          type: [string, "null"]
+          description: wsrep provider 版本;null 表示未知。
+        incoming:
+          type: array
+          items: { type: string }
+          description: wsrep_incoming_addresses 拆开后的成员地址,可为空数组。
+      additionalProperties: false
+    DbHostState:
+      type: object
+      description: 数据库主机侧分区采集到的事实。
+      required: [version, version_comment]
+      properties:
+        version:
+          type: string
+          description: 数据库版本字符串。
+        version_comment:
+          type: string
+          description: 版本注释。
+        hostname:
+          type: [string, "null"]
+          description: 主机名;null 表示未知。
+        server_id:
+          type: [integer, "null"]
+          description: server_id;null 表示未知。
+        uptime:
+          type: [integer, "null"]
+          format: int64
+          description: 运行秒数;null 表示未知。
+        threads_connected:
+          type: [integer, "null"]
+          description: 已连接线程数;null 表示未知。
+        threads_running:
+          type: [integer, "null"]
+          description: 运行中线程数;null 表示未知。
+        read_only:
+          type: [boolean, "null"]
+          description: read_only 是否 ON;null 为未知。
+        binlog_file:
+          type: [string, "null"]
+          description: binlog 文件名;未开启 binlog 时为 null,这是「没有」不是错误。
+        binlog_position:
+          type: [integer, "null"]
+          description: binlog 位点;null 表示未知。
+      additionalProperties: false
+    ProxySqlState:
+      type: object
+      description: ProxySQL 分区采集到的事实。
+      required: [version, uptime, writer_online, backup_writer_online, servers, pools, digests]
+      properties:
+        version:
+          type: [string, "null"]
+          description: ProxySQL 版本;null 表示未知。
+        uptime:
+          type: [integer, "null"]
+          format: int64
+          description: 运行秒数;null 表示未知。
+        writer_online:
+          type: [integer, "null"]
+          description: writer 组(hostgroup 10)在线后端数;null 为未知,判定阈值恒为 1。
+        backup_writer_online:
+          type: [integer, "null"]
+          description: 备用 writer 组(hostgroup 20)在线后端数;null 为未知,判定下限为 4。
+        servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProxySqlServer"
+          description: 后端节点列表,可为空数组。
+        pools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProxySqlPool"
+          description: 连接池计数列表,可为空数组。
+        digests:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProxySqlDigest"
+          description: 按总耗时排序的前若干条摘要,可为空数组。
+      additionalProperties: false
+    ProxySqlServer:
+      type: object
+      required:
+        - hostgroup_id
+        - hostname
+        - port
+        - status
+        - weight
+        - max_connections
+        - latency_us
+        - queries
+        - conn_used
+        - conn_free
+      properties:
+        hostgroup_id:
+          type: integer
+          description: hostgroup 编号。
+        hostname:
+          type: string
+          description: 后端主机。
+        port:
+          type: integer
+          description: 端口。
+        status:
+          type: string
+          description: ONLINE / SHUNNED / OFFLINE_SOFT 等。
+        weight:
+          type: integer
+          description: 权重。
+        max_connections:
+          type: integer
+          description: 最大连接数。
+        latency_us:
+          type: [integer, "null"]
+          description: 来自 stats_mysql_connection_pool.Latency_us;无该行时为 null,不补 0。
+        queries:
+          type: [integer, "null"]
+          description: 查询数;null 表示未知。
+        conn_used:
+          type: [integer, "null"]
+          description: 已用连接数;null 表示未知。
+        conn_free:
+          type: [integer, "null"]
+          description: 空闲连接数;null 表示未知。
+      additionalProperties: false
+    ProxySqlPool:
+      type: object
+      description: 连接池计数行,来自 stats_mysql_connection_pool;各计数 null 表示无该值或未知,不补 0。
+      required:
+        - hostgroup
+        - srv_host
+        - srv_port
+        - conn_used
+        - conn_free
+        - conn_ok
+        - conn_err
+        - queries
+        - bytes_sent
+        - bytes_recv
+        - latency_us
+      properties:
+        hostgroup:
+          type: integer
+          description: hostgroup 编号。
+        srv_host:
+          type: string
+          description: 后端主机。
+        srv_port:
+          type: integer
+          description: 端口。
+        conn_used:
+          type: [integer, "null"]
+          description: 已用连接数;null 表示未知。
+        conn_free:
+          type: [integer, "null"]
+          description: 空闲连接数;null 表示未知。
+        conn_ok:
+          type: [integer, "null"]
+          description: 成功连接数;null 表示未知。
+        conn_err:
+          type: [integer, "null"]
+          description: 失败连接数;null 表示未知。
+        queries:
+          type: [integer, "null"]
+          description: 查询数;null 表示未知。
+        bytes_sent:
+          type: [integer, "null"]
+          format: int64
+          description: 发送字节数;null 表示未知。
+        bytes_recv:
+          type: [integer, "null"]
+          format: int64
+          description: 接收字节数;null 表示未知。
+        latency_us:
+          type: [integer, "null"]
+          description: 延迟(微秒);null 表示未知。
+      additionalProperties: false
+    ProxySqlDigest:
+      type: object
+      required: [digest, hostgroup, schemaname, count_star, sum_time, max_time]
+      properties:
+        digest:
+          type: string
+          description: 摘要哈希,可作跨节点比对的稳定标识。
+        hostgroup:
+          type: integer
+          description: hostgroup 编号。
+        schemaname:
+          type: string
+          description: 库名。
+        count_star:
+          type: integer
+          format: int64
+          description: 执行次数。
+        sum_time:
+          type: integer
+          format: int64
+          description: 总耗时。
+        max_time:
+          type: integer
+          format: int64
+          description: 最大耗时。
+      additionalProperties: false
+    BackupState:
+      type: object
+      required: [root, tiers, next_run, last_trigger]
+      properties:
+        root:
+          type: string
+          description: 备份根目录。
+        tiers:
+          type: array
+          items:
+            $ref: "#/components/schemas/BackupTier"
+          description: 各备份层级现状,可为空数组。
+        next_run:
+          type: [integer, "null"]
+          format: int64
+          description: systemd 定时器下次触发时刻;没有定时器时为 null。
+        last_trigger:
+          type: [integer, "null"]
+          format: int64
+          description: 上次触发时刻;null 表示未知。
+      additionalProperties: false
+    BackupTier:
+      type: object
+      description: 单个备份层级现状。
+      required:
+        - tier
+        - last_success
+        - age_seconds
+        - size_bytes
+        - directory
+        - files
+        - has_checksums
+        - age_header_ok
+      properties:
+        tier:
+          type: string
+          description: hourly / daily / weekly。
+        last_success:
+          type: [integer, "null"]
+          format: int64
+          description: 最近一次成功的时刻;null 表示没有成功记录,判为未知而非过期。
+        age_seconds:
+          type: [integer, "null"]
+          format: int64
+          description: 最近一次成功距今秒数,新鲜度判定依据;hourly 阈值 5400 秒(90 分钟),daily 阈值 93600 秒(26 小时)。
+        size_bytes:
+          type: [integer, "null"]
+          format: int64
+          description: 最近一次成功那份备份的体积;null 表示未知。
+        directory:
+          type: string
+          description: 该层级的备份目录。
+        files:
+          type: integer
+          description: 目录里归档文件个数。
+        has_checksums:
+          type: boolean
+          description: 是否存在 SHA256SUMS 校验清单。
+        age_header_ok:
+          type: [boolean, "null"]
+          description: 归档是否为 age 格式(只检查文件头);null 表示无法判断。
+      additionalProperties: false
+    DbInspectRequest:
+      type: object
+      description: 只读巡检请求体,只接受幂等键一个字段(动作固定为 db_inspect,无动作负载)。
+      required: [idempotency_key]
+      properties:
+        idempotency_key:
+          type: string
+          description: 幂等键。同节点 + 同键复用既有任务并返回其 task_id;同键但参数摘要不同则 400 拒绝。
+      additionalProperties: false
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: 中文错误消息。不含凭据、环境变量、SQL 正文与文件内容。
+      additionalProperties: false
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+      additionalProperties: false
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          description: 管理员密码，与初始化时写入的 Argon2 哈希比对。
+      additionalProperties: false
+    Session:
+      type: object
+      required: [csrf, expires]
+      properties:
+        csrf:
+          type: string
+          description: 本会话的 CSRF 令牌，后续非 GET/HEAD 请求要写回 x-csrf-token 头。
+        expires:
+          type: integer
+          format: int64
+          description: 会话过期时间（Unix 秒）。
+      additionalProperties: false
+    Node:
+      type: object
+      required:
+        [id, name, public_addresses, ssh_port, revoked, last_seen, address_version]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        public_addresses:
+          type: array
+          items: { type: string }
+        overlay_address:
+          type: [string, "null"]
+          description: 覆盖网地址，可缺失或为 null。
+        ssh_port:
+          type: integer
+        revoked:
+          type: boolean
+        last_seen:
+          type: integer
+          format: int64
+          description: 最近在线时间（Unix 秒）。
+        capabilities:
+          oneOf:
+            - $ref: "#/components/schemas/NodeCapabilities"
+            - type: "null"
+        inventory:
+          type: [object, "null"]
+          additionalProperties: true
+          description: 主机盘点原始数据，深度结构由 Agent 决定（任意 JSON 对象，不约束字段）。
+        address_version:
+          type: integer
+          format: int64
+          description: 该节点地址集合版本号。
+        region:
+          type: [string, "null"]
+          description: 展示用地域，缺省为 null。
+        group:
+          type: [string, "null"]
+          description: 展示用分组，缺省为 null。
+        tags:
+          type: array
+          items: { type: string }
+          description: 展示用标签，缺省为空数组。
+        weight:
+          type: integer
+          description: 展示排序权重，缺省为 0。
+        hidden:
+          type: boolean
+          description: 对未持分享令牌的访客隐藏，缺省为 false。
+        public_remark:
+          type: [string, "null"]
+          description: 公开备注，缺省为 null。
+      additionalProperties: false
+    NodeEntry:
+      type: object
+      required: [connected, node]
+      properties:
+        connected:
+          type: boolean
+          description: 当前是否在线。运行时判定，不属于 Node 结构体。
+        node:
+          $ref: "#/components/schemas/Node"
+      additionalProperties: false
+    NodeCapabilities:
+      type: object
+      required: [os, docker, compose, systemd, firewall]
+      properties:
+        os: { type: string }
+        docker: { type: boolean }
+        compose: { type: boolean }
+        systemd: { type: boolean }
+        firewall:
+          type: array
+          items: { type: string }
+          description: 该节点可用的防火墙后端列表。
+        metrics:
+          type: boolean
+          description: 指标采样能力，缺省 false。
+        hostinfo:
+          type: boolean
+          description: 主机盘点能力，缺省 false。
+        storage:
+          type: boolean
+          description: 存储集群能力，缺省 false。
+        database:
+          type: boolean
+          description: 数据库只读巡检能力，缺省 false。
+        probe:
+          type: boolean
+          description: 对端延迟探测能力，缺省 false。
+      additionalProperties: false
+    Registration:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          description: 节点名称，非空且不超过 100 字符。
+        public_addresses:
+          type: array
+          items: { type: string }
+          description: 可路由的公网地址，缺省为空数组。
+        overlay_address:
+          type: [string, "null"]
+          description: 覆盖网地址，须为合法 IP。
+        ssh_port:
+          type: integer
+          minimum: 1
+          description: SSH 端口，缺省 22。
+      additionalProperties: false
+    EnrollmentToken:
+      type: object
+      required: [token, node_id, expires_in, ca_fingerprint]
+      properties:
+        token:
+          type: string
+          description: 注册令牌明文，一次性使用，仅在本次响应中出现。
+        node_id:
+          type: string
+        expires_in:
+          type: integer
+          const: 600
+        ca_fingerprint:
+          type: string
+          description: CA 证书 SHA-256 指纹（hex），供 Agent 核对。
+      additionalProperties: false
+    PeerAddressSet:
+      type: object
+      required: [version, addresses]
+      properties:
+        version:
+          type: integer
+          format: int64
+        addresses:
+          type: array
+          items: { type: string }
+          description: 去重排序后的公网地址集合。
+      additionalProperties: false
+    ProbeTarget:
+      type: object
+      required: [node_id, address]
+      properties:
+        node_id: { type: string }
+        address:
+          type: string
+          description: 被探测地址，优先使用覆盖网地址。
+        port:
+          type: [integer, "null"]
+          description: 给了端口走 TCP 握手计时；为空时走 ICMP。
+      additionalProperties: false
+    ProbeTargetSet:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: integer
+          format: int64
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProbeTarget"
+      additionalProperties: false
+    StorageDeviceTarget:
+      type: object
+      required: [path, expected_size, mount]
+      properties:
+        path:
+          type: string
+          description: 块设备路径。
+        expected_size:
+          type: integer
+          format: int64
+          description: 预期容量。与实测不符时预检拒绝，避免格式化错盘。
+        mount:
+          type: string
+          description: 挂载点，例如 /data/disk1。
+      additionalProperties: false
+    DockerOperation:
+      type: string
+      enum: [start, stop, restart]
+    StackOperation:
+      type: string
+      enum: [start, stop, remove]
+    TaskStatus:
+      type: string
+      description: 任务状态。终态为 succeeded / failed / uncertain / rolled_back / blocked / cancelled。
+      enum:
+        - pending
+        - accepted
+        - running
+        - validating
+        - succeeded
+        - failed
+        - uncertain
+        - rollback_pending
+        - rolled_back
+        - blocked
+        - cancelled
+    TaskAccepted:
+      type: object
+      required: [task_id]
+      properties:
+        task_id:
+          type: string
+          description: 任务 UUID。相同节点、相同幂等键、相同参数摘要的重放会返回同一个 id。
+      additionalProperties: false
+    AuditRecord:
+      type: object
+      required:
+        - id
+        - at
+        - actor
+        - node_id
+        - category
+        - target
+        - result
+        - detail
+        - source
+        - bytes
+        - duration
+      properties:
+        id: { type: string }
+        at:
+          type: integer
+          format: int64
+          description: 落库时间（Unix 秒），排序与时间筛选的基准。
+        actor: { type: string }
+        node_id: { type: string }
+        category:
+          type: string
+          description: 动作类别，例如 会话 / 文件 / 数据库 / 存储 / 防火墙 / 容器 / 分享页 / 主题。
+        target: { type: string }
+        result:
+          type: string
+          description: 结果语义，例如 已开始 / 已结束 / 成功 / 失败 / 已提交 / 已存在。
+        detail:
+          type: string
+          description: 补充说明。依约定不含凭据、环境变量、SQL 正文与文件内容。
+        source:
+          type: string
+          description: 来源 IP。
+        bytes: { type: integer, format: int64 }
+        duration: { type: integer, format: int64 }
+      additionalProperties: false
+    EntranceValue:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
+          description: 安全入口字符串。写入时必须 16 位，仅字母数字与 -._~，且不以 . 或 - 开头。
+      additionalProperties: false
+    EntranceUpdate:
+      type: object
+      required: [value, changed]
+      properties:
+        value: { type: string }
+        changed:
+          type: boolean
+          description: 与当前入口一致时为 false。
+      additionalProperties: false
+    EnrollRequest:
+      type: object
+      required: [token, csr]
+      properties:
+        token:
+          type: string
+          description: 一次性注册令牌。
+        csr:
+          type: string
+          description: PEM 编码的 CSR。
+      additionalProperties: false
+    EnrollResponse:
+      type: object
+      required: [node_id, certificate]
+      properties:
+        node_id: { type: string }
+        certificate:
+          type: string
+          description: 签名后的客户端证书 PEM，有效期 90 天。
+      additionalProperties: false
+    RenewRequest:
+      type: object
+      required: [csr]
+      properties:
+        csr: { type: string }
+      additionalProperties: false
+    RenewResponse:
+      type: object
+      required: [certificate]
+      properties:
+        certificate:
+          type: string
+          description: 续期后的客户端证书 PEM，有效期 90 天。
+      additionalProperties: false
+    VerifyRequest:
+      type: object
+      properties:
+        witness:
+          type: [string, "null"]
+          description: 指定验证节点 id；缺失时自动挑选一个非本节点的在线节点。
+        required:
+          type: boolean
+          description: 无 witness 时是否必须独立验证，缺省 false。
+      additionalProperties: false
+    VerifyResponse:
+      type: object
+      required: [ok, fresh_tls]
+      properties:
+        ok: { type: boolean, const: true }
+        fresh_tls:
+          type: boolean
+          const: true
+          description: 恒为 true，表示结果来自新建连接而非复用连接。
+      additionalProperties: false
+    ConsoleEvent:
+      type: object
+      description: SSE 帧的 data 载荷，按 type 判别。
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [tasks, nodes, metrics, storage, database, task, resync]
+        task:
+          $ref: "#/components/schemas/TaskEnvelope"
+      additionalProperties: true
+    TaskEvent:
+      type: object
+      required: [id, task_id, sequence, time, status, message]
+      properties:
+        id: { type: string }
+        task_id: { type: string }
+        sequence:
+          type: integer
+          format: int64
+          description: 事件序号，等于该次上报后的任务 sequence。
+        time: { type: integer, format: int64 }
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        message:
+          type: string
+          description: 有错误时取错误文本，否则为状态描述。
+      additionalProperties: false
+    Submit:
+      type: object
+      required: [idempotency_key, action]
+      properties:
+        idempotency_key:
+          type: string
+          maxLength: 128
+          minLength: 1
+          description: 幂等键，非空且不超过 128 字符。
+        action:
+          $ref: "#/components/schemas/Action"
+      additionalProperties: false
+    FileSubmit:
+      type: object
+      required: [idempotency_key, action]
+      properties:
+        idempotency_key:
+          type: string
+          description: 幂等键。与 actions 端点不同，本端点不校验其非空与长度。
+        action:
+          $ref: "#/components/schemas/FileRequest"
+      additionalProperties: false
+    FileRequest:
+      description: |
+        结构化文件操作，按 type 判别，拒绝未知字段。
+        各变体的字段都是必填（只有 remove 的 recursive / confirmed 有默认值），与 Action 的文件类变体同形；
+        缺字段会被框架在进入处理函数前拒绝（422 纯文本）。
+      oneOf:
+        - $ref: "#/components/schemas/FileRequestPut"
+        - $ref: "#/components/schemas/FileRequestRemove"
+        - $ref: "#/components/schemas/FileRequestRename"
+        - $ref: "#/components/schemas/FileRequestMkdir"
+        - $ref: "#/components/schemas/FileRequestChmod"
+        - $ref: "#/components/schemas/FileRequestChown"
+    FileRequestPut:
+      type: object
+      required: [type, path, digest, size]
+      properties:
+        type: { type: string, const: put }
+        path: { type: string }
+        digest:
+          type: string
+          description: 只有暂存内容摘要与它一致才会覆盖目标文件。
+        size:
+          type: integer
+          format: int64
+      additionalProperties: false
+    FileRequestRemove:
+      type: object
+      required: [type, path]
+      properties:
+        type: { type: string, const: remove }
+        path: { type: string }
+        recursive:
+          type: boolean
+          default: false
+        confirmed:
+          type: boolean
+          default: false
+          description: 递归删除必须显式 true，缺省即拒绝。
+      additionalProperties: false
+    FileRequestRename:
+      type: object
+      required: [type, from, to]
+      properties:
+        type: { type: string, const: rename }
+        from: { type: string }
+        to: { type: string }
+      additionalProperties: false
+    FileRequestMkdir:
+      type: object
+      required: [type, path]
+      properties:
+        type: { type: string, const: mkdir }
+        path: { type: string }
+      additionalProperties: false
+    FileRequestChmod:
+      type: object
+      required: [type, path, mode]
+      properties:
+        type: { type: string, const: chmod }
+        path: { type: string }
+        mode:
+          type: integer
+          description: 权限位。
+      additionalProperties: false
+    FileRequestChown:
+      type: object
+      required: [type, path, uid, gid]
+      properties:
+        type: { type: string, const: chown }
+        path: { type: string }
+        uid: { type: integer }
+        gid: { type: integer }
+      additionalProperties: false
+    Action:
+      description: |
+        节点操作负载，按 type 判别，拒绝未知字段。这是控制台唯一的下发手段：
+        Agent 侧不存在接收任意命令的接口。
+      oneOf:
+        - $ref: "#/components/schemas/ActionInspect"
+        - $ref: "#/components/schemas/ActionHostInspect"
+        - $ref: "#/components/schemas/ActionDbInspect"
+        - $ref: "#/components/schemas/ActionDockerInspect"
+        - $ref: "#/components/schemas/ActionDocker"
+        - $ref: "#/components/schemas/ActionPullImage"
+        - $ref: "#/components/schemas/ActionStackImport"
+        - $ref: "#/components/schemas/ActionStackCreate"
+        - $ref: "#/components/schemas/ActionStackPlan"
+        - $ref: "#/components/schemas/ActionStackApply"
+        - $ref: "#/components/schemas/ActionStackControl"
+        - $ref: "#/components/schemas/ActionFirewallPlan"
+        - $ref: "#/components/schemas/ActionFirewallApply"
+        - $ref: "#/components/schemas/ActionPeerSync"
+        - $ref: "#/components/schemas/ActionPeerProbeTargets"
+        - $ref: "#/components/schemas/ActionFilePut"
+        - $ref: "#/components/schemas/ActionFileRemove"
+        - $ref: "#/components/schemas/ActionFileRename"
+        - $ref: "#/components/schemas/ActionFileMkdir"
+        - $ref: "#/components/schemas/ActionFileChmod"
+        - $ref: "#/components/schemas/ActionFileChown"
+        - $ref: "#/components/schemas/ActionStoragePrepare"
+        - $ref: "#/components/schemas/ActionStorageDeploy"
+        - $ref: "#/components/schemas/ActionStorageStatus"
+        - $ref: "#/components/schemas/ActionStorageBucket"
+        - $ref: "#/components/schemas/ActionStorageUser"
+    ActionInspect:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, const: inspect }
+      additionalProperties: false
+    ActionHostInspect:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, const: host_inspect }
+      additionalProperties: false
+    ActionDbInspect:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, const: db_inspect }
+      additionalProperties: false
+    ActionDockerInspect:
+      type: object
+      required: [type, container]
+      properties:
+        type: { type: string, const: docker_inspect }
+        container: { type: string }
+      additionalProperties: false
+    ActionDocker:
+      type: object
+      required: [type, container, operation]
+      properties:
+        type: { type: string, const: docker }
+        container: { type: string }
+        operation:
+          $ref: "#/components/schemas/DockerOperation"
+      additionalProperties: false
+    ActionPullImage:
+      type: object
+      required: [type, reference]
+      properties:
+        type: { type: string, const: pull_image }
+        reference: { type: string }
+      additionalProperties: false
+    ActionStackImport:
+      type: object
+      required: [type, project, directory, files, env_files]
+      properties:
+        type: { type: string, const: stack_import }
+        project: { type: string }
+        directory: { type: string }
+        files:
+          type: array
+          items: { type: string }
+        env_files:
+          type: array
+          items: { type: string }
+      additionalProperties: false
+    ActionStackCreate:
+      type: object
+      required: [type, project, content]
+      properties:
+        type: { type: string, const: stack_create }
+        project: { type: string }
+        content:
+          type: string
+          description: Compose 配置正文。在任务列表与详情中会被脱敏为「[配置正文已隐藏]」。
+      additionalProperties: false
+    ActionStackPlan:
+      type: object
+      required: [type, project, content]
+      properties:
+        type: { type: string, const: stack_plan }
+        project: { type: string }
+        content:
+          type: string
+          description: Compose 配置正文。在任务列表与详情中会被脱敏为「[配置正文已隐藏]」。
+      additionalProperties: false
+    ActionStackApply:
+      type: object
+      required: [type, plan_id]
+      properties:
+        type: { type: string, const: stack_apply }
+        plan_id: { type: string }
+      additionalProperties: false
+    ActionStackControl:
+      type: object
+      required: [type, project, operation]
+      properties:
+        type: { type: string, const: stack_control }
+        project: { type: string }
+        operation:
+          $ref: "#/components/schemas/StackOperation"
+      additionalProperties: false
+    ActionFirewallPlan:
+      type: object
+      required: [type, operation]
+      properties:
+        type: { type: string, const: firewall_plan }
+        operation:
+          type: object
+          description: 防火墙计划负载。源码为自由 JSON，结构由防火墙计划语义决定。
+          additionalProperties: true
+      additionalProperties: false
+    ActionFirewallApply:
+      type: object
+      required: [type, plan_id]
+      properties:
+        type: { type: string, const: firewall_apply }
+        plan_id: { type: string }
+        witness:
+          type: [string, "null"]
+          description: 验证节点。必须是与本节点不同的在线节点；缺失时自动挑选。
+      additionalProperties: false
+    ActionPeerSync:
+      type: object
+      description: 仅由节点目录生成，外部提交会被 400 拒绝。
+      required: [type, set]
+      properties:
+        type: { type: string, const: peer_sync }
+        set:
+          $ref: "#/components/schemas/PeerAddressSet"
+      additionalProperties: false
+    ActionPeerProbeTargets:
+      type: object
+      required: [type, set]
+      properties:
+        type: { type: string, const: peer_probe_targets }
+        set:
+          $ref: "#/components/schemas/ProbeTargetSet"
+      additionalProperties: false
+    ActionFilePut:
+      type: object
+      required: [type, path, digest, size]
+      properties:
+        type: { type: string, const: file_put }
+        path: { type: string }
+        digest: { type: string }
+        size: { type: integer, format: int64 }
+      additionalProperties: false
+    ActionFileRemove:
+      type: object
+      required: [type, path]
+      properties:
+        type: { type: string, const: file_remove }
+        path: { type: string }
+        recursive:
+          type: boolean
+          default: false
+        confirmed:
+          type: boolean
+          default: false
+          description: 递归删除必须显式 true，缺省即拒绝。
+      additionalProperties: false
+    ActionFileRename:
+      type: object
+      required: [type, from, to]
+      properties:
+        type: { type: string, const: file_rename }
+        from: { type: string }
+        to: { type: string }
+      additionalProperties: false
+    ActionFileMkdir:
+      type: object
+      required: [type, path]
+      properties:
+        type: { type: string, const: file_mkdir }
+        path: { type: string }
+      additionalProperties: false
+    ActionFileChmod:
+      type: object
+      required: [type, path, mode]
+      properties:
+        type: { type: string, const: file_chmod }
+        path: { type: string }
+        mode: { type: integer }
+      additionalProperties: false
+    ActionFileChown:
+      type: object
+      required: [type, path, uid, gid]
+      properties:
+        type: { type: string, const: file_chown }
+        path: { type: string }
+        uid: { type: integer }
+        gid: { type: integer }
+      additionalProperties: false
+    ActionStoragePrepare:
+      type: object
+      description: 全系统唯一会销毁数据的操作：会清空 devices 中列出的每一块盘。
+      required: [type, cluster, plan_id, devices, filesystem]
+      properties:
+        type: { type: string, const: storage_prepare }
+        cluster: { type: string }
+        plan_id:
+          type: string
+          description: 计划编号，仅用于把执行与计划、审计串起来。
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageDeviceTarget"
+        filesystem:
+          type: string
+          description: 文件系统类型，目前只接受 xfs。
+      additionalProperties: false
+    ActionStorageDeploy:
+      type: object
+      required:
+        [type, cluster, plan_id, image, mounts, peers, access_key, secret_key]
+      properties:
+        type: { type: string, const: storage_deploy }
+        cluster: { type: string }
+        plan_id: { type: string }
+        image:
+          type: string
+          description: 固定 release 标签，不接受 latest。
+        mounts:
+          type: array
+          items: { type: string }
+          description: 本节点参与集群的挂载点。
+        peers:
+          type: array
+          items: { type: string }
+          description: 集群全部节点地址（含本机）。
+        access_key:
+          type: string
+          description: 访问凭据的键名。凭据本身由 Agent 本地保存，不经过网络。
+        secret_key: { type: string }
+      additionalProperties: false
+    ActionStorageStatus:
+      type: object
+      required: [type, cluster]
+      properties:
+        type: { type: string, const: storage_status }
+        cluster: { type: string }
+      additionalProperties: false
+    ActionStorageBucket:
+      type: object
+      required: [type, cluster, bucket]
+      properties:
+        type: { type: string, const: storage_bucket }
+        cluster: { type: string }
+        bucket: { type: string }
+        remove:
+          type: boolean
+          default: false
+      additionalProperties: false
+    ActionStorageUser:
+      type: object
+      required: [type, cluster, user, secret]
+      properties:
+        type: { type: string, const: storage_user }
+        cluster: { type: string }
+        user: { type: string }
+        secret: { type: string }
+        policy:
+          type: string
+          default: readwrite
+        remove:
+          type: boolean
+          default: false
+      additionalProperties: false
+    TaskEnvelope:
+      type: object
+      required:
+        - id
+        - node_id
+        - key
+        - action
+        - digest
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string }
+        node_id:
+          type: string
+          description: 目标节点编号。
+        key:
+          type: string
+          description: 提交时的幂等键，与 node_id 组成唯一约束。
+        action:
+          $ref: "#/components/schemas/Action"
+        digest:
+          type: string
+          description: 参数摘要（SHA-256）。相同节点与幂等键下摘要不同即视为冲突。
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        sequence:
+          type: integer
+          format: int64
+          description: 进度序号。新建为 0，Agent 每次上报递增。
+        result:
+          type: [object, "null"]
+          additionalProperties: true
+          description: 任务结果，任意 JSON 对象，可为 null（形状由具体操作决定）。
+        error:
+          type: [string, "null"]
+          description: 失败信息，可为 null。
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+      additionalProperties: false

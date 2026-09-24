@@ -1,0 +1,320 @@
+{
+  "module": "api-core",
+  "generatedFrom": [
+    "src/hub/api.rs",
+    "src/hub/mod.rs",
+    "src/protocol.rs",
+    "src/hub/auth.rs",
+    "src/hub/channel.rs",
+    "src/entrance.rs",
+    "src/pki.rs",
+    "src/store.rs"
+  ],
+  "prefix": "控制台全部 /api/v1 接口都挂载在 /{安全入口}/ 之下（源码：mod.rs:452 处的 prefix=format!(\"/{entrance_value}\") 与 mod.rs:500 的 nest）。安全入口是路径第一段，首段不匹配的请求由门禁直接断连（不产生 HTTP 响应，entrance.rs:224-237）。/api/v1/enroll 是唯一例外：它挂在根路径（入口之外），经门禁白名单 AGENT_PATHS=\"/api/v1/enroll\" 逐条精确放行（entrance.rs:138, mod.rs:526）。Agent mTLS 面 /renew、/verify 挂在独立 agent 监听（mod.rs:516-520, transport::serve 处 require_client_auth=true, mod.rs:541），不经控制台与入口。认证：会话 Cookie（名字 opsd_session，HttpOnly Secure SameSite=Strict，Path=/{安全入口}/，Max-Age=28800，auth.rs:114-122）+ 非 GET/HEAD 需 Origin === 配置 origin 且 x-csrf-token === 会话 csrf（auth.rs:45-56）。",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1/nodes",
+      "handler": "api::nodes",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": false, "dto": null, "fields": []},
+      "responses": [
+        {"status": 200, "dto": "array<{connected, node}>", "fields": [
+          {"name": "connected", "type": "boolean", "optional": false, "nullable": false, "description": "该节点当前是否在线（channels 含其 id 且 last_seen > now()-45）"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录（auth::require）"},
+        {"status": 403, "body": "纯文本（非 JSON）", "condition": "非 GET/HEAD 时的 Origin/CSRF 校验失败（GET 不校验）"}
+      ],
+      "sideEffects": "只读，不写库；从 nodes 桶拉全部节点并叠加在线判定",
+      "evidence": "src/hub/api.rs:323-334"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/nodes/{id}",
+      "handler": "api::update_node",
+      "auth": "session",
+      "pathParams": [{"name": "id", "type": "string", "description": "节点 id"}],
+      "queryParams": [],
+      "request": {"required": true, "dto": "Registration", "fields": [
+        {"name": "name", "type": "string", "optional": false, "nullable": false, "description": "非空且 <=100 字符"},
+        {"name": "public_addresses", "type": "array<string>", "optional": true, "nullable": false, "description": "缺失时默认为空数组；每项须为可路由公网地址"},
+        {"name": "overlay_address", "type": "string", "optional": true, "nullable": true, "description": "Option，可缺失或为 null，若提供须为合法 IP"},
+        {"name": "ssh_port", "type": "integer", "optional": true, "nullable": false, "description": "缺失时默认 22，须 >0"}
+      ]},
+      "responses": [
+        {"status": 200, "dto": "Node", "fields": [
+          {"name": "id", "type": "string", "optional": false, "nullable": false, "description": "节点 id"},
+          {"name": "name", "type": "string", "optional": false, "nullable": false, "description": "节点名称"},
+          {"name": "public_addresses", "type": "array<string>", "optional": false, "nullable": false, "description": "公网地址列表"},
+          {"name": "overlay_address", "type": "string", "optional": true, "nullable": true, "description": "覆盖网地址，可缺失或 null"},
+          {"name": "ssh_port", "type": "integer", "optional": false, "nullable": false, "description": "SSH 端口"},
+          {"name": "revoked", "type": "boolean", "optional": false, "nullable": false, "description": "是否已撤销"},
+          {"name": "last_seen", "type": "integer", "optional": false, "nullable": false, "description": "最近在线时间戳"},
+          {"name": "capabilities", "type": "NodeCapabilities", "optional": true, "nullable": true, "description": "节点能力，可缺失或 null"},
+          {"name": "inventory", "type": "object", "optional": true, "nullable": true, "description": "主机盘点原始数据，可缺失或 null"},
+          {"name": "address_version", "type": "integer", "optional": false, "nullable": false, "description": "地址版本号"},
+          {"name": "region", "type": "string", "optional": true, "nullable": true, "description": "展示用地域，default 缺省 null"},
+          {"name": "group", "type": "string", "optional": true, "nullable": true, "description": "展示用分组，default 缺省 null"},
+          {"name": "tags", "type": "array<string>", "optional": true, "nullable": false, "description": "展示用标签，default 缺省空数组"},
+          {"name": "weight", "type": "integer", "optional": true, "nullable": false, "description": "展示排序权重，default 缺省 0"},
+          {"name": "hidden", "type": "boolean", "optional": true, "nullable": false, "description": "对未持令牌访客隐藏，default 缺省 false"},
+          {"name": "public_remark", "type": "string", "optional": true, "nullable": true, "description": "公开备注，default 缺省 null"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 400, "body": "{\"error\":\"中文消息\"}", "condition": "validate 失败、节点不存在、节点已撤销"},
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录"},
+        {"status": 403, "body": "纯文本（非 JSON）", "condition": "Origin/CSRF 校验失败"},
+        {"status": 413, "body": "", "condition": "请求体超过 1MB 全局限制"}
+      ],
+      "sideEffects": "写库更新节点；随后 synchronize_peers/synchronize_probes 向未撤销节点下发带幂等键的地址/探测任务",
+      "evidence": "src/hub/api.rs:335-355"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/nodes/{id}",
+      "handler": "api::revoke",
+      "auth": "session",
+      "pathParams": [{"name": "id", "type": "string", "description": "节点 id"}],
+      "queryParams": [],
+      "request": {"required": false, "dto": null, "fields": []},
+      "responses": [
+        {"status": 200, "dto": "inline", "fields": [
+          {"name": "ok", "type": "boolean", "optional": false, "nullable": false, "description": "恒定 true"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 400, "body": "{\"error\":\"节点不存在\"}", "condition": "节点 id 不存在"},
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录"},
+        {"status": 403, "body": "纯文本（非 JSON）", "condition": "Origin/CSRF 校验失败"},
+        {"status": 413, "body": "", "condition": "请求体超过 1MB 全局限制（DELETE 一般无体）"}
+      ],
+      "sideEffects": "置 revoked=true 落库、移出在线通道，随后重算地址与探测目标任务；不物理删除节点记录",
+      "evidence": "src/hub/api.rs:356-368"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/enrollment-tokens",
+      "handler": "api::token",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": true, "dto": "Registration", "fields": [
+        {"name": "name", "type": "string", "optional": false, "nullable": false, "description": "非空且 <=100 字符"},
+        {"name": "public_addresses", "type": "array<string>", "optional": true, "nullable": false, "description": "缺失时默认为空数组；每项须为可路由公网地址"},
+        {"name": "overlay_address", "type": "string", "optional": true, "nullable": true, "description": "可缺失或 null，须为合法 IP"},
+        {"name": "ssh_port", "type": "integer", "optional": true, "nullable": false, "description": "缺失时默认 22，须 >0"}
+      ]},
+      "responses": [
+        {"status": 200, "dto": "inline", "fields": [
+          {"name": "token", "type": "string", "optional": false, "nullable": false, "description": "注册令牌明文（两段 UUID）"},
+          {"name": "node_id", "type": "string", "optional": false, "nullable": false, "description": "该令牌绑定的节点 id"},
+          {"name": "expires_in", "type": "integer", "optional": false, "nullable": false, "description": "恒 600（秒）"},
+          {"name": "ca_fingerprint", "type": "string", "optional": false, "nullable": false, "description": "CA 证书指纹（SHA-256 hex）"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 400, "body": "{\"error\":\"中文消息\"}", "condition": "validate 失败、读取 pki/ca.pem 失败"},
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录"},
+        {"status": 403, "body": "纯文本（非 JSON）", "condition": "Origin/CSRF 校验失败"},
+        {"status": 413, "body": "", "condition": "请求体超过 1MB 全局限制"}
+      ],
+      "sideEffects": "写库：以 token 摘要在 enrollment 桶插入 Enrollment（节点信息、expires=now+600）；不要求幂等键，每次新建一个新令牌",
+      "evidence": "src/hub/api.rs:215-232"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/peer-addresses",
+      "handler": "api::peers",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": false, "dto": null, "fields": []},
+      "responses": [
+        {"status": 200, "dto": "PeerAddressSet", "fields": [
+          {"name": "version", "type": "integer", "optional": false, "nullable": false, "description": "地址集合版本号"},
+          {"name": "addresses", "type": "array<string>", "optional": false, "nullable": false, "description": "未撤销节点的去重排序公网地址集合"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录"},
+        {"status": 403, "body": "纯文本（非 JSON）", "condition": "GET 不校验 CSRF 时一般不会触发"}
+      ],
+      "sideEffects": "只读，从 global/peers 记录读取 PeerAddressSet",
+      "evidence": "src/hub/api.rs:436-440"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/enroll",
+      "handler": "api::enroll",
+      "auth": "public",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": true, "dto": "Enroll", "fields": [
+        {"name": "token", "type": "string", "optional": false, "nullable": false, "description": "一次性注册令牌"},
+        {"name": "csr", "type": "string", "optional": false, "nullable": false, "description": "PEM 编码的 CSR"}
+      ]},
+      "responses": [
+        {"status": 200, "dto": "inline", "fields": [
+          {"name": "node_id", "type": "string", "optional": false, "nullable": false, "description": "节点 id"},
+          {"name": "certificate", "type": "string", "optional": false, "nullable": false, "description": "签名后的客户端证书 PEM（90 天）"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"注册令牌无效或过期\"}", "condition": "令牌不存在或已过期（api.rs:249）"},
+        {"status": 400, "body": "{\"error\":\"中文消息\"}", "condition": "令牌已被使用（删除数 !=1，api.rs:252-255）、CSR 签名失败、CA 文件缺失等"},
+        {"status": 413, "body": "", "condition": "不在 console 的 1MB 限制内，通常不触发"}
+      ],
+      "sideEffects": "一次性令牌，成功后删除 enrollment 记录（防重放，失配即 400）；写入 nodes、certificates（新指纹、90 天）、connection_source；下发 initial-inspect 任务；同步地址与探测目标。位于入口之外白名单路径，凭令牌放行",
+      "evidence": "src/hub/api.rs:238-300"
+    },
+    {
+      "method": "POST",
+      "path": "/renew",
+      "handler": "api::renew",
+      "auth": "agent-mtls",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": true, "dto": "Renew", "fields": [
+        {"name": "csr", "type": "string", "optional": false, "nullable": false, "description": "PEM 编码的 CSR"}
+      ]},
+      "responses": [
+        {"status": 200, "dto": "inline", "fields": [
+          {"name": "certificate", "type": "string", "optional": false, "nullable": false, "description": "续签后的客户端证书 PEM（90 天）"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 400, "body": "{\"error\":\"中文消息\"}", "condition": "identity 校验失败（无证书/未登记/已过期/节点已撤销）、CSR 无效"}
+      ],
+      "sideEffects": "写入 certificates（新指纹 -> 新的 90 天绑定），不改节点状态，不产生任务",
+      "evidence": "src/hub/api.rs:305-322"
+    },
+    {
+      "method": "POST",
+      "path": "/verify",
+      "handler": "api::verify",
+      "auth": "agent-mtls",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": true, "dto": "Verification", "fields": [
+        {"name": "witness", "type": "string", "optional": true, "nullable": true, "description": "指定验证节点 id；缺失时自动挑一个非本节点在线节点"},
+        {"name": "required", "type": "boolean", "optional": true, "nullable": false, "description": "无 witness 时是否必须独立验证，default 缺省 false"}
+      ]},
+      "responses": [
+        {"status": 200, "dto": "inline", "fields": [
+          {"name": "ok", "type": "boolean", "optional": false, "nullable": false, "description": "恒 true"},
+          {"name": "fresh_tls", "type": "boolean", "optional": false, "nullable": false, "description": "恒 true"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 400, "body": "{\"error\":\"中文消息\"}", "condition": "身份/目标节点缺失、witness 不可选（required 且 no witness）、验证节点不在线、未登记可探测地址、验证通道断开、独立节点验证失败（v[node]!=witness 或 ok!=true）、验证超时（轮询 6 秒）、缺本地回滚能力"}
+      ],
+      "sideEffects": "向 witness 在线节点发送探测帧（含 request_id、目标地址/端口），轮询 probes 桶（最多 24×250ms=6s），最后删除该 probe 记录；不写库持久状态",
+      "evidence": "src/hub/api.rs:648-712"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/entrance",
+      "handler": "api::read_entrance",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": false, "dto": null, "fields": []},
+      "responses": [
+        {"status": 200, "dto": "inline", "fields": [
+          {"name": "value", "type": "string", "optional": false, "nullable": false, "description": "当前安全入口字符串（无记录时为空串）"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录"},
+        {"status": 403, "body": "纯文本（非 JSON）", "condition": "无（GET 不校验 CSRF）"}
+      ],
+      "sideEffects": "只读，无写库",
+      "evidence": "src/hub/api.rs:148-155"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/settings/entrance",
+      "handler": "api::update_entrance",
+      "auth": "session",
+      "pathParams": [],
+      "queryParams": [],
+      "request": {"required": true, "dto": "EntranceInput", "fields": [
+        {"name": "value", "type": "string", "optional": false, "nullable": false, "description": "新安全入口，经过 entrance::validate：必须 16 位，仅字母/数字与 -._~，不以 . 或 - 开头"}
+      ]},
+      "responses": [
+        {"status": 200, "dto": "inline", "fields": [
+          {"name": "value", "type": "string", "optional": false, "nullable": false, "description": "生效后的安全入口（trim 后）"},
+          {"name": "changed", "type": "boolean", "optional": false, "nullable": false, "description": "值是否变化（与当前一致时为 false）"}
+        ]}
+      ],
+      "errorBranches": [
+        {"status": 400, "body": "{\"error\":\"安全入口必须...\"}", "condition": "entrance::validate 失败"},
+        {"status": 401, "body": "{\"error\":\"请先登录\"}", "condition": "未登录"},
+        {"status": 403, "body": "纯文本（非 JSON）", "condition": "Origin/CSRF 校验失败"},
+        {"status": 413, "body": "", "condition": "请求体超过 1MB 全局限制"}
+      ],
+      "sideEffects": "写库 settings/entrance、更新共享内存槽替换安全入口并使旧地址立即失效；不把新入口明文写入日志；改后用户需用新入口重新访问",
+      "evidence": "src/hub/api.rs:163-181"
+    }
+  ],
+  "sharedTypes": [
+    {
+      "name": "Node",
+      "fields": [
+        {"name": "id", "type": "string", "optional": false, "nullable": false, "description": "节点 id"},
+        {"name": "name", "type": "string", "optional": false, "nullable": false, "description": "节点名称"},
+        {"name": "public_addresses", "type": "array<string>", "optional": false, "nullable": false, "description": "公网地址列表"},
+        {"name": "overlay_address", "type": "string", "optional": true, "nullable": true, "description": "覆盖网地址"},
+        {"name": "ssh_port", "type": "integer", "optional": false, "nullable": false, "description": "SSH 端口"},
+        {"name": "revoked", "type": "boolean", "optional": false, "nullable": false, "description": "是否已撤销"},
+        {"name": "last_seen", "type": "integer", "optional": false, "nullable": false, "description": "最近在线时间戳"},
+        {"name": "capabilities", "type": "NodeCapabilities", "optional": true, "nullable": true, "description": "节点能力"},
+        {"name": "inventory", "type": "object", "optional": true, "nullable": true, "description": "主机盘点原始数据"},
+        {"name": "address_version", "type": "integer", "optional": false, "nullable": false, "description": "地址版本号"},
+        {"name": "region", "type": "string", "optional": true, "nullable": true, "description": "展示用地域，default 值 null"},
+        {"name": "group", "type": "string", "optional": true, "nullable": true, "description": "展示用分组，default 值 null"},
+        {"name": "tags", "type": "array<string>", "optional": true, "nullable": false, "description": "展示用标签，default 值空数组"},
+        {"name": "weight", "type": "integer", "optional": true, "nullable": false, "description": "展示排序权重，default 值 0"},
+        {"name": "hidden", "type": "boolean", "optional": true, "nullable": false, "description": "是否对未持令牌访客隐藏，default 值 false"},
+        {"name": "public_remark", "type": "string", "optional": true, "nullable": true, "description": "公开备注，default 值 null"}
+      ]
+    },
+    {
+      "name": "NodeCapabilities",
+      "fields": [
+        {"name": "os", "type": "string", "optional": false, "nullable": false, "description": "操作系统"},
+        {"name": "docker", "type": "boolean", "optional": false, "nullable": false, "description": "是否支持 docker"},
+        {"name": "compose", "type": "boolean", "optional": false, "nullable": false, "description": "是否支持 compose"},
+        {"name": "systemd", "type": "boolean", "optional": false, "nullable": false, "description": "是否支持 systemd"},
+        {"name": "firewall", "type": "array<string>", "optional": false, "nullable": false, "description": "防火墙后端能力列表"},
+        {"name": "metrics", "type": "boolean", "optional": true, "nullable": false, "description": "指标采样能力，default 值 false"},
+        {"name": "hostinfo", "type": "boolean", "optional": true, "nullable": false, "description": "主机盘点能力，default 值 false"},
+        {"name": "storage", "type": "boolean", "optional": true, "nullable": false, "description": "存储集群能力，default 值 false"},
+        {"name": "database", "type": "boolean", "optional": true, "nullable": false, "description": "数据库只读巡检能力，default 值 false"},
+        {"name": "probe", "type": "boolean", "optional": true, "nullable": false, "description": "对端延迟探测能力，default 值 false"}
+      ]
+    },
+    {
+      "name": "Registration",
+      "fields": [
+        {"name": "name", "type": "string", "optional": false, "nullable": false, "description": "非空且 <=100 字符"},
+        {"name": "public_addresses", "type": "array<string>", "optional": true, "nullable": false, "description": "可路由公网地址，default 值空数组"},
+        {"name": "overlay_address", "type": "string", "optional": true, "nullable": true, "description": "覆盖网地址"},
+        {"name": "ssh_port", "type": "integer", "optional": true, "nullable": false, "description": "default 值 22，须 >0"}
+      ]
+    },
+    {
+      "name": "PeerAddressSet",
+      "fields": [
+        {"name": "version", "type": "integer", "optional": false, "nullable": false, "description": "地址集合版本号"},
+        {"name": "addresses", "type": "array<string>", "optional": false, "nullable": false, "description": "去重排序的地址集合"}
+      ]
+    }
+  ],
+  "notes": "1) Node 结构体（protocol.rs:165-193）无 rename，字段 JSON 名与 Rust 名相同；last_seen 等均按原样输出。2) /api/v1/nodes 的每个元素是 {connected, node}，connected 是运行时计算，不在 Node 结构体内。3) 错误正文：除 auth::require 中间件 401 用 {\"error\":\"请先登录\"}（auth.rs:41）及 403 用普通文本（auth.rs:55，非 JSON）外，其余业务错误均 {\"error\":\"中文\"}（mod.rs:560-574）。4) update_entrance 的 400 文案来自 entrance::validate（entrance.rs:47-58），实际文案为「安全入口必须是 {LENGTH} 位」等（LENGTH=16），我未逐字拼出运行时字符串，建议 reconcile 时按常量核对。5) 413 体积超限：console 全局 1MB DefaultBodyLimit（mod.rs:442），/api/v1/... 全部经过；/api/v1/enroll、/renew、/verify 不经过该限制。6) /api/v1/enroll 是入口之外白名单路径（AGENT_PATHS='/api/v1/enroll'，entrance.rs:138），校验靠一次性令牌 + CA 指纹核对，不靠会话，故标为 public。7) /renew、/verify 挂 Agent mTLS 面（独立 agent 监听，require_client_auth=true，mod.rs:541），不属于浏览器 API。8) verify 的证书身份经由 hub::channel::identity 解析（channel.rs:83-98），400 覆盖证书缺失/过期/未登记/节点已撤销等场景。9) 本模块清单外的动作/任务/分享面接口不在本文件展开；Node 的 capabilities/inventory 深度结构未展开，仅标 DTO 名。"
+}
