@@ -100,7 +100,19 @@ export interface paths {
                         "application/json": components["schemas"]["Session"];
                     };
                 };
-                400: components["responses"]["BadRequest"];
+                /**
+                 * @description 业务校验失败为 {"error":"<中文消息>"}（见 BadRequest）；
+                 *     请求体不是 JSON / 含未知字段 / 类型不符时为框架纯文本（见 BadRequest 的 text/plain 侧与 415/422）。
+                 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
                 /** @description 密码错误。 */
                 401: {
                     headers: {
@@ -119,6 +131,8 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
                 /** @description 登录过于频繁或来源过多。正文为「登录尝试过于频繁」或「请稍后重试」。 */
                 429: {
                     headers: {
@@ -313,6 +327,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 /** @description 注册令牌无效或过期。 */
@@ -324,6 +339,8 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -367,9 +384,20 @@ export interface paths {
                         "application/json": components["schemas"]["EnrollmentToken"];
                     };
                 };
-                400: components["responses"]["BadRequest"];
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -452,8 +480,8 @@ export interface paths {
                              * @constant
                              */
                             clock_skew_warn_seconds: 60;
-                            /** @description 所有已上报最新指标节点的最新 MetricsRecord 列表。 */
-                            nodes: components["schemas"]["MetricsRecord"][];
+                            /** @description 所有已上报节点的最近成功采样与当前采集状态。 */
+                            nodes: components["schemas"]["MetricsOverviewNode"][];
                         };
                     };
                 };
@@ -591,10 +619,21 @@ export interface paths {
                         "application/json": components["schemas"]["Node"];
                     };
                 };
-                400: components["responses"]["BadRequest"];
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
                 413: components["responses"]["PayloadTooLarge"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         post?: never;
@@ -686,10 +725,13 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -746,9 +788,8 @@ export interface paths {
                 /**
                  * @description 拒绝受理,正文为 {"error":"<中文消息>"}:同节点同键但参数摘要不同时报
                  *     「幂等键已用于不同参数」(历史原因 400 而非 409);accept_task 其余失败
-                 *     (参数摘要不匹配、写入错误)同样映射为 400。请求体不是合法 JSON,或缺少/
-                 *     类型不对 idempotency_key 时由框架默认拒绝,具体状态码与正文以框架行为为准
-                 *     (源码未自定义)。
+                 *     (参数摘要不匹配、写入错误)同样映射为 400。请求体不是合法 JSON、字段类型不匹配
+                 *     或含未知字段时,见 components/responses/BadRequest(纯文本)。
                  */
                 400: {
                     headers: {
@@ -756,11 +797,14 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
                 413: components["responses"]["PayloadTooLarge"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -812,9 +856,20 @@ export interface paths {
                         "application/json": components["schemas"]["TaskAccepted"];
                     };
                 };
-                400: components["responses"]["BadRequest"];
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -875,10 +930,13 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -1080,8 +1138,8 @@ export interface paths {
         /**
          * 读取节点地址集合
          * @description 未撤销节点的去重排序公网地址集合，带版本号。
-         *     该记录由后台对账任务写入（60 秒周期，失败只记日志），所以**全新控制库在首次对账成功前
-         *     返回的是 200 + 正文 null**，不是空对象。消费方必须容忍 null。
+         *     该记录由后台对账任务写入（60 秒周期，失败只记日志）。
+         *     **全新控制库在首次对账成功前返回 200 + {version: 0, addresses: []}**，不是 null、也不是 404。
          */
         get: {
             parameters: {
@@ -1092,13 +1150,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 地址集合；后台对账尚未写入过时为 null。 */
+                /** @description 地址集合；尚未写入过时为 version 0 与空数组。 */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["PeerAddressSet"] | null;
+                        "application/json": components["schemas"]["PeerAddressSet"];
                     };
                 };
                 401: components["responses"]["Unauthorized"];
@@ -1139,6 +1197,8 @@ export interface paths {
                     };
                 };
                 401: components["responses"]["Unauthorized"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         /**
@@ -1167,9 +1227,20 @@ export interface paths {
                         "application/json": components["schemas"]["EntranceUpdate"];
                     };
                 };
-                400: components["responses"]["BadRequest"];
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         post?: never;
@@ -1210,6 +1281,8 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         put?: never;
@@ -1247,11 +1320,14 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
                 413: components["responses"]["PayloadTooLarge"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -1347,6 +1423,8 @@ export interface paths {
                     };
                 };
                 401: components["responses"]["Unauthorized"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         /**
@@ -1385,11 +1463,14 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
                 413: components["responses"]["PayloadTooLarge"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         post?: never;
@@ -1430,6 +1511,8 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         put?: never;
@@ -1470,11 +1553,14 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
                 413: components["responses"]["PayloadTooLarge"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -1583,10 +1669,13 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -1652,6 +1741,8 @@ export interface paths {
                     };
                 };
                 401: components["responses"]["Unauthorized"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         /**
@@ -1695,10 +1786,13 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         post?: never;
@@ -1760,10 +1854,13 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
                 /** @description 盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。 */
                 500: {
                     headers: {
@@ -1895,10 +1992,13 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
                 /** @description 盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。 */
                 500: {
                     headers: {
@@ -2010,10 +2110,13 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -2065,10 +2168,13 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -2344,6 +2450,8 @@ export interface paths {
                     };
                 };
                 401: components["responses"]["Unauthorized"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         /**
@@ -2385,10 +2493,13 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         post?: never;
@@ -2447,11 +2558,14 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["OriginOrCsrfRejected"];
                 413: components["responses"]["PayloadTooLarge"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -2573,8 +2687,11 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -2830,9 +2947,9 @@ export interface paths {
         /**
          * 单节点最近采样（机器接口）
          * @description 机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
-         *     返回该节点最近一次采样折算的公开结构（字段同 PublicNode）：无采样的指标字段为 null 而不是 0，
-         *     metrics_at 给出最近一次成功采样时刻供调用方判断新鲜度。刻意不含内部地址、资源细节与凭据。
-         *     只读，可能写回 API Key 的 lastUsed；不设置缓存响应头。
+         *     返回该节点最近一次成功采样折算的公开结构（字段同 PublicNode）：无采样或最近上报失败时，指标字段与
+         *     metrics_at 都为 null 而不是 0。刻意不含内部地址、资源细节与凭据。只读，可能写回 API Key 的 lastUsed；
+         *     不设置缓存响应头。
          */
         get: {
             parameters: {
@@ -3554,8 +3671,11 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
                     };
                 };
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
             };
         };
         delete?: never;
@@ -3782,7 +3902,7 @@ export interface components {
             /** @description 密钥记录本身,last_used 为 null。 */
             record: components["schemas"]["ApiKey"];
         };
-        /** @description 创建 API 密钥的请求体。是否拒绝未知字段未确认:源码无 deny_unknown_fields,serde 默认忽略未知字段。 */
+        /** @description 创建 API 密钥的请求体。拒绝未知字段（serde deny_unknown_fields），与 additionalProperties: false 一致。 */
         ApiKeyInput: {
             /** @description 密钥名称,trim 后非空且不超过 60 字符,否则 400。 */
             label: string;
@@ -4228,6 +4348,27 @@ export interface components {
             /** @description 管理员密码，与初始化时写入的 Argon2 哈希比对。 */
             password: string;
         };
+        /** @description 控制台指标总览条目：最近成功采样 + 当前采集状态。与上报帧分离，避免失败上报冲掉成功值。 */
+        MetricsOverviewNode: {
+            /** Format: int64 */
+            clock_offset: number;
+            /** @description 最近一次上报的失败原因；当前成功时为 null。 */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description 同 received_at，供界面统一读取新鲜度。
+             */
+            metrics_at: number | null;
+            /** @enum {string} */
+            metrics_status: "ok" | "collect_failed" | "unknown";
+            node_id: string;
+            /**
+             * Format: int64
+             * @description 最近一次成功采样接收时刻；无成功采样时为 null。
+             */
+            received_at: number | null;
+            sample: components["schemas"]["MetricsSample"] | null;
+        };
         /** @description 指标曲线上一个点。字段扁平、单位明确，便于直接绘图；缺失区间不插值不补零，直接缺点。 */
         MetricsPoint: {
             /**
@@ -4259,25 +4400,6 @@ export interface components {
              * @description 已用交换分区（字节）。
              */
             swap_used: number;
-        };
-        /** @description 主控保存的某节点最近一次指标记录，含时钟偏移估计。 */
-        MetricsRecord: {
-            /**
-             * Format: int64
-             * @description 估算的时钟偏移（秒），正值表示 Agent 时钟落后；含单向网络时延，只用于识别明显偏差。
-             */
-            clock_offset: number;
-            /** @description 采集失败原因；无失败时缺省或为 null。 */
-            error?: string | null;
-            /** @description 节点编号。 */
-            node_id: string;
-            /**
-             * Format: int64
-             * @description 主控收到该指标帧的时刻（Unix 秒）。
-             */
-            received_at: number;
-            /** @description 本次采样。采集失败时为 null（此时 error 有值），主控必须显示「采集失败」而不是 0。 */
-            sample: components["schemas"]["MetricsSample"] | null;
         };
         /** @description 一次主机指标采样。数值单位写在字段名中（bytes_per_second / 百分比），展示层无需再猜单位。 */
         MetricsSample: {
@@ -4689,10 +4811,15 @@ export interface components {
             memory_used: number | null;
             /**
              * Format: int64
-             * @description 最近一次**上报**指标的接收时刻（Unix 秒）；采集失败的上报同样会刷新它，此时各指标字段为 null。
-             *     从未上报过才是 null。它不是「最近一次成功采样」的时刻。
+             * @description 最近一次成功采样的接收时刻（Unix 秒）；没有成功采样时为 null。采集失败上报不会刷新它。
              */
             metrics_at: number | null;
+            /**
+             * @description 当前采集状态：ok=最近上报成功；collect_failed=最近上报失败（指标字段仍是上次成功值）；
+             *     unknown=从未上报。与 online 互不替代。
+             * @enum {string}
+             */
+            metrics_status: "ok" | "collect_failed" | "unknown";
             /** @description 节点显示名。 */
             name: string;
             /**
@@ -4802,7 +4929,7 @@ export interface components {
             enabled: boolean;
             site: components["schemas"]["SitePublic"];
         };
-        /** @description 更新分享设置的请求体。是否拒绝未知字段未确认:源码未加 deny_unknown_fields,serde 默认忽略未知字段。 */
+        /** @description 更新分享设置的请求体。拒绝未知字段（serde deny_unknown_fields），与 additionalProperties: false 一致。 */
         ShareSettingsInput: {
             /** @description 分享页整体开关。 */
             enabled: boolean;
@@ -4872,7 +4999,7 @@ export interface components {
             /** @description 明文令牌,仅此一次返回,之后无法再取回。 */
             token: string;
         };
-        /** @description 创建分享令牌的请求体。是否拒绝未知字段未确认:源码无 deny_unknown_fields,serde 默认忽略未知字段。 */
+        /** @description 创建分享令牌的请求体。拒绝未知字段（serde deny_unknown_fields），与 additionalProperties: false 一致。 */
         ShareTokenInput: {
             /**
              * Format: int64
@@ -5236,13 +5363,14 @@ export interface components {
         };
     };
     responses: {
-        /** @description 参数或状态不满足，正文为 {"error":"<中文消息>"}；也可能是内部错误经统一映射后的 400。 */
+        /** @description 业务 {"error"} 与框架纯文本 400 的双形态。 */
         BadRequest: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
                 "application/json": components["schemas"]["Error"];
+                "text/plain": string;
             };
         };
         /** @description Origin 或 CSRF 校验失败。注意正文是**纯文本**，不是 JSON。 */
@@ -5268,6 +5396,24 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description JSON 合法但无法反序列化（字段缺失/类型错/未知字段）。axum 0.8 返回 422，正文纯文本。 */
+        UnprocessableEntity: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "text/plain": string;
+            };
+        };
+        /** @description Content-Type 不是 application/json。正文是**纯文本**。 */
+        UnsupportedMediaType: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "text/plain": string;
             };
         };
     };

@@ -6,6 +6,7 @@ import http from 'node:http';
 import zlib from 'node:zlib';
 import {randomBytes} from 'node:crypto';
 import assert from 'node:assert/strict';
+import {loadContract} from './lib/http-assert.mjs';
 const root=process.cwd(),run=path.join(root,'.data','integration-'+Date.now());await mkdir(run,{recursive:true});
 const bin=path.join(root,'target','debug');const exe=name=>path.join(bin,name+(process.platform==='win32'?'.exe':''));
 const hubDir=path.join(run,'hub'),agentDir=path.join(run,'agent');const password=randomBytes(24).toString('hex');const passwordFile=path.join(run,'password');await writeFile(passwordFile,password,{mode:0o600});
@@ -19,7 +20,22 @@ const ca=await readFile(path.join(hubDir,'pki','ca.pem'));let cookie='',csrf='';
 function ungated(route,method='GET',body,options={}){return new Promise(resolve=>{const data=body===undefined?undefined:JSON.stringify(body);const req=https.request({hostname:'localhost',port:base,path:route,method,ca,headers:{Origin:`https://localhost:${base}`,...(data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{}),...(options.headers||{})}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,headers:res.headers});});});req.on('error',e=>resolve({error:e.code||e.message}));req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));if(data)req.write(data);req.end();});}
 /** 明文回环健康检查，不经安全入口。 */
 function health(){return new Promise(resolve=>{const req=http.request({hostname:'127.0.0.1',port:healthPort,path:'/api/v1/health'},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>resolve({status:res.statusCode,text}));});req.on('error',e=>resolve({error:e.code||e.message}));req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));req.end();});}
-function request(route,method='GET',body,options={}){return new Promise((resolve,reject)=>{const data=body===undefined?undefined:JSON.stringify(body);const req=https.request({hostname:'localhost',port:base,path:`/${entrance}/api/v1`+route,method,ca,...options,headers:{Origin:`https://localhost:${base}`,Cookie:cookie,'X-CSRF-Token':csrf,...(data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{}),...options.headers}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,cookie:res.headers['set-cookie']?.[0]});});});req.on('error',reject);req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));if(data)req.write(data);req.end();});}
+const contract=await loadContract(path.join(root,'docs','api','openapi.yaml'));
+const {assertSchema,responseSchema,assertHttpResponse}=contract;
+/** 原始请求：可改 Content-Type / 发非法 JSON；headers 带 content-type。 */
+function raw(route,method,body,contentType){
+ return new Promise(resolve=>{
+  const data=body;
+  const req=https.request({hostname:'localhost',port:base,path:`/${entrance}${route}`,method:method||'POST',ca,headers:{Origin:`https://localhost:${base}`,Cookie:cookie,'X-CSRF-Token':csrf,...(data!==undefined?{'Content-Type':contentType||'application/json','Content-Length':Buffer.byteLength(data)}:{})}},res=>{
+   let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,text,headers:res.headers});});
+  });
+  req.on('error',e=>resolve({error:e.message}));
+  req.setTimeout(5000,()=>req.destroy());
+  if(data!==undefined)req.write(data);
+  req.end();
+ });
+}
+function request(route,method='GET',body,options={}){return new Promise((resolve,reject)=>{const data=body===undefined?undefined:JSON.stringify(body);const req=https.request({hostname:'localhost',port:base,path:`/${entrance}/api/v1`+route,method,ca,...options,headers:{Origin:`https://localhost:${base}`,Cookie:cookie,'X-CSRF-Token':csrf,...(data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{}),...options.headers}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,headers:res.headers,cookie:res.headers['set-cookie']?.[0]});});});req.on('error',reject);req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));if(data)req.write(data);req.end();});}
 /** 上传主题包等原始字节；需要会话与 CSRF。 */
 function upload(route,bytes){return new Promise((resolve,reject)=>{const req=https.request({hostname:'localhost',port:base,path:route,method:'POST',ca,headers:{Origin:`https://localhost:${base}`,Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/zip','Content-Length':bytes.length}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value});});});req.on('error',reject);req.setTimeout(10000,()=>req.destroy(new Error('请求超时')));req.write(bytes);req.end();});}
 
@@ -76,7 +92,19 @@ try{
  }
  assert.equal((await request('/nodes')).status,401);
  assert.equal((await request('/auth/login','POST',{password},{headers:{Origin:'https://evil.invalid'}})).status,403);
- const login=await request('/auth/login','POST',{password});assert.equal(login.status,200);cookie=login.cookie.split(';')[0];csrf=login.data.csrf;
+ const unauthorized=await request('/nodes');
+ assertHttpResponse(unauthorized,{status:401,route:'/api/v1/nodes',method:'get',kind:'json',schema:responseSchema('/api/v1/nodes','get',401),contentType:'application/json'});
+ const login=await request('/auth/login','POST',{password});
+ assertHttpResponse(login,{status:200,route:'/api/v1/auth/login',method:'post',kind:'json',schema:responseSchema('/api/v1/auth/login','post',200),contentType:'application/json'});
+ cookie=login.cookie.split(';')[0];csrf=login.data.csrf;
+ const badPassword=await request('/auth/login','POST',{password:'wrong-password'});
+ assertHttpResponse(badPassword,{status:401,route:'/api/v1/auth/login',method:'post',kind:'json',schema:responseSchema('/api/v1/auth/login','post',401),contentType:'application/json'});
+ const badJson=await raw('/api/v1/auth/login','POST','{not json','application/json');
+ assertHttpResponse(badJson,{status:400,route:'/api/v1/auth/login',method:'post',kind:'plain',schema:responseSchema('/api/v1/auth/login','post',400,'text/plain'),contentType:'text/plain'});
+ const badCt=await raw('/api/v1/auth/login','POST',JSON.stringify({password}),'text/plain');
+ assertHttpResponse(badCt,{status:415,route:'/api/v1/auth/login',method:'post',kind:'plain',schema:responseSchema('/api/v1/auth/login','post',415,'text/plain'),contentType:'text/plain'});
+ const unknownField=await request('/auth/login','POST',{password,nope:1});
+ assertHttpResponse(unknownField,{status:422,route:'/api/v1/auth/login',method:'post',kind:'plain',schema:responseSchema('/api/v1/auth/login','post',422,'text/plain'),contentType:'text/plain'});
  assert.equal((await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],ssh_port:22},{headers:{'X-CSRF-Token':'wrong'}})).status,403);
  const registration=await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],overlay_address:'127.0.0.1',ssh_port:22});assert.equal(registration.status,200);
  const tokenFile=path.join(run,'token');await writeFile(tokenFile,registration.data.token,{mode:0o600});
@@ -94,9 +122,14 @@ try{
  const duplicate=await request(`/nodes/${node}/actions`,'POST',{idempotency_key:'once',action:{type:'inspect'}});assert.equal(duplicate.data.task_id,first.data.task_id);
  assert.equal((await request(`/nodes/${node}/actions`,'POST',{idempotency_key:'once',action:{type:'pull_image',reference:'nginx:stable'}})).status,400);
  await wait(async()=> (await request(`/tasks/${first.data.task_id}`)).data.status==='succeeded','采集任务完成');
- const result=(await request(`/tasks/${first.data.task_id}`)).data;
+ const resultRes=await request(`/tasks/${first.data.task_id}`);
+ assertHttpResponse(resultRes,{status:200,route:'/api/v1/tasks/{id}',method:'get',kind:'json',schema:responseSchema('/api/v1/tasks/{id}','get',200),contentType:'application/json'});
+ const result=resultRes.data;
  assert.ok(result.sequence>=3);
- const peerVersion=(await request('/peer-addresses')).data.version;
+ const peerRes=await request('/peer-addresses');
+ assertHttpResponse(peerRes,{status:200,route:'/api/v1/peer-addresses',method:'get',kind:'json',schema:responseSchema('/api/v1/peer-addresses','get',200),contentType:'application/json'});
+ assert.ok(Array.isArray(peerRes.data.addresses),'addresses 应为数组');
+ const peerVersion=peerRes.data.version;
  const rename=(overlay)=>request(`/nodes/${node}`,'PUT',{name:'修改名称',public_addresses:[],overlay_address:overlay,ssh_port:22});
  assert.equal((await rename('127.0.0.1')).status,200);
  assert.equal((await request('/peer-addresses')).data.version,peerVersion);
@@ -485,5 +518,25 @@ try{
  assert.equal((await request(`/tasks/${first.data.task_id}`)).data.status,'succeeded');
  assert.equal((await request(`/nodes/${node}`,'DELETE')).status,200);
  await wait(async()=>!(await request('/nodes')).data?.[0]?.connected,'节点撤销');
+ const nodesList=await request('/nodes');
+ assertHttpResponse(nodesList,{status:200,route:'/api/v1/nodes',method:'get',kind:'json',schema:responseSchema('/api/v1/nodes','get',200),contentType:'application/json'});
+ const tasksList=await request('/tasks');
+ assertHttpResponse(tasksList,{status:200,route:'/api/v1/tasks',method:'get',kind:'json',schema:responseSchema('/api/v1/tasks','get',200),contentType:'application/json'});
+ const shareSettings=await request('/share/settings');
+ assertHttpResponse(shareSettings,{status:200,route:'/api/v1/share/settings',method:'get',kind:'json',schema:responseSchema('/api/v1/share/settings','get',200),contentType:'application/json'});
+ const metricsOverview=await request('/metrics/overview');
+ assertHttpResponse(metricsOverview,{status:200,route:'/api/v1/metrics/overview',method:'get',kind:'json',schema:responseSchema('/api/v1/metrics/overview','get',200),contentType:'application/json'});
+ const dbOverviewSchema=await request('/database/overview');
+ assertHttpResponse(dbOverviewSchema,{status:200,route:'/api/v1/database/overview',method:'get',kind:'json',schema:responseSchema('/api/v1/database/overview','get',200),contentType:'application/json'});
+ const themeInstall=await request('/themes/console','POST',{short:'gate-check',name:'N',surfaces:['console'],tokens:{light:{'--bg':'#fff'},dark:{'--bg':'#000'}}});
+ assertHttpResponse(themeInstall,{status:200,route:'/api/v1/themes/console',method:'post',kind:'json',schema:responseSchema('/api/v1/themes/console','post',200),contentType:'application/json'});
+ const clusterList=await request('/storage/clusters');
+ assertHttpResponse(clusterList,{status:200,route:'/api/v1/storage/clusters',method:'get',kind:'json',schema:responseSchema('/api/v1/storage/clusters','get',200),contentType:'application/json'});
+ // 真实响应副本注入额外字段，校验器必须拒绝（不声称服务器返回过该字段）
+ const poisoned=JSON.parse(JSON.stringify(shareSettings.data));
+ poisoned.__injected__=true;
+ let rejected=false;
+ try{assertSchema(poisoned,responseSchema('/api/v1/share/settings','get',200),'注入额外字段的分享设置副本');}catch{rejected=true;}
+ assert.ok(rejected,'校验器必须拒绝带 schema 外字段的响应副本');
  console.log(`通过：安全入口门禁与丢弃语义、登录、CSRF、一次性注册、证书续期与 mTLS、幂等冲突、任务序号、目录改名不增加地址版本、对端探测目标随目录版本化下发、指标接口区间校验与分层保留、分享面令牌与 API Key 双重校验及隔离、主题清单校验与包级分享页主题替换及 CSP、文件动作反序列化拒绝与幂等及审计留痕、存储预检待采集语义与盘点幂等、存储集群定义校验与计划拒绝路径及密钥不回传、数据库只读巡检的未知语义与审计留痕、错误状态、备份恢复与节点撤销。入口 ${entrance}`);
 }finally{await stop(agent);await stop(hub);await writeFile(path.join(run,'test.log'),logs.join(''));}

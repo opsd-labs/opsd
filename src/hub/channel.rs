@@ -1,15 +1,14 @@
+use super::audit::{self as audit_log, AuditEntry};
 use super::*;
 use axum::{
-    Extension,
+    Extension, Json,
     extract::{
         Path, Query, State as S,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::HeaderMap,
     response::Response,
-    Json,
 };
-use super::audit::{self as audit_log, AuditEntry};
 use metrics::MAX_POINTS;
 /// 单次文件读取的默认上限，与 Agent 侧保持一致。
 const DEFAULT_READ_LIMIT: u64 = 1024 * 1024;
@@ -38,10 +37,9 @@ pub async fn metrics_history(
     let span = q.to - q.from;
     check(span / step <= MAX_POINTS, "区间与步长组合返回点数过多")?;
     let tier = metrics::tier_for_step(step);
-    let rows = s
-        .db
-        .metrics_range(&node_id, tier, q.from, q.to, MAX_POINTS + 1)
-        .await?;
+    let rows =
+        s.db.metrics_range(&node_id, tier, q.from, q.to, MAX_POINTS + 1)
+            .await?;
     let truncated = rows.len() as i64 > MAX_POINTS;
     let points = metrics::decimate(rows, step, tier == "raw");
     Ok(Json(json!({
@@ -56,11 +54,27 @@ pub async fn metrics_history(
 }
 
 /// 所有节点的最新指标。控制台用它填充分配列，未上报的节点不出现。
+/// 每个节点同时给出最近成功采样与当前采集状态，避免一次失败冲掉成功值。
 pub async fn metrics_overview(S(s): S<State>) -> Json<serde_json::Value> {
     let latest = s.latest_metrics.read().await;
+    let nodes: Vec<_> = latest
+        .values()
+        .map(|m| {
+            // 与 OpenAPI MetricsOverviewNode 对齐：成功采样 + 当前状态，不透出 last_report 整包
+            json!({
+                "node_id": m.last_report.node_id,
+                "received_at": m.metrics_at(),
+                "clock_offset": m.last_report.clock_offset,
+                "sample": m.sample(),
+                "error": m.last_report.error,
+                "metrics_at": m.metrics_at(),
+                "metrics_status": m.status(),
+            })
+        })
+        .collect();
     Json(json!({
         "clock_skew_warn_seconds": metrics::CLOCK_SKEW_WARN,
-        "nodes": latest.values().cloned().collect::<Vec<_>>(),
+        "nodes": nodes,
     }))
 }
 
@@ -335,6 +349,7 @@ pub async fn dispatch(s: State) {
     }
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StreamQuery {
     /// `container` / `shell` / `file_read` / `file_write`
     kind: String,
@@ -349,6 +364,7 @@ pub struct StreamQuery {
     #[serde(default)]
     workdir: Option<String>,
     csrf: String,
+    #[serde(default)]
     command: Option<String>,
 }
 
@@ -413,8 +429,11 @@ pub async fn browser_stream(
         .ok_or_else(|| bad("节点离线"))?;
     let stream_id = id();
     // 宿主机终端与文件读写都记审计：谁、在哪个节点、开了什么会话
-    let audit = matches!(kind, StreamKind::HostShell | StreamKind::FileList | StreamKind::FileRead | StreamKind::FileWrite)
-        .then(|| session_audit(&kind, &target));
+    let audit = matches!(
+        kind,
+        StreamKind::HostShell | StreamKind::FileList | StreamKind::FileRead | StreamKind::FileWrite
+    )
+    .then(|| session_audit(&kind, &target));
     if let Some((category, target_text)) = audit.clone() {
         let _ = audit_log::record(
             &s.db,
@@ -461,7 +480,10 @@ fn session_audit(kind: &StreamKind, target: &StreamTarget) -> (String, String) {
     match (kind, target) {
         (StreamKind::HostShell, StreamTarget::Host { workdir, .. }) => (
             "会话".into(),
-            format!("宿主机终端（起始目录 {}）", workdir.as_deref().unwrap_or("/")),
+            format!(
+                "宿主机终端（起始目录 {}）",
+                workdir.as_deref().unwrap_or("/")
+            ),
         ),
         (StreamKind::FileRead, StreamTarget::File { path, .. }) => {
             ("文件".into(), format!("读取 {path}"))

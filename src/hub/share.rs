@@ -11,7 +11,7 @@
 //! 因此分享页即使被完全攻破，也拿不到控制台的任何凭据。
 use anyhow::Result;
 use opsd::{
-    protocol::{MetricsRecord, Node, digest, id, now},
+    protocol::{Node, digest, id, now},
     store::Store,
 };
 use serde::{Deserialize, Serialize};
@@ -28,8 +28,9 @@ use std::collections::HashMap;
  *   两者角色不同：令牌限定可见的节点范围，密钥决定是否有权以机器方式读取。
  * ------------------------------------------------------------------ */
 
-use super::*;
+use super::metrics::NodeMetrics;
 use super::metrics::{MAX_POINTS, decimate, tier_for_step};
+use super::*;
 use axum::{
     Json,
     extract::{Path, Query, State as S},
@@ -56,6 +57,11 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
         .map(str::trim)
 }
 
+/// 距上次写回超过一分钟才更新，避免每次读取都写控制库。
+fn should_touch_last_used(last_used: Option<i64>, current: i64) -> bool {
+    last_used.is_none_or(|t| current - t > 60)
+}
+
 /// 校验机器访问凭据：分享令牌已由门禁验证，这里再要求有效 API Key，
 /// 并且密钥的节点范围与令牌的节点范围**取交集**。
 async fn authorize_key(
@@ -63,39 +69,33 @@ async fn authorize_key(
     headers: &HeaderMap,
     token: &ShareToken,
 ) -> ApiResult<Vec<String>> {
-    let presented = bearer(headers)
-        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "缺少 API Key".into()))?;
+    let presented =
+        bearer(headers).ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "缺少 API Key".into()))?;
     let digest = digest(presented);
-    let key = s
-        .db
-        .list::<ApiKey>(KEY_BUCKET)
-        .await?
-        .into_iter()
-        .find(|k| k.digest == digest && !k.revoked);
+    let key =
+        s.db.list::<ApiKey>(KEY_BUCKET)
+            .await?
+            .into_iter()
+            .find(|k| k.digest == digest && !k.revoked);
     let mut key = key.ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "API Key 无效".into()))?;
-    // 记录最近使用时间，便于管理员判断哪些密钥还在用
-    key.last_used = Some(now());
-    // 每次读取都写回会放大写压力，只在超过一分钟时才更新
-    if key
-        .last_used
-        .is_none_or(|t| now() - t > 60)
-    {
+    let current = now();
+    if should_touch_last_used(key.last_used, current) {
+        key.last_used = Some(current);
         let _ = s.db.put(KEY_BUCKET, &key.id, &key).await;
     }
     // 取交集：密钥范围与令牌范围都必须覆盖
-    let allowed: Vec<String> = s
-        .db
-        .list::<Node>("nodes")
-        .await?
-        .into_iter()
-        .filter(|n| !n.revoked)
-        .filter(|n| token.covers(&n.id))
-        .filter(|n| match &key.nodes {
-            Some(list) => list.iter().any(|x| x == &n.id),
-            None => true,
-        })
-        .map(|n| n.id)
-        .collect();
+    let allowed: Vec<String> =
+        s.db.list::<Node>("nodes")
+            .await?
+            .into_iter()
+            .filter(|n| !n.revoked)
+            .filter(|n| token.covers(&n.id))
+            .filter(|n| match &key.nodes {
+                Some(list) => list.iter().any(|x| x == &n.id),
+                None => true,
+            })
+            .map(|n| n.id)
+            .collect();
     Ok(allowed)
 }
 
@@ -198,10 +198,9 @@ pub async fn data_records(
         "区间与步长组合返回点数过多",
     )?;
     let tier = tier_for_step(step);
-    let rows = s
-        .db
-        .metrics_range(&q.node, tier, q.from, q.to, MAX_POINTS + 1)
-        .await?;
+    let rows =
+        s.db.metrics_range(&q.node, tier, q.from, q.to, MAX_POINTS + 1)
+            .await?;
     let points = decimate(rows, step, tier == "raw");
     Ok(Json(serde_json::json!({
         "node": q.node,
@@ -257,7 +256,10 @@ pub async fn public_recent(
     ensure_enabled(&s)?;
     let token = token_of(&s, &token)?;
     let allowed = authorize_key(&s, &headers, &token).await?;
-    check(allowed.iter().any(|a| a == &node_id), "该节点不在访问范围内")?;
+    check(
+        allowed.iter().any(|a| a == &node_id),
+        "该节点不在访问范围内",
+    )?;
     let nodes = visible_nodes(&s, &token).await?;
     let node = nodes
         .into_iter()
@@ -333,6 +335,7 @@ pub async fn read_settings(S(s): S<State>) -> ApiResult<Json<serde_json::Value>>
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SettingsInput {
     enabled: bool,
     site: SitePublic,
@@ -345,13 +348,16 @@ pub async fn update_settings(
     check(input.site.name.len() <= 60, "站点名称过长")?;
     check(input.site.description.len() <= 200, "站点描述过长")?;
     check(input.site.footer.len() <= 200, "页脚文字过长")?;
-    s.db.put(SETTINGS_BUCKET, ENABLED_ID, &input.enabled).await?;
+    s.db.put(SETTINGS_BUCKET, ENABLED_ID, &input.enabled)
+        .await?;
     s.db.put(SITE_BUCKET, SITE_ID, &input.site).await?;
     if let Ok(mut settings) = s.share_settings.write() {
         settings.enabled = input.enabled;
         settings.site = input.site.clone();
     }
-    Ok(Json(serde_json::json!({ "enabled": input.enabled, "site": input.site })))
+    Ok(Json(
+        serde_json::json!({ "enabled": input.enabled, "site": input.site }),
+    ))
 }
 
 pub async fn list_tokens(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
@@ -361,6 +367,7 @@ pub async fn list_tokens(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TokenInput {
     label: String,
     /// 有效小时数；省略表示长期有效。
@@ -406,11 +413,10 @@ pub async fn revoke_token(
     S(s): S<State>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let mut token = s
-        .db
-        .get::<ShareToken>(BUCKET, &id)
-        .await?
-        .ok_or_else(|| bad("分享令牌不存在"))?;
+    let mut token =
+        s.db.get::<ShareToken>(BUCKET, &id)
+            .await?
+            .ok_or_else(|| bad("分享令牌不存在"))?;
     token.revoked = true;
     s.db.put(BUCKET, &id, &token).await?;
     refresh(&s, Index::load(&s.db).await?)?;
@@ -424,6 +430,7 @@ pub async fn list_keys(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeyInput {
     label: String,
     #[serde(default)]
@@ -457,11 +464,10 @@ pub async fn revoke_key(
     S(s): S<State>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let mut key = s
-        .db
-        .get::<ApiKey>(KEY_BUCKET, &id)
-        .await?
-        .ok_or_else(|| bad("API Key 不存在"))?;
+    let mut key =
+        s.db.get::<ApiKey>(KEY_BUCKET, &id)
+            .await?
+            .ok_or_else(|| bad("API Key 不存在"))?;
     key.revoked = true;
     s.db.put(KEY_BUCKET, &id, &key).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -485,10 +491,7 @@ pub async fn share_index_page(S(s): S<State>) -> Response {
 
 /// 分享页的静态资源。路径必须落在构建产物的 assets 目录内，
 /// 且不允许出现 `..`，避免被用来读取目录以外的文件。
-pub async fn share_asset(
-    S(s): S<State>,
-    Path((_token, path)): Path<(String, String)>,
-) -> Response {
+pub async fn share_asset(S(s): S<State>, Path((_token, path)): Path<(String, String)>) -> Response {
     if path.contains("..") || path.starts_with('/') {
         return (StatusCode::NOT_FOUND, "").into_response();
     }
@@ -520,6 +523,7 @@ pub const SITE_ID: &str = "public";
 
 /// 站点公开属性，可由管理员在设置中修改。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SitePublic {
     pub name: String,
     pub description: String,
@@ -642,12 +646,15 @@ pub struct PublicNode {
     pub uptime: Option<u64>,
     /// 最近一次成功采样的时刻，供访客判断数据新鲜度。
     pub metrics_at: Option<i64>,
+    /// 当前采集状态：ok / collect_failed / unknown（从未上报）。
+    pub metrics_status: String,
 }
 
 /// 把节点与指标折算成公开结构。**只读取白名单字段**，
 /// 结构体本身即是白名单，不依赖逐字段删除，避免漏删。
-pub fn public_node(node: &Node, online: bool, record: Option<&MetricsRecord>) -> PublicNode {
-    let sample = record.and_then(|r| r.sample.as_ref());
+pub fn public_node(node: &Node, online: bool, metrics: Option<&NodeMetrics>) -> PublicNode {
+    // 指标与新鲜度只认最近一次**成功**采样；当前失败通过 metrics_status 显式暴露。
+    let sample = metrics.and_then(|m| m.sample());
     let disk_used: u64 = sample
         .map(|s| s.disks.iter().map(|d| d.used).sum())
         .unwrap_or(0);
@@ -682,7 +689,10 @@ pub fn public_node(node: &Node, online: bool, record: Option<&MetricsRecord>) ->
                 .sum::<f64>() as u64
         }),
         uptime: sample.map(|s| s.uptime),
-        metrics_at: record.map(|r| r.received_at),
+        metrics_at: metrics.and_then(|m| m.metrics_at()),
+        metrics_status: metrics
+            .map(|m| m.status().to_owned())
+            .unwrap_or_else(|| "unknown".into()),
     }
 }
 
@@ -699,8 +709,14 @@ pub const PROMETHEUS_METRICS: [(&str, &str); 10] = [
     ("opsd_node_disk_used_bytes", "已用磁盘（字节）"),
     ("opsd_node_disk_total_bytes", "磁盘总量（字节）"),
     ("opsd_node_load1", "1 分钟平均负载"),
-    ("opsd_node_network_receive_bytes_per_second", "入站速率（字节/秒）"),
-    ("opsd_node_network_transmit_bytes_per_second", "出站速率（字节/秒）"),
+    (
+        "opsd_node_network_receive_bytes_per_second",
+        "入站速率（字节/秒）",
+    ),
+    (
+        "opsd_node_network_transmit_bytes_per_second",
+        "出站速率（字节/秒）",
+    ),
     ("opsd_node_uptime_seconds", "运行时长（秒）"),
 ];
 
@@ -745,7 +761,10 @@ pub fn render_prometheus(nodes: &[PublicNode]) -> String {
             "opsd_node_memory_total_bytes",
             node.memory_total.map(|v| v as f64),
         );
-        sample("opsd_node_disk_used_bytes", node.disk_used.map(|v| v as f64));
+        sample(
+            "opsd_node_disk_used_bytes",
+            node.disk_used.map(|v| v as f64),
+        );
         sample(
             "opsd_node_disk_total_bytes",
             node.disk_total.map(|v| v as f64),
@@ -759,10 +778,7 @@ pub fn render_prometheus(nodes: &[PublicNode]) -> String {
             "opsd_node_network_transmit_bytes_per_second",
             node.net_tx_bytes_per_second.map(|v| v as f64),
         );
-        sample(
-            "opsd_node_uptime_seconds",
-            node.uptime.map(|v| v as f64),
-        );
+        sample("opsd_node_uptime_seconds", node.uptime.map(|v| v as f64));
     }
     out
 }
@@ -770,7 +786,7 @@ pub fn render_prometheus(nodes: &[PublicNode]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opsd::protocol::{DiskUsage, InterfaceRate, MetricsSample};
+    use opsd::protocol::{DiskUsage, InterfaceRate, MetricsRecord, MetricsSample};
 
     fn node(id: &str, name: &str) -> Node {
         Node {
@@ -790,6 +806,29 @@ mod tests {
             weight: 5,
             hidden: false,
             public_remark: Some("东京节点".into()),
+        }
+    }
+
+    fn node_metrics(cpu: f64) -> NodeMetrics {
+        let r = record(cpu);
+        NodeMetrics {
+            last_success: Some(r.clone()),
+            last_report: r,
+        }
+    }
+
+    fn failed_metrics() -> NodeMetrics {
+        let ok = record(12.5);
+        let failed = MetricsRecord {
+            node_id: ok.node_id.clone(),
+            received_at: ok.received_at + 30,
+            clock_offset: 0,
+            sample: None,
+            error: Some("采集失败".into()),
+        };
+        NodeMetrics {
+            last_report: failed,
+            last_success: Some(ok),
         }
     }
 
@@ -828,16 +867,16 @@ mod tests {
         let value = serde_json::to_value(public_node(
             &node("C052", "C052 · 日本"),
             true,
-            Some(&record(12.5)),
+            Some(&node_metrics(12.5)),
         ))
         .unwrap();
         let text = value.to_string();
         for secret in [
-            "203.0.113.9",      // 公网地址
-            "100.100.201.52",   // EasyTier 地址
-            "65522",            // SSH 端口
-            "docker",           // 容器细节
-            "inventory",        // 原始采集数据
+            "203.0.113.9",    // 公网地址
+            "100.100.201.52", // EasyTier 地址
+            "65522",          // SSH 端口
+            "docker",         // 容器细节
+            "inventory",      // 原始采集数据
         ] {
             assert!(!text.contains(secret), "公开响应不应包含 {secret}");
         }
@@ -851,8 +890,7 @@ mod tests {
 
     #[test]
     fn 没有采样时指标字段为_null_而不是零() {
-        let value =
-            serde_json::to_value(public_node(&node("C052", "C052"), false, None)).unwrap();
+        let value = serde_json::to_value(public_node(&node("C052", "C052"), false, None)).unwrap();
         for field in [
             "cpu_usage",
             "memory_used",
@@ -867,17 +905,109 @@ mod tests {
     }
 
     #[test]
+    fn 六十秒内不重复写回最近使用时间() {
+        assert!(should_touch_last_used(None, 1_000));
+        assert!(should_touch_last_used(Some(1_000 - 61), 1_000));
+        assert!(!should_touch_last_used(Some(1_000 - 60), 1_000));
+        assert!(!should_touch_last_used(Some(1_000 - 1), 1_000));
+    }
+
+    #[test]
+    fn 成功后失败仍保留成功值并标采集失败() {
+        let value = serde_json::to_value(public_node(
+            &node("C052", "C052"),
+            true,
+            Some(&failed_metrics()),
+        ))
+        .unwrap();
+        assert_eq!(value["metrics_at"], 1000, "新鲜度仍是上次成功时刻");
+        assert_eq!(value["cpu_usage"], 12.5, "指标仍是上次成功值");
+        assert_eq!(value["metrics_status"], "collect_failed");
+    }
+
+    #[test]
+    fn 失败后成功恢复最新成功值() {
+        let mut m = failed_metrics();
+        let recovered = MetricsRecord {
+            node_id: "C052".into(),
+            received_at: 2000,
+            clock_offset: 0,
+            sample: Some(MetricsSample {
+                at: 2000,
+                cpu_usage: 55.0,
+                ..Default::default()
+            }),
+            error: None,
+        };
+        m.last_report = recovered.clone();
+        m.last_success = Some(recovered);
+        let value =
+            serde_json::to_value(public_node(&node("C052", "C052"), true, Some(&m))).unwrap();
+        assert_eq!(value["cpu_usage"], 55.0);
+        assert_eq!(value["metrics_at"], 2000);
+        assert_eq!(value["metrics_status"], "ok");
+    }
+
+    #[test]
+    fn 连续失败不刷新成功时间() {
+        let mut m = failed_metrics();
+        let again = MetricsRecord {
+            node_id: "C052".into(),
+            received_at: 1100,
+            clock_offset: 0,
+            sample: None,
+            error: Some("仍然失败".into()),
+        };
+        m.last_report = again;
+        assert_eq!(m.metrics_at(), Some(1000));
+        assert_eq!(m.status(), "collect_failed");
+    }
+
+    #[test]
+    fn 重启后无成功缓存为未知() {
+        let m = NodeMetrics {
+            last_report: MetricsRecord {
+                node_id: "C052".into(),
+                received_at: 1,
+                clock_offset: 0,
+                sample: None,
+                error: Some("采集失败".into()),
+            },
+            last_success: None,
+        };
+        let value =
+            serde_json::to_value(public_node(&node("C052", "C052"), true, Some(&m))).unwrap();
+        assert!(value["metrics_at"].is_null());
+        assert!(value["cpu_usage"].is_null());
+        assert_eq!(value["metrics_status"], "collect_failed");
+        // 从未上报（缓存无条目）
+        let value = serde_json::to_value(public_node(&node("C052", "C052"), true, None)).unwrap();
+        assert_eq!(value["metrics_status"], "unknown");
+    }
+
+    #[test]
     fn prometheus_输出缺少采样时不写样本行() {
-        let with = public_node(&node("C052", "东京 \"主力\" 节点"), true, Some(&record(12.5)));
+        let with = public_node(
+            &node("C052", "东京 \"主力\" 节点"),
+            true,
+            Some(&node_metrics(12.5)),
+        );
         let without = public_node(&node("C061", "C061"), false, None);
         let text = render_prometheus(&[with, without]);
         // 帮助与类型行齐全
         for (name, _) in PROMETHEUS_METRICS {
-            assert!(text.contains(&format!("# HELP {name} ")), "缺少 {name} 的 HELP");
+            assert!(
+                text.contains(&format!("# HELP {name} ")),
+                "缺少 {name} 的 HELP"
+            );
             assert!(text.contains(&format!("# TYPE {name} gauge")));
         }
         // 在线状态一定有值
-        assert!(text.contains("opsd_node_online{node=\"C052\",display_name=\"东京 \\\"主力\\\" 节点\"} 1"));
+        assert!(
+            text.contains(
+                "opsd_node_online{node=\"C052\",display_name=\"东京 \\\"主力\\\" 节点\"} 1"
+            )
+        );
         assert!(text.contains("opsd_node_online{node=\"C061\",display_name=\"C061\"} 0"));
         // 有采样的节点输出 CPU，没有采样的节点不输出
         assert!(text.contains("opsd_node_cpu_usage_percent{node=\"C052\""));

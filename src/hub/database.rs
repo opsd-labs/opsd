@@ -152,9 +152,7 @@ pub fn verdict_for(
         ));
     }
     if !report.configured {
-        verdict
-            .unknown
-            .push("本机未配置数据库只读巡检账号".into());
+        verdict.unknown.push("本机未配置数据库只读巡检账号".into());
     }
 
     // ---- Galera ----
@@ -282,7 +280,11 @@ pub fn galera_findings(galera: &GaleraState, verdict: &mut NodeVerdict) {
     if conflicts > 0 {
         verdict.findings.push(Finding::warning(
             "存在认证冲突",
-            format!("认证失败 {} 次、BF 中止 {} 次（累计值）", galera.cert_failures.unwrap_or(0), galera.bf_aborts.unwrap_or(0)),
+            format!(
+                "认证失败 {} 次、BF 中止 {} 次（累计值）",
+                galera.cert_failures.unwrap_or(0),
+                galera.bf_aborts.unwrap_or(0)
+            ),
         ));
     }
 }
@@ -340,9 +342,7 @@ pub fn backup_findings(backup: &BackupState, verdict: &mut NodeVerdict) {
                 if age > limit {
                     verdict.findings.push(Finding::critical(
                         format!("{} 备份过期", tier.tier),
-                        format!(
-                            "最近一次成功在 {age} 秒前，超过允许的 {limit} 秒",
-                        ),
+                        format!("最近一次成功在 {age} 秒前，超过允许的 {limit} 秒",),
                     ));
                 }
             }
@@ -465,7 +465,8 @@ pub fn cluster_checks(verdicts: &[&NodeVerdict], expected_cluster_size: u64) -> 
             verdict.report.as_ref().is_some_and(|report| {
                 report.backup.data.as_ref().is_some_and(|backup| {
                     backup.tiers.iter().any(|tier| {
-                        tier.tier == "hourly" && tier.age_seconds.is_some_and(|age| age <= HOURLY_STALE)
+                        tier.tier == "hourly"
+                            && tier.age_seconds.is_some_and(|age| age <= HOURLY_STALE)
                     })
                 })
             })
@@ -496,7 +497,14 @@ pub fn analyze(
     let mut verdicts: Vec<NodeVerdict> = nodes
         .iter()
         .filter(|node| !node.revoked)
-        .map(|node| verdict_for(node, online.contains(&node.id), reports.get(&node.id), now_at))
+        .map(|node| {
+            verdict_for(
+                node,
+                online.contains(&node.id),
+                reports.get(&node.id),
+                now_at,
+            )
+        })
         .collect();
     verdicts.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -572,10 +580,7 @@ pub fn analyze(
             verdicts.len()
         )
     } else {
-        format!(
-            "已巡检 {inspected}/{} 台，未发现异常。",
-            verdicts.len()
-        )
+        format!("已巡检 {inspected}/{} 台，未发现异常。", verdicts.len())
     };
 
     Overview {
@@ -601,7 +606,12 @@ pub async fn overview(S(s): S<State>) -> ApiResult<Json<Overview>> {
     let reports = s
         .db_reports
         .read()
-        .map_err(|_| ApiError(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "巡检缓存不可用".into()))?
+        .map_err(|_| {
+            ApiError(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "巡检缓存不可用".into(),
+            )
+        })?
         .clone();
     Ok(Json(analyze(&nodes, &online, &reports, now())))
 }
@@ -615,11 +625,7 @@ pub async fn db_inspect(
     Extension(peer): Extension<transport::Peer>,
     Json(input): Json<super::storage::ActionRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let task = TaskEnvelope::new(
-        node_id.clone(),
-        input.idempotency_key,
-        Action::DbInspect {},
-    );
+    let task = TaskEnvelope::new(node_id.clone(), input.idempotency_key, Action::DbInspect {});
     let task = s.db.accept_task(&task).await?;
     if task.status == TaskStatus::Pending {
         if let Some(tx) = s.channels.read().await.get(&node_id).map(|c| c.1.clone()) {
@@ -755,7 +761,11 @@ mod tests {
         assert_eq!(overview.tone, Tone::Ok);
         assert_eq!(overview.unknown_count, 0);
         assert!(overview.nodes[0].findings.is_empty());
-        assert!(overview.summary.contains("未发现异常"), "{}", overview.summary);
+        assert!(
+            overview.summary.contains("未发现异常"),
+            "{}",
+            overview.summary
+        );
     }
 
     #[test]
@@ -764,8 +774,16 @@ mod tests {
         assert_eq!(overview.tone, Tone::Ok, "未知不参与严重程度排序");
         assert_eq!(overview.unknown_count, 1);
         assert!(overview.nodes[0].unknown[0].contains("尚未巡检"));
-        assert!(overview.summary.contains("还没有任何节点"), "{}", overview.summary);
-        assert!(!overview.summary.contains("未发现异常"), "{}", overview.summary);
+        assert!(
+            overview.summary.contains("还没有任何节点"),
+            "{}",
+            overview.summary
+        );
+        assert!(
+            !overview.summary.contains("未发现异常"),
+            "{}",
+            overview.summary
+        );
     }
 
     #[test]
@@ -779,8 +797,18 @@ mod tests {
             &map(vec![("C001", r)]),
             1_000,
         );
-        assert!(overview.nodes[0].unknown.iter().any(|u| u.contains("未配置")));
-        assert!(overview.nodes[0].unknown.iter().any(|u| u.contains("Galera")));
+        assert!(
+            overview.nodes[0]
+                .unknown
+                .iter()
+                .any(|u| u.contains("未配置"))
+        );
+        assert!(
+            overview.nodes[0]
+                .unknown
+                .iter()
+                .any(|u| u.contains("Galera"))
+        );
         assert_eq!(overview.unknown_count, 2);
     }
 
@@ -1186,7 +1214,11 @@ mod tests {
             &map(vec![("C001", bad), ("C002", ok)]),
             1_000,
         );
-        assert!(overview.summary.contains("需要立即处理"), "{}", overview.summary);
+        assert!(
+            overview.summary.contains("需要立即处理"),
+            "{}",
+            overview.summary
+        );
         assert_eq!(overview.tone, Tone::Critical);
     }
 
@@ -1202,6 +1234,10 @@ mod tests {
             1_000,
         );
         assert_eq!(overview.unknown_count, 2);
-        assert!(overview.summary.contains("结论并不完整"), "{}", overview.summary);
+        assert!(
+            overview.summary.contains("结论并不完整"),
+            "{}",
+            overview.summary
+        );
     }
 }

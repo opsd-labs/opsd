@@ -50,7 +50,11 @@ impl FileRequest {
     fn into_action(self) -> (Action, String) {
         match self {
             FileRequest::Put { path, digest, size } => (
-                Action::FilePut { path: path.clone(), digest, size },
+                Action::FilePut {
+                    path: path.clone(),
+                    digest,
+                    size,
+                },
                 format!("写入 {path}"),
             ),
             FileRequest::Remove {
@@ -63,10 +67,7 @@ impl FileRequest {
                     recursive,
                     confirmed,
                 },
-                format!(
-                    "{}删除 {path}",
-                    if recursive { "递归" } else { "" }
-                ),
+                format!("{}删除 {path}", if recursive { "递归" } else { "" }),
             ),
             FileRequest::Rename { from, to } => (
                 Action::FileRename {
@@ -99,6 +100,7 @@ impl FileRequest {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileAction {
     idempotency_key: String,
     action: FileRequest,
@@ -132,7 +134,11 @@ pub async fn file_action(
             node_id,
             category: "文件".into(),
             target: description,
-            result: if same { "已提交".into() } else { "已存在".into() },
+            result: if same {
+                "已提交".into()
+            } else {
+                "已存在".into()
+            },
             // 审计只记对象与结果，不记内容
             detail: String::new(),
             source: peer.address.ip().to_string(),
@@ -146,15 +152,12 @@ pub async fn file_action(
 
 /// 读取当前安全入口。仅返回给已登录管理员；用于设置页展示可访问地址。
 pub async fn read_entrance(S(s): S<State>) -> ApiResult<Json<Value>> {
-    let value = s
-        .entrance
-        .read()
-        .map(|v| v.clone())
-        .unwrap_or_default();
+    let value = s.entrance.read().map(|v| v.clone()).unwrap_or_default();
     Ok(Json(json!({ "value": value })))
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EntranceInput {
     pub value: String,
 }
@@ -170,8 +173,12 @@ pub async fn update_entrance(
     if value == current {
         return Ok(Json(json!({ "value": value, "changed": false })));
     }
-    s.db.put(super::ENTRANCE_BUCKET, super::ENTRANCE_ID, &value.to_owned())
-        .await?;
+    s.db.put(
+        super::ENTRANCE_BUCKET,
+        super::ENTRANCE_ID,
+        &value.to_owned(),
+    )
+    .await?;
     if let Ok(mut slot) = s.entrance.write() {
         *slot = value.to_owned();
     }
@@ -181,6 +188,7 @@ pub async fn update_entrance(
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Registration {
     pub name: String,
     #[serde(default)]
@@ -231,6 +239,7 @@ pub async fn token(S(s): S<State>, Json(r): Json<Registration>) -> ApiResult<Jso
     ))
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Enroll {
     token: String,
     csr: String,
@@ -299,6 +308,7 @@ pub async fn enroll(
     Ok(Json(json!({"node_id":e.node_id,"certificate":pem})))
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Renew {
     csr: String,
 }
@@ -433,10 +443,15 @@ pub async fn synchronize_peers(s: &State) -> Result<()> {
     tx.commit().await?;
     Ok(())
 }
-pub async fn peers(S(s): S<State>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(
-        s.db.get::<PeerAddressSet>("global", "peers").await?
-    )))
+pub async fn peers(S(s): S<State>) -> ApiResult<Json<PeerAddressSet>> {
+    let peers =
+        s.db.get::<PeerAddressSet>("global", "peers")
+            .await?
+            .unwrap_or(PeerAddressSet {
+                version: 0,
+                addresses: Vec::new(),
+            });
+    Ok(Json(peers))
 }
 
 /// 选出用于探测的地址。
@@ -503,11 +518,10 @@ pub struct ProbeSignature {
 pub async fn synchronize_probes(s: &State) -> Result<()> {
     let nodes = s.db.list::<Node>("nodes").await?;
     let signature = probe_signature(&nodes);
-    let old = s
-        .db
-        .get::<ProbeSignature>("global", "probe-signature")
-        .await?
-        .unwrap_or_default();
+    let old =
+        s.db.get::<ProbeSignature>("global", "probe-signature")
+            .await?
+            .unwrap_or_default();
     let version = if old.signature == signature {
         old.version
     } else {
@@ -556,13 +570,17 @@ pub async fn synchronize_probes(s: &State) -> Result<()> {
     sqlx::query("INSERT INTO records(bucket,id,value) VALUES(?,?,?)")
         .bind("global")
         .bind("probe-signature")
-        .bind(serde_json::to_string(&ProbeSignature { version, signature })?)
+        .bind(serde_json::to_string(&ProbeSignature {
+            version,
+            signature,
+        })?)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
     Ok(())
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Submit {
     pub idempotency_key: String,
     pub action: Action,
@@ -640,6 +658,7 @@ pub async fn events(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Verification {
     witness: Option<String>,
     #[serde(default)]

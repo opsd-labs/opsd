@@ -2,16 +2,17 @@ mod api;
 mod audit;
 mod auth;
 mod channel;
+mod database;
 mod metrics;
 mod share;
 mod storage;
-mod database;
 mod storage_cluster;
 mod theme;
 use anyhow::Result;
 use axum::{
-    Router, middleware,
+    Router,
     extract::Path,
+    middleware,
     routing::{delete, get, post, put},
 };
 use clap::{Parser, Subcommand};
@@ -70,10 +71,8 @@ enum Command {
 /// 对回环健康监听发一次最简 HTTP 请求；仅用于容器健康检查。
 fn probe(address: std::net::SocketAddr) -> Result<()> {
     use std::io::{Read, Write};
-    let mut stream = std::net::TcpStream::connect_timeout(
-        &address,
-        std::time::Duration::from_secs(3),
-    )?;
+    let mut stream =
+        std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_secs(3))?;
     stream.set_read_timeout(Some(std::time::Duration::from_secs(3)))?;
     stream.write_all(
         format!("GET /api/v1/health HTTP/1.0\r\nHost: {address}\r\nConnection: close\r\n\r\n")
@@ -100,7 +99,7 @@ pub struct State {
     /// 运行期可改的安全入口，由门禁直接读取。
     pub entrance: entrance::Shared,
     /// 各节点最新一次指标，属于有界内存缓存；历史在控制库中分层保存。
-    pub latest_metrics: Arc<RwLock<HashMap<String, MetricsRecord>>>,
+    pub latest_metrics: Arc<RwLock<HashMap<String, metrics::NodeMetrics>>>,
     /// 分享面的活跃令牌索引，由门禁直接读取。
     pub share_index: share::SharedIndex,
     /// 分享面开关与站点信息。
@@ -268,7 +267,8 @@ pub async fn run() -> Result<()> {
             health_listen,
             origin,
             web,
-        } => {            anyhow::ensure!(
+        } => {
+            anyhow::ensure!(
                 db.get::<String>("auth", "admin").await?.is_some(),
                 "请先初始化管理员"
             );
@@ -363,11 +363,11 @@ pub async fn run() -> Result<()> {
                 .route("/api/v1/events", get(api::events))
                 .route("/api/v1/metrics/overview", get(channel::metrics_overview))
                 .route("/api/v1/metrics/status", get(channel::metrics_status))
+                .route("/api/v1/nodes/{id}/metrics", get(channel::metrics_history))
                 .route(
-                    "/api/v1/nodes/{id}/metrics",
-                    get(channel::metrics_history),
+                    "/api/v1/share/settings",
+                    get(share::read_settings).put(share::update_settings),
                 )
-                .route("/api/v1/share/settings", get(share::read_settings).put(share::update_settings))
                 .route(
                     "/api/v1/share/tokens",
                     get(share::list_tokens).post(share::create_token),
@@ -383,10 +383,7 @@ pub async fn run() -> Result<()> {
                     "/api/v1/themes/active",
                     get(theme::read_active).put(theme::activate),
                 )
-                .route(
-                    "/api/v1/themes/console",
-                    post(theme::install_console_theme),
-                )
+                .route("/api/v1/themes/console", post(theme::install_console_theme))
                 .route("/api/v1/themes/{short}", delete(theme::remove_theme))
                 .route("/api/v1/audit", get(audit::query))
                 .route("/api/v1/storage/readiness", get(storage::readiness))
@@ -404,19 +401,13 @@ pub async fn run() -> Result<()> {
                     "/api/v1/storage/plans/{id}",
                     get(storage_cluster::read_plan),
                 )
-                .route(
-                    "/api/v1/storage/plans/apply",
-                    post(storage_cluster::apply),
-                )
+                .route("/api/v1/storage/plans/apply", post(storage_cluster::apply))
                 .route("/api/v1/storage/status", post(storage_cluster::status))
                 .route("/api/v1/storage/buckets", post(storage_cluster::bucket))
                 .route("/api/v1/storage/users", post(storage_cluster::user))
                 // 数据库只读运维视图：巡检下发 + 集中结论
                 .route("/api/v1/database/overview", get(database::overview))
-                .route(
-                    "/api/v1/nodes/{id}/db-inspect",
-                    post(database::db_inspect),
-                )
+                .route("/api/v1/nodes/{id}/db-inspect", post(database::db_inspect))
                 // 文件只读操作走流通道；变更操作统一走任务机制
                 .route("/api/v1/nodes/{id}/files", post(api::file_action))
                 .route(
@@ -446,7 +437,9 @@ pub async fn run() -> Result<()> {
             let theme_upload = Router::new()
                 .route("/api/v1/themes/share", post(theme::install_share_theme))
                 .route_layer(middleware::from_fn_with_state(state.clone(), auth::require))
-                .layer(axum::extract::DefaultBodyLimit::max(theme::MAX_PACKAGE_BYTES))
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    theme::MAX_PACKAGE_BYTES,
+                ))
                 .with_state(state.clone());
             let console = console.merge(theme_upload);
             let prefix = format!("/{entrance_value}");
@@ -523,7 +516,10 @@ pub async fn run() -> Result<()> {
             let gate = transport::Gate {
                 entrance,
                 limits: Default::default(),
-                allow: entrance::AGENT_PATHS.iter().map(|p| (*p).to_owned()).collect(),
+                allow: entrance::AGENT_PATHS
+                    .iter()
+                    .map(|p| (*p).to_owned())
+                    .collect(),
                 // 分享面按令牌放行；令牌无效时门禁直接丢弃，不产生响应。
                 share: Some({
                     let index = share_index.clone();

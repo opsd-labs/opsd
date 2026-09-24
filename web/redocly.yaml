@@ -12,3 +12,6 @@ rules:
   operation-operationId: off
   # 仓库未附许可证文件，与契约正确性无关。
   info-license: off
+  # WebSocket 升级端点按协议只返回 101，不存在 HTTP 2xx 响应。
+  # 由 scripts/api-contract.mjs 单独检查该端点必须保留 101、且无 2xx/403。
+  operation-2xx-response: off

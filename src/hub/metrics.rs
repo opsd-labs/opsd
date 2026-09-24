@@ -46,9 +46,8 @@ impl Bucket {
         let previous = self.count as f64;
         let total = previous + 1.0;
         let blend = |old: f64, new: f64| (old * previous + new) / total;
-        let blend_int = |old: u64, new: u64| {
-            (((old as f64) * previous + new as f64) / total).round() as u64
-        };
+        let blend_int =
+            |old: u64, new: u64| (((old as f64) * previous + new as f64) / total).round() as u64;
         let target = &mut self.sample;
         target.at = incoming.at;
         // 先把延迟合并算出来，再借用 self.sample 的其它字段：
@@ -120,12 +119,47 @@ pub fn merge_peers(
     merged
 }
 
-/// 写入一次上报：更新内存中的最新值，并落到各层级。
+/// 单节点的两个独立事实：最近一次上报 与 最近一次成功采样。
 ///
-/// 采集失败的上报只更新最新值与时钟偏移，不写历史——历史里不该出现零值。
+/// 一次采集失败**不得**冲掉上一次成功值——否则「成功后紧跟失败」会让新鲜度倒退成空。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeMetrics {
+    /// 最近一次上报（含失败），用于显示当前采集状态与时钟偏移。
+    pub last_report: MetricsRecord,
+    /// 最近一次**成功**采样；从未成功过时为 None。
+    pub last_success: Option<MetricsRecord>,
+}
+
+impl NodeMetrics {
+    /// 公开/控制台状态：从未上报 unknown，当前失败 collect_failed，否则 ok。
+    pub fn status(&self) -> &'static str {
+        if self.last_report.error.is_some() {
+            "collect_failed"
+        } else if self.last_success.is_some() {
+            "ok"
+        } else {
+            // 上报过但既无成功采样也无 error：保守视为未知，不冒充 ok
+            "unknown"
+        }
+    }
+
+    /// 新鲜度时刻：只认成功采样。
+    pub fn metrics_at(&self) -> Option<i64> {
+        self.last_success.as_ref().map(|r| r.received_at)
+    }
+
+    /// 展示用采样：成功值优先；从未成功则为 None（不是零值）。
+    pub fn sample(&self) -> Option<&MetricsSample> {
+        self.last_success.as_ref().and_then(|r| r.sample.as_ref())
+    }
+}
+
+/// 写入一次上报：更新内存中的「最近上报」；仅成功时更新「最近成功」并写历史。
+///
+/// 采集失败的上报不写历史——历史里不该出现零值或伪造时间点。
 pub async fn ingest(
     db: &Store,
-    latest: &tokio::sync::RwLock<HashMap<String, MetricsRecord>>,
+    latest: &tokio::sync::RwLock<HashMap<String, NodeMetrics>>,
     node_id: &str,
     report: MetricsReport,
 ) -> Result<()> {
@@ -138,10 +172,20 @@ pub async fn ingest(
         sample: report.sample.clone(),
         error: report.error.clone(),
     };
-    latest
-        .write()
-        .await
-        .insert(node_id.to_owned(), record);
+    let success = report.sample.is_some();
+    {
+        let mut cache = latest.write().await;
+        let entry = cache
+            .entry(node_id.to_owned())
+            .or_insert_with(|| NodeMetrics {
+                last_report: record.clone(),
+                last_success: None,
+            });
+        entry.last_report = record.clone();
+        if success {
+            entry.last_success = Some(record);
+        }
+    }
 
     let Some(sample) = report.sample else {
         return Ok(());
@@ -243,7 +287,9 @@ pub fn decimate(rows: Vec<(i64, String)>, step: i64, raw: bool) -> Vec<MetricsPo
         let sample = if raw {
             serde_json::from_str::<MetricsSample>(&value).ok()
         } else {
-            serde_json::from_str::<Bucket>(&value).ok().map(|b| b.sample)
+            serde_json::from_str::<Bucket>(&value)
+                .ok()
+                .map(|b| b.sample)
         };
         let Some(sample) = sample else { continue };
         last_bucket = Some(bucket);
@@ -279,7 +325,10 @@ mod tests {
         bucket.merge(&sample(100, 10.0, 100));
         bucket.merge(&sample(200, 30.0, 300));
         assert_eq!(bucket.count, 2);
-        assert!((bucket.sample.cpu_usage - 20.0).abs() < 1e-9, "CPU 应取平均");
+        assert!(
+            (bucket.sample.cpu_usage - 20.0).abs() < 1e-9,
+            "CPU 应取平均"
+        );
         assert_eq!(bucket.sample.memory_used, 200, "内存应取平均");
         assert_eq!(bucket.sample.at, 200, "时间戳取最后一次");
         assert_eq!(bucket.sample.interfaces.len(), 1);
@@ -304,9 +353,15 @@ mod tests {
     #[test]
     fn 对端延迟在桶内按对端平均() {
         let mut first = sample(100, 1.0, 1);
-        first.peers = vec![peer("C001", Some(10.0), true), peer("C002", Some(20.0), true)];
+        first.peers = vec![
+            peer("C001", Some(10.0), true),
+            peer("C002", Some(20.0), true),
+        ];
         let mut second = sample(200, 1.0, 1);
-        second.peers = vec![peer("C001", Some(30.0), true), peer("C002", Some(40.0), true)];
+        second.peers = vec![
+            peer("C001", Some(30.0), true),
+            peer("C002", Some(40.0), true),
+        ];
 
         let mut bucket = Bucket::default();
         bucket.merge(&first);
@@ -357,7 +412,10 @@ mod tests {
     #[test]
     fn 桶里保留旧对端直到它从目标集合消失() {
         let mut first = sample(100, 1.0, 1);
-        first.peers = vec![peer("C001", Some(10.0), true), peer("C002", Some(20.0), true)];
+        first.peers = vec![
+            peer("C001", Some(10.0), true),
+            peer("C002", Some(20.0), true),
+        ];
         let mut second = sample(200, 1.0, 1);
         // 这一轮只上报了 C001（例如 C002 暂时从目录里消失）
         second.peers = vec![peer("C001", Some(12.0), true)];
@@ -441,7 +499,10 @@ mod tests {
 
     #[test]
     fn 无法解析的记录被跳过而不是当作零值() {
-        let rows = vec![(0, "不是 JSON".to_owned()), (15, serde_json::to_string(&sample(15, 9.0, 1)).unwrap())];
+        let rows = vec![
+            (0, "不是 JSON".to_owned()),
+            (15, serde_json::to_string(&sample(15, 9.0, 1)).unwrap()),
+        ];
         let points = decimate(rows, 15, true);
         assert_eq!(points.len(), 1, "坏记录不能变成零值点");
         assert_eq!(points[0].cpu_usage, 9.0);

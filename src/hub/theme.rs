@@ -168,10 +168,7 @@ pub struct Installed {
 pub fn validate(manifest: &Manifest) -> Result<()> {
     let short = manifest.short.trim();
     anyhow::ensure!(!short.is_empty(), "主题标识不能为空");
-    anyhow::ensure!(
-        short.len() <= 48,
-        "主题标识过长（不超过 48 个字符）"
-    );
+    anyhow::ensure!(short.len() <= 48, "主题标识过长（不超过 48 个字符）");
     anyhow::ensure!(
         short
             .chars()
@@ -327,7 +324,8 @@ pub async fn install_console(db: &Store, manifest: Manifest, digest: String) -> 
         installed_at: now(),
         has_assets: false,
     };
-    db.put(BUCKET, &installed.manifest.short, &installed).await?;
+    db.put(BUCKET, &installed.manifest.short, &installed)
+        .await?;
     Ok(installed)
 }
 
@@ -344,7 +342,9 @@ pub async fn install_share(
         MAX_PACKAGE_BYTES / 1024 / 1024
     );
     // 先解压到临时目录，校验通过后再就位，避免留下半个主题
-    let staging = data.join("themes").join(format!(".staging-{}", opsd::protocol::id()));
+    let staging = data
+        .join("themes")
+        .join(format!(".staging-{}", opsd::protocol::id()));
     let _ = std::fs::remove_dir_all(&staging);
     let result = (|| -> Result<Manifest> {
         extract(package, &staging)?;
@@ -376,7 +376,8 @@ pub async fn install_share(
         installed_at: now(),
         has_assets: true,
     };
-    db.put(BUCKET, &installed.manifest.short, &installed).await?;
+    db.put(BUCKET, &installed.manifest.short, &installed)
+        .await?;
     Ok(installed)
 }
 
@@ -388,10 +389,7 @@ pub async fn list(db: &Store) -> Result<Vec<Installed>> {
 
 /// 删除主题。内置主题不可删除；删除时同时清理已保存的设置。
 pub async fn remove(db: &Store, data: &Path, short: &str) -> Result<()> {
-    anyhow::ensure!(
-        !short.eq_ignore_ascii_case(DEFAULT),
-        "内置主题不可删除"
-    );
+    anyhow::ensure!(!short.eq_ignore_ascii_case(DEFAULT), "内置主题不可删除");
     let installed = db
         .get::<Installed>(BUCKET, short)
         .await?
@@ -406,10 +404,7 @@ pub async fn remove(db: &Store, data: &Path, short: &str) -> Result<()> {
 }
 
 /// 读取当前启用的主题与它的设置。返回 `None` 表示使用内置主题。
-pub async fn active(
-    db: &Store,
-    id: &str,
-) -> Result<Option<(Installed, Settings)>> {
+pub async fn active(db: &Store, id: &str) -> Result<Option<(Installed, Settings)>> {
     let Some(short) = db.get::<String>(SETTINGS_BUCKET, id).await? else {
         return Ok(None);
     };
@@ -518,14 +513,105 @@ fn describe(active: Option<(Installed, Settings)>) -> serde_json::Value {
     }
 }
 
+/// 请求侧严格清单：拒绝未知字段（含嵌套）。持久化/包内读取仍用宽松 `Manifest`。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThemeTokensInput {
+    #[serde(default)]
+    pub light: HashMap<String, String>,
+    #[serde(default)]
+    pub dark: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThemeFieldInput {
+    pub key: String,
+    pub name: Localized,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub default: serde_json::Value,
+    #[serde(default)]
+    pub help: Option<Localized>,
+    #[serde(default)]
+    pub options: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThemeConfigurationInput {
+    #[serde(default = "managed")]
+    pub r#type: String,
+    #[serde(default)]
+    pub data: Vec<ThemeFieldInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThemeManifestInput {
+    pub short: String,
+    pub name: Localized,
+    #[serde(default)]
+    pub description: Option<Localized>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub author: Option<Localized>,
+    #[serde(default)]
+    pub preview: Option<String>,
+    pub surfaces: Vec<Surface>,
+    #[serde(default)]
+    pub tokens: Option<ThemeTokensInput>,
+    #[serde(default)]
+    pub configuration: Option<ThemeConfigurationInput>,
+}
+
+impl From<ThemeManifestInput> for Manifest {
+    fn from(input: ThemeManifestInput) -> Self {
+        Manifest {
+            short: input.short,
+            name: input.name,
+            description: input.description,
+            version: input.version,
+            author: input.author,
+            preview: input.preview,
+            surfaces: input.surfaces,
+            tokens: input.tokens.map(|t| Tokens {
+                light: t.light,
+                dark: t.dark,
+            }),
+            configuration: input.configuration.map(|c| Configuration {
+                r#type: c.r#type,
+                data: c
+                    .data
+                    .into_iter()
+                    .map(|f| Field {
+                        key: f.key,
+                        name: f.name,
+                        kind: f.kind,
+                        default: f.default,
+                        help: f.help,
+                        options: f.options,
+                    })
+                    .collect(),
+            }),
+        }
+    }
+}
+
 /// 安装控制台主题。清单直接以 JSON 提交；令牌级主题不需要资源文件。
 pub async fn install_console_theme(
     S(s): S<State>,
-    Json(manifest): Json<Manifest>,
+    Json(input): Json<ThemeManifestInput>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let digest = opsd::protocol::digest(serde_json::to_vec(&manifest).map_err(anyhow::Error::from)?);
+    let manifest: Manifest = input.into();
+    let digest =
+        opsd::protocol::digest(serde_json::to_vec(&manifest).map_err(anyhow::Error::from)?);
     let installed = install_console(&s.db, manifest, digest).await?;
-    Ok(Json(serde_json::json!({ "short": installed.manifest.short })))
+    Ok(Json(
+        serde_json::json!({ "short": installed.manifest.short }),
+    ))
 }
 
 /// 安装分享页主题。请求体是主题包原始字节，便于用 curl 直接上传。
@@ -558,6 +644,7 @@ pub async fn remove_theme(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Activate {
     /// `console` 或 `share`。
     surface: String,
@@ -580,11 +667,10 @@ pub async fn activate(
         s.db.delete(SETTINGS_BUCKET, id).await?;
         return Ok(Json(serde_json::json!({ "short": DEFAULT })));
     }
-    let installed = s
-        .db
-        .get::<Installed>(BUCKET, &input.short)
-        .await?
-        .ok_or_else(|| bad("主题未安装"))?;
+    let installed =
+        s.db.get::<Installed>(BUCKET, &input.short)
+            .await?
+            .ok_or_else(|| bad("主题未安装"))?;
     // 主题必须声明覆盖该界面，否则选了也不会有任何效果
     let surface = if input.surface == "console" {
         Surface::Console
@@ -597,10 +683,7 @@ pub async fn activate(
     )?;
     let settings = with_defaults(&installed.manifest, &input.settings);
     let encoded = serde_json::to_string(&settings).map_err(anyhow::Error::from)?;
-    check(
-        encoded.len() <= MAX_SETTINGS_BYTES,
-        "主题设置体积过大",
-    )?;
+    check(encoded.len() <= MAX_SETTINGS_BYTES, "主题设置体积过大")?;
     s.db.put(SETTINGS_BUCKET, id, &input.short).await?;
     s.db.put(
         SETTINGS_BUCKET,
@@ -700,6 +783,27 @@ mod tests {
     use super::*;
     use opsd::protocol::digest as sha;
 
+    #[test]
+    fn 主题清单请求拒绝未知字段() {
+        let raw = r#"{"short":"x","name":"N","surfaces":["share"],"nope":1}"#;
+        assert!(serde_json::from_str::<ThemeManifestInput>(raw).is_err());
+        // 嵌套 tokens 也必须拒绝未知字段
+        let nested = r#"{"short":"x","name":"N","surfaces":["console"],"tokens":{"light":{"--a":"1"},"extra":true}}"#;
+        assert!(serde_json::from_str::<ThemeManifestInput>(nested).is_err());
+        let ok = r#"{"short":"x","name":"N","surfaces":["share"]}"#;
+        let input: ThemeManifestInput = serde_json::from_str(ok).unwrap();
+        let m: Manifest = input.into();
+        assert_eq!(m.short, "x");
+    }
+
+    #[test]
+    fn 旧主题清单仍可读取() {
+        let raw =
+            r#"{"short":"old","name":"N","surfaces":["share"],"preview":null,"legacy_field":1}"#;
+        let m: Manifest = serde_json::from_str(raw).unwrap();
+        assert_eq!(m.short, "old");
+    }
+
     fn manifest(short: &str, surfaces: Vec<Surface>) -> Manifest {
         Manifest {
             short: short.into(),
@@ -721,7 +825,15 @@ mod tests {
     fn 标识必须合法且不能占用_default() {
         validate(&manifest("MyTheme", vec![Surface::Console])).unwrap();
         validate(&manifest("my_theme-2", vec![Surface::Console])).unwrap();
-        for bad in ["", "default", "DEFAULT", "has space", "斜杠/", "点.号", "很长".repeat(30).as_str()] {
+        for bad in [
+            "",
+            "default",
+            "DEFAULT",
+            "has space",
+            "斜杠/",
+            "点.号",
+            "很长".repeat(30).as_str(),
+        ] {
             assert!(
                 validate(&manifest(bad, vec![Surface::Console])).is_err(),
                 "应拒绝标识 {bad:?}"
@@ -733,7 +845,10 @@ mod tests {
     fn 声明控制台就必须给出令牌() {
         let mut m = manifest("ok", vec![Surface::Console]);
         m.tokens = None;
-        assert!(validate(&m).is_err(), "没有 tokens 的控制台主题不会产生效果");
+        assert!(
+            validate(&m).is_err(),
+            "没有 tokens 的控制台主题不会产生效果"
+        );
         // 只声明分享页时不需要 tokens
         let m = Manifest {
             tokens: None,
@@ -799,7 +914,10 @@ mod tests {
             data: vec![],
         });
         let error = validate(&m).unwrap_err().to_string();
-        assert!(error.contains("managed"), "错误信息应说明只支持 managed：{error}");
+        assert!(
+            error.contains("managed"),
+            "错误信息应说明只支持 managed：{error}"
+        );
         m.configuration = Some(Configuration {
             r#type: "managed".into(),
             data: vec![Field {
@@ -897,9 +1015,17 @@ mod tests {
         });
         let saved = Settings::from([("switch_a".to_string(), serde_json::json!(false))]);
         let merged = with_defaults(&m, &saved);
-        assert_eq!(merged["switch_a"], serde_json::json!(false), "已保存的值优先");
+        assert_eq!(
+            merged["switch_a"],
+            serde_json::json!(false),
+            "已保存的值优先"
+        );
         assert_eq!(merged["number_b"], serde_json::json!(0), "number 缺省为 0");
-        assert_eq!(merged["select_c"], serde_json::json!("甲"), "select 取第一个选项");
+        assert_eq!(
+            merged["select_c"],
+            serde_json::json!("甲"),
+            "select 取第一个选项"
+        );
     }
 
     #[test]
@@ -909,8 +1035,7 @@ mod tests {
         let mut buffer = Vec::new();
         {
             let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut buffer));
-            let options: zip::write::FileOptions<'_, ()> =
-                zip::write::FileOptions::default();
+            let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
             writer.start_file("../escape.txt", options).unwrap();
             writer.write_all(b"x").unwrap();
             writer.finish().unwrap();

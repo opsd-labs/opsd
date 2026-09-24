@@ -58,6 +58,7 @@ pub async fn require(S(s): S<State>, mut req: Request, next: Next) -> Response {
     next.run(req).await
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Login {
     pub password: String,
 }
@@ -115,7 +116,9 @@ pub async fn login(
     Ok((
         [(
             "set-cookie",
-            format!("opsd_session={key}; HttpOnly; Secure; SameSite=Strict; Path={path}; Max-Age=28800"),
+            format!(
+                "opsd_session={key}; HttpOnly; Secure; SameSite=Strict; Path={path}; Max-Age=28800"
+            ),
         )],
         Json(session),
     )

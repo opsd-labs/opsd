@@ -130,9 +130,7 @@ pub fn analyze(
         .collect();
     let checks = consistency(&verdicts, &ready_nodes);
     let all_passed = checks.iter().all(|c| c.passed);
-    let topology = all_passed
-        .then(|| topology(&ready_nodes))
-        .flatten();
+    let topology = all_passed.then(|| topology(&ready_nodes)).flatten();
 
     let pending = verdicts
         .iter()
@@ -156,9 +154,7 @@ pub fn analyze(
             topology.as_ref().map(|t| t.drives_per_node).unwrap_or(0),
         )
     } else if pending > 0 {
-        format!(
-            "还有 {pending} 个节点尚未采集到盘位信息，暂不能给出结论；先触发一次主机盘点。"
-        )
+        format!("还有 {pending} 个节点尚未采集到盘位信息，暂不能给出结论；先触发一次主机盘点。")
     } else {
         format!(
             "当前不满足部署条件：{unsuitable} 个节点存在硬性阻断，{needs_work} 个节点需要先处理。"
@@ -175,11 +171,7 @@ pub fn analyze(
     }
 }
 
-fn verdict_for(
-    node: &Node,
-    online: bool,
-    inventory: Option<&HostInventory>,
-) -> NodeVerdict {
+fn verdict_for(node: &Node, online: bool, inventory: Option<&HostInventory>) -> NodeVerdict {
     let base = NodeVerdict {
         node_id: node.id.clone(),
         name: node.name.clone(),
@@ -208,10 +200,7 @@ fn verdict_for(
     let mut candidates = Vec::new();
     let mut rejected = Vec::new();
     for device in inventory.devices.iter().filter(|d| d.kind == "disk") {
-        let risk = inventory
-            .risks
-            .iter()
-            .find(|r| r.device == device.name);
+        let risk = inventory.risks.iter().find(|r| r.device == device.name);
         let usable = risk.is_some_and(|r| r.usable());
         if usable && device.size > 0 {
             candidates.push(Candidate {
@@ -280,7 +269,11 @@ fn verdict_for(
         collected_at: Some(inventory.collected_at),
         gaps: inventory.gaps.clone(),
         // 取最快的物理链路：只要有一条够快，节点间就有可用带宽
-        link_mbps: inventory.interfaces.iter().filter_map(|i| i.speed_mbps).max(),
+        link_mbps: inventory
+            .interfaces
+            .iter()
+            .filter_map(|i| i.speed_mbps)
+            .max(),
         ..base
     }
 }
@@ -304,7 +297,10 @@ fn consistency(all: &[NodeVerdict], ready: &[&NodeVerdict]) -> Vec<Check> {
                 ready.len()
             )
         } else {
-            format!("仅 {} 台可用，分布式部署至少需要 {MIN_NODES} 台", ready.len())
+            format!(
+                "仅 {} 台可用，分布式部署至少需要 {MIN_NODES} 台",
+                ready.len()
+            )
         },
     });
 
@@ -413,7 +409,11 @@ fn consistency(all: &[NodeVerdict], ready: &[&NodeVerdict]) -> Vec<Check> {
 /// 纠删码按最小盘计容，因此统一取最小容量；校验盘数量沿用 MinIO 的默认取值
 /// （4–7 块校验 2，8 块及以上校验 4），并把这条规则写进报告，避免运维猜。
 pub fn topology(ready: &[&NodeVerdict]) -> Option<Topology> {
-    if ready.len() < MIN_NODES || ready.iter().any(|v| v.candidates.len() < MIN_DRIVES_PER_NODE) {
+    if ready.len() < MIN_NODES
+        || ready
+            .iter()
+            .any(|v| v.candidates.len() < MIN_DRIVES_PER_NODE)
+    {
         return None;
     }
     let drives_per_node = ready.iter().map(|v| v.candidates.len()).min()?;
@@ -467,7 +467,8 @@ use super::*;
 use axum::{Json, extract::State as S};
 
 /// 各节点最近一次主机盘点结果。盘点结果不大且变化慢，因此直接留在内存里。
-pub type SharedInventories = std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, HostInventory>>>;
+pub type SharedInventories =
+    std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, HostInventory>>>;
 
 /// 存储预检报告。
 ///
@@ -480,7 +481,12 @@ pub async fn readiness(S(s): S<State>) -> ApiResult<Json<Report>> {
     let inventories = s
         .host_inventories
         .read()
-        .map_err(|_| ApiError(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "盘点缓存不可用".into()))?
+        .map_err(|_| {
+            ApiError(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "盘点缓存不可用".into(),
+            )
+        })?
         .clone();
     Ok(Json(analyze(&nodes, &online, &inventories, now())))
 }
@@ -507,6 +513,7 @@ pub async fn host_inspect(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ActionRequest {
     pub idempotency_key: String,
 }
@@ -537,7 +544,11 @@ mod tests {
         }
     }
 
-    fn inventory(disks: &[(&str, u64, bool)], smart: Option<&str>, gaps: Vec<String>) -> HostInventory {
+    fn inventory(
+        disks: &[(&str, u64, bool)],
+        smart: Option<&str>,
+        gaps: Vec<String>,
+    ) -> HostInventory {
         HostInventory {
             collected_at: 1000,
             hostname: "n".into(),
@@ -581,10 +592,23 @@ mod tests {
     #[test]
     fn 未采集节点判为待采集而不是不适合() {
         let nodes: Vec<Node> = (1..=4).map(|i| node(&format!("C00{i}"))).collect();
-        let report = analyze(&nodes, &online(&["C001", "C002", "C003", "C004"]), &Default::default(), 1);
-        assert!(report.nodes.iter().all(|v| v.suitability == Suitability::Pending));
+        let report = analyze(
+            &nodes,
+            &online(&["C001", "C002", "C003", "C004"]),
+            &Default::default(),
+            1,
+        );
+        assert!(
+            report
+                .nodes
+                .iter()
+                .all(|v| v.suitability == Suitability::Pending)
+        );
         assert!(!report.ready);
-        assert!(report.summary.contains("尚未采集"), "总结应指出结论还不完整");
+        assert!(
+            report.summary.contains("尚未采集"),
+            "总结应指出结论还不完整"
+        );
         // 离线节点另有说明
         let offline = analyze(&nodes, &online(&[]), &Default::default(), 1);
         assert!(offline.nodes[0].reasons[0].contains("离线"));
@@ -597,7 +621,11 @@ mod tests {
             .map(|i| {
                 (
                     format!("C00{i}"),
-                    inventory(&[("sdb", 1000 * 1024u64.pow(3), false)], Some("健康"), vec![]),
+                    inventory(
+                        &[("sdb", 1000 * 1024u64.pow(3), false)],
+                        Some("健康"),
+                        vec![],
+                    ),
                 )
             })
             .collect();
@@ -657,7 +685,12 @@ mod tests {
                 )
             })
             .collect();
-        let report = analyze(&nodes, &online(&["C001", "C002", "C003", "C004"]), &inventories, 1);
+        let report = analyze(
+            &nodes,
+            &online(&["C001", "C002", "C003", "C004"]),
+            &inventories,
+            1,
+        );
         let second = report.nodes.iter().find(|v| v.node_id == "C002").unwrap();
         assert_eq!(second.suitability, Suitability::NeedsWork);
         assert!(second.reasons.iter().any(|r| r.contains("采集缺口")));
@@ -729,11 +762,20 @@ mod tests {
                 let size = if i == 4 { 4000u64 } else { 1000 };
                 (
                     format!("C00{i}"),
-                    inventory(&[("sdb", size * 1024u64.pow(3), false)], Some("健康"), vec![]),
+                    inventory(
+                        &[("sdb", size * 1024u64.pow(3), false)],
+                        Some("健康"),
+                        vec![],
+                    ),
                 )
             })
             .collect();
-        let report = analyze(&nodes, &online(&["C001", "C002", "C003", "C004"]), &inventories, 1);
+        let report = analyze(
+            &nodes,
+            &online(&["C001", "C002", "C003", "C004"]),
+            &inventories,
+            1,
+        );
         let check = report
             .checks
             .iter()
@@ -751,15 +793,16 @@ mod tests {
             .map(|i| {
                 (
                     format!("C00{i}"),
-                    inventory(
-                        &[("sdb", 1024u64.pow(3), i == 2)],
-                        Some("健康"),
-                        vec![],
-                    ),
+                    inventory(&[("sdb", 1024u64.pow(3), i == 2)], Some("健康"), vec![]),
                 )
             })
             .collect();
-        let report = analyze(&nodes, &online(&["C001", "C002", "C003", "C004"]), &inventories, 1);
+        let report = analyze(
+            &nodes,
+            &online(&["C001", "C002", "C003", "C004"]),
+            &inventories,
+            1,
+        );
         let check = report
             .checks
             .iter()
@@ -775,17 +818,22 @@ mod tests {
         let inventories: std::collections::HashMap<String, HostInventory> = (1..=4)
             .map(|i| {
                 let disks: Vec<(&str, u64, bool)> = if i == 2 {
-                    vec![("sdb", 1024u64.pow(3), false), ("sdc", 1024u64.pow(3), false)]
+                    vec![
+                        ("sdb", 1024u64.pow(3), false),
+                        ("sdc", 1024u64.pow(3), false),
+                    ]
                 } else {
                     vec![("sdb", 1024u64.pow(3), false)]
                 };
-                (
-                    format!("C00{i}"),
-                    inventory(&disks, Some("健康"), vec![]),
-                )
+                (format!("C00{i}"), inventory(&disks, Some("健康"), vec![]))
             })
             .collect();
-        let report = analyze(&nodes, &online(&["C001", "C002", "C003", "C004"]), &inventories, 1);
+        let report = analyze(
+            &nodes,
+            &online(&["C001", "C002", "C003", "C004"]),
+            &inventories,
+            1,
+        );
         let check = report
             .checks
             .iter()
@@ -808,7 +856,12 @@ mod tests {
                 (format!("C00{i}"), inventory(&disks, Some("健康"), vec![]))
             })
             .collect();
-        let report = analyze(&nodes, &online(&["C001", "C002", "C003", "C004"]), &inventories, 1);
+        let report = analyze(
+            &nodes,
+            &online(&["C001", "C002", "C003", "C004"]),
+            &inventories,
+            1,
+        );
         let topology = report.topology.unwrap();
         assert_eq!(topology.nodes * topology.drives_per_node, 12);
         assert_eq!(topology.parity, 4, "12 块盘应按 4 块校验");
@@ -827,7 +880,12 @@ mod tests {
             }
             inventories.insert(format!("C00{i}"), inv);
         }
-        let report = analyze(&nodes, &online(&["C001", "C002", "C003", "C004"]), &inventories, 1);
+        let report = analyze(
+            &nodes,
+            &online(&["C001", "C002", "C003", "C004"]),
+            &inventories,
+            1,
+        );
         for verdict in &report.nodes {
             assert!(
                 !verdict.reasons.is_empty(),

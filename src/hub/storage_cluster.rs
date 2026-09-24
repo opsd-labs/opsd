@@ -16,10 +16,8 @@
 //! 5. 逐节点串行执行，任一节点失败即阻断后续节点。
 //!
 //! 计划生成与校验是纯函数，因此可以被穷举测试；真正落盘的动作全部在 Agent 侧。
-use opsd::protocol::{
-    Action, HostInventory, Node, StorageDeviceTarget, digest, id, now,
-};
 use anyhow::Result;
+use opsd::protocol::{Action, HostInventory, Node, StorageDeviceTarget, digest, id, now};
 use opsd::store::Store;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -123,13 +121,14 @@ pub fn validate_spec(spec: &ClusterSpec) -> Result<()> {
     );
     anyhow::ensure!(
         spec.image_tag.starts_with("RELEASE.")
-            || spec.image_tag.chars().next().is_some_and(|c| c.is_ascii_digit()),
+            || spec
+                .image_tag
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit()),
         "镜像标签应形如 RELEASE.<时间戳> 或具体版本号"
     );
-    anyhow::ensure!(
-        !spec.endpoint.trim().is_empty(),
-        "必须给出集群对外服务地址"
-    );
+    anyhow::ensure!(!spec.endpoint.trim().is_empty(), "必须给出集群对外服务地址");
     anyhow::ensure!(
         spec.access_key.len() >= 3 && !spec.secret_key.is_empty() && spec.secret_key.len() >= 16,
         "访问凭据不合法：密钥至少 16 个字符"
@@ -174,7 +173,10 @@ pub fn build_plan(
             .get(node_id)
             .ok_or_else(|| anyhow::anyhow!("节点不存在：{node_id}"))?;
         anyhow::ensure!(!node.revoked, "节点已撤销：{node_id}");
-        anyhow::ensure!(online.contains(node_id), "节点离线，不能纳入计划：{node_id}");
+        anyhow::ensure!(
+            online.contains(node_id),
+            "节点离线，不能纳入计划：{node_id}"
+        );
         let inventory = inventories
             .get(node_id)
             .ok_or_else(|| anyhow::anyhow!("节点尚未盘点，不能纳入计划：{node_id}"))?;
@@ -384,11 +386,42 @@ pub async fn clusters(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
     })))
 }
 
+/// 保存集群定义的请求体。**拒绝未知字段**，与 OpenAPI additionalProperties: false 对齐。
+/// 持久化模型 ClusterSpec 保持宽松，以便读取旧控制库记录。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterSpecInput {
+    pub name: String,
+    pub nodes: Vec<String>,
+    pub image_tag: String,
+    pub endpoint: String,
+    pub access_key: String,
+    pub secret_key: String,
+    /// 由服务端填写；客户端可省略。
+    #[serde(default)]
+    pub created_at: i64,
+}
+
+impl From<ClusterSpecInput> for ClusterSpec {
+    fn from(input: ClusterSpecInput) -> Self {
+        ClusterSpec {
+            name: input.name,
+            nodes: input.nodes,
+            image_tag: input.image_tag,
+            endpoint: input.endpoint,
+            access_key: input.access_key,
+            secret_key: input.secret_key,
+            created_at: input.created_at,
+        }
+    }
+}
+
 /// 保存集群定义。只写定义，不碰任何节点。
 pub async fn put_cluster(
     S(s): S<State>,
-    Json(mut spec): Json<ClusterSpec>,
+    Json(input): Json<ClusterSpecInput>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let mut spec: ClusterSpec = input.into();
     match load_spec(&s.db, &spec.name).await? {
         Some(existing) => spec.created_at = existing.created_at,
         None => spec.created_at = now(),
@@ -402,6 +435,7 @@ pub async fn put_cluster(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlanRequest {
     pub name: String,
 }
@@ -417,22 +451,25 @@ pub async fn plan(
     let spec = load_spec(&s.db, &input.name)
         .await?
         .ok_or_else(|| bad("集群定义不存在"))?;
-    let nodes: std::collections::HashMap<String, Node> = s
-        .db
-        .list::<Node>("nodes")
-        .await?
-        .into_iter()
-        .map(|node| (node.id.clone(), node))
-        .collect();
+    let nodes: std::collections::HashMap<String, Node> =
+        s.db.list::<Node>("nodes")
+            .await?
+            .into_iter()
+            .map(|node| (node.id.clone(), node))
+            .collect();
     let online: std::collections::HashSet<String> =
         s.channels.read().await.keys().cloned().collect();
     let inventories = s
         .host_inventories
         .read()
-        .map_err(|_| ApiError(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "盘点缓存不可用".into()))?
+        .map_err(|_| {
+            ApiError(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "盘点缓存不可用".into(),
+            )
+        })?
         .clone();
-    let plan = build_plan(&spec, &nodes, &inventories, &online)
-        .map_err(|e| bad(&e.to_string()))?;
+    let plan = build_plan(&spec, &nodes, &inventories, &online).map_err(|e| bad(&e.to_string()))?;
     save(&s.db, &plan).await?;
     Ok(Json(serde_json::json!({ "plan": plan })))
 }
@@ -441,9 +478,7 @@ pub async fn read_plan(
     S(s): S<State>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let plan = load(&s.db, &id)
-        .await?
-        .ok_or_else(|| bad("计划不存在"))?;
+    let plan = load(&s.db, &id).await?.ok_or_else(|| bad("计划不存在"))?;
     Ok(Json(serde_json::json!({
         "plan": plan,
         "expired": plan.expires <= now(),
@@ -451,6 +486,7 @@ pub async fn read_plan(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApplyRequest {
     pub plan_id: String,
     /// 含破坏性步骤时必须显式确认为 true。
@@ -477,7 +513,12 @@ pub async fn apply(
     let inventories = s
         .host_inventories
         .read()
-        .map_err(|_| ApiError(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "盘点缓存不可用".into()))?
+        .map_err(|_| {
+            ApiError(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "盘点缓存不可用".into(),
+            )
+        })?
         .clone();
     check_applicable(&plan, input.acknowledge_destructive, &online, &inventories)
         .map_err(|e| bad(&e.to_string()))?;
@@ -500,8 +541,12 @@ pub async fn apply(
             match s.db.accept_task(&task).await {
                 Ok(task) => {
                     if task.status == TaskStatus::Pending
-                        && let Some(tx) =
-                            s.channels.read().await.get(&node.node_id).map(|c| c.1.clone())
+                        && let Some(tx) = s
+                            .channels
+                            .read()
+                            .await
+                            .get(&node.node_id)
+                            .map(|c| c.1.clone())
                     {
                         let _ = tx.send(Frame::Task { task: task.clone() }).await;
                     }
@@ -551,7 +596,11 @@ pub async fn apply(
         &s.db,
         audit::AuditEntry {
             actor: "管理员".into(),
-            node_id: plan.nodes.first().map(|n| n.node_id.clone()).unwrap_or_default(),
+            node_id: plan
+                .nodes
+                .first()
+                .map(|n| n.node_id.clone())
+                .unwrap_or_default(),
             category: "存储".into(),
             target: format!(
                 "部署集群 {}：{} 个节点，共 {} 块盘",
@@ -575,6 +624,7 @@ pub async fn apply(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BucketRequest {
     pub cluster: String,
     pub bucket: String,
@@ -603,6 +653,7 @@ pub async fn bucket(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UserRequest {
     pub cluster: String,
     pub user: String,
@@ -690,6 +741,26 @@ mod tests {
     use super::*;
     use opsd::protocol::{BlockDevice, DriveRisk};
     use std::collections::HashSet;
+
+    #[test]
+    fn 集群定义请求拒绝未知字段() {
+        let raw = r#"{"name":"lab","nodes":["a","b","c","d"],"image_tag":"RELEASE.1","endpoint":"http://x","access_key":"k","secret_key":"s","nope":1}"#;
+        assert!(serde_json::from_str::<ClusterSpecInput>(raw).is_err());
+        let ok = r#"{"name":"lab","nodes":["a","b","c","d"],"image_tag":"RELEASE.1","endpoint":"http://x","access_key":"k","secret_key":"s"}"#;
+        let input: ClusterSpecInput = serde_json::from_str(ok).unwrap();
+        let spec: ClusterSpec = input.into();
+        assert_eq!(spec.name, "lab");
+        assert_eq!(spec.created_at, 0);
+    }
+
+    #[test]
+    fn 旧集群记录仍可读取() {
+        // 持久化模型保持宽松：多出的历史字段不应导致整条记录读不出来
+        let raw = r#"{"name":"old","nodes":["a","b","c","d"],"image_tag":"RELEASE.0","endpoint":"http://x","access_key":"k","secret_key":"s","created_at":1,"legacy":true}"#;
+        let spec: ClusterSpec = serde_json::from_str(raw).unwrap();
+        assert_eq!(spec.name, "old");
+        assert_eq!(spec.created_at, 1);
+    }
 
     fn spec(nodes: Vec<&str>) -> ClusterSpec {
         ClusterSpec {
@@ -1026,7 +1097,9 @@ mod tests {
                 assert_eq!(mounts.len(), 2, "本节点只挂载自己的盘");
                 assert_eq!(peers.len(), 8, "拓扑要包含全部节点的全部盘位");
                 assert!(
-                    peers.iter().all(|p| p.starts_with("https://s3.example.com/data/disk")),
+                    peers
+                        .iter()
+                        .all(|p| p.starts_with("https://s3.example.com/data/disk")),
                     "不应拼出双斜杠：{peers:?}"
                 );
             }
