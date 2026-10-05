@@ -2,6 +2,9 @@
 /.data/
 /web/node_modules/
 /web/dist/
+/web2/node_modules/
+/web2/dist/
+/web2/*.tsbuildinfo
 /test-results/
 /playwright-report/
 /web/test-results/

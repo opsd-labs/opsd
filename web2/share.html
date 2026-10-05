@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>节点状态</title>
+    <link rel="preconnect" href="https://rsms.me" />
+    <link rel="stylesheet" href="https://rsms.me/res/inter/inter.css" />
+    <script>
+      try {
+        const t = localStorage.getItem("opsd.share.theme") || "system";
+        document.documentElement.dataset.theme =
+          t === "system"
+            ? matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light"
+            : t;
+      } catch {}
+    </script>
+  </head>
+  <body class="share-body">
+    <div id="share"></div>
+    <script type="module" src="/src/share/main.ts"></script>
+  </body>
+</html>
