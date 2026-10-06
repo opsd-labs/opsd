@@ -1,4 +1,5 @@
 ARG NODE_VERSION=24
+ARG RUST_VERSION=1.95
 FROM node:${NODE_VERSION}-bookworm-slim AS web
 WORKDIR /source/web
 COPY web/package*.json ./
