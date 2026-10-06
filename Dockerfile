@@ -28,6 +28,6 @@ COPY --from=rust /source/target/release/opsd-hub /usr/local/bin/opsd-hub
 COPY --from=web /source/web/dist /opt/opsd/web
 ENV OPSD_DATA_DIR=/var/lib/opsd
 # 65535 为控制台端口，8444 为 Agent 端到端 mTLS 通道，65534 为仅回环的健康检查端口。
-EXPOSE 65535 8444
+EXPOSE 65535 8444 65534
 ENTRYPOINT ["/usr/local/bin/opsd-hub"]
 CMD ["serve", "--listen", "0.0.0.0:65535", "--agent-listen", "0.0.0.0:8444", "--health-listen", "127.0.0.1:65534", "--web", "/opt/opsd/web"]
