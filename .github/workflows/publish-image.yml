@@ -79,8 +79,8 @@ jobs:
             init --password-file /run/password > "$tmp/init.log"
           docker run -d --name "$name" \
             -v "$tmp/data:/var/lib/opsd" \
-            -p 127.0.0.1::65535 \
-            -p 127.0.0.1::65534 \
+            -p 127.0.0.1:36535:65535 \
+            -p 127.0.0.1:36534:65534 \
             ghcr.io/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA} \
             serve --listen 0.0.0.0:65535 --agent-listen 0.0.0.0:8444 --health-listen 0.0.0.0:65534 --web /opt/opsd/web
           health_ok=0
