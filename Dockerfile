@@ -7,7 +7,6 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-ARG RUST_VERSION=1.95
 FROM rust:${RUST_VERSION}-bookworm AS rust
 WORKDIR /source
 COPY Cargo.toml Cargo.lock ./
