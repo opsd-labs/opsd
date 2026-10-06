@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, feat/v01-contract-fixes]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: 检查格式
+        run: rustfmt --edition 2024 --check src/hub/api.rs
+      - name: 运行 Rust 测试
+        run: cargo test --locked
+
+  web-contract:
+    name: Web 与契约
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 安装前端依赖
+        working-directory: web
+        run: npm ci
+      - name: OpenAPI、类型、测试与构建
+        working-directory: web
+        run: |
+          npm run api
+          npm test -- --run
+          npm run build
+      - name: 检查生成物漂移
+        run: git diff --exit-code -- docs/api/_extract web/src/generated/api.ts
+
+  integration:
+    name: HTTP 集成与负向门禁
+    runs-on: ubuntu-24.04
+    needs: [rust, web-contract]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: 安装契约检查依赖
+        working-directory: web
+        run: npm ci
+      - name: 构建调试二进制
+        run: cargo build --locked --bins
+      - name: HTTP 集成测试
+        run: node tests/integration.mjs
+      - name: 负向契约门禁
+        run: node tests/negative-gates.mjs
+
+  docker-smoke:
+    name: Docker 构建与探针
+    runs-on: ubuntu-24.04
+    needs: [rust, web-contract]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建镜像
+        run: docker build --pull --build-arg VCS_REF=${GITHUB_SHA} --build-arg VERSION=ci-${GITHUB_SHA::12} --tag opsd-ci:${GITHUB_SHA} .
+      - name: 运行 CLI smoke test
+        run: docker run --rm opsd-ci:${GITHUB_SHA} --help
+      - name: 清理镜像
+        if: always()
+        run: docker image rm -f opsd-ci:${GITHUB_SHA} || true
+
+  secret-scan:
+    name: 敏感文件与实验数据检查
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 拒绝敏感文件和本地数据
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden='(^|/)(id_rsa|.*\.pem|.*\.key|.*\.p12|.*\.pfx|\.env($|\.)|\.data($|/)|test-results($|/)|playwright-report($|/))'
+          if git ls-files -z | grep -zE "$forbidden"; then
+            echo '发现不应进入仓库的凭据、环境文件或实验数据' >&2
+            exit 1
+          fi
+          if git grep -nE '(BEGIN (RSA|OPENSSH|EC|PRIVATE) KEY|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})' -- ':!docs/ui/*.png'; then
+            echo '发现疑似私钥或 GitHub 令牌' >&2
+            exit 1
+          fi
