@@ -79,19 +79,19 @@ jobs:
             init --password-file /run/password > "$tmp/init.log"
           docker run -d --name "$name" \
             -v "$tmp/data:/var/lib/opsd" \
-            -p 127.0.0.1::65535 \
-            -p 127.0.0.1::65534 \
+            -p 127.0.0.1:36535:65535 \
+            -p 127.0.0.1:36534:65534 \
             ghcr.io/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA} \
             serve --listen 0.0.0.0:65535 --agent-listen 0.0.0.0:8444 --health-listen 0.0.0.0:65534 --web /opt/opsd/web
           health_ok=0
           for _ in {1..30}; do
-            health_port=$(docker port "$name" 65534/tcp | sed 's/.*://')
+            health_port=36534
             if curl -fsS "http://127.0.0.1:${health_port}/api/v1/health"; then health_ok=1; break; fi
             sleep 2
           done
           test "$health_ok" -eq 1
           docker exec "$name" /usr/local/bin/opsd-hub probe
-          console_port=$(docker port "$name" 65535/tcp | sed 's/.*://')
+          console_port=36535
           entrance=$(sed -n 's/^控制台安全入口：//p' "$tmp/init.log")
           test -n "$entrance"
           curl -kfsS "https://127.0.0.1:${console_port}/${entrance}/" | grep -q '<!doctype html\|<html'
