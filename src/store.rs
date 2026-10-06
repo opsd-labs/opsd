@@ -133,6 +133,23 @@ impl Store {
             .map(|r| Ok(serde_json::from_str(&r.try_get::<String, _>("value")?)?))
             .collect()
     }
+    pub async fn list_with_ids<T: DeserializeOwned>(
+        &self,
+        bucket: &str,
+    ) -> Result<Vec<(String, T)>> {
+        sqlx::query("SELECT id,value FROM records WHERE bucket=? ORDER BY id")
+            .bind(bucket)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|r| {
+                Ok((
+                    r.try_get::<String, _>("id")?,
+                    serde_json::from_str(&r.try_get::<String, _>("value")?)?,
+                ))
+            })
+            .collect()
+    }
     pub async fn put<T: Serialize>(&self, bucket: &str, id: &str, value: &T) -> Result<()> {
         self.put_records(&[(bucket, id, serde_json::to_string(value)?)])
             .await
@@ -171,6 +188,47 @@ impl Store {
             .execute(&self.pool)
             .await?
             .rows_affected())
+    }
+    /// 原子完成节点接入：删除一次性令牌、写入节点相关记录并创建首个任务。
+    /// 接入过程中任何一步失败都会回滚，避免出现“令牌已消费但节点不可用”的半成品。
+    pub async fn commit_enrollment(
+        &self,
+        token_bucket: &str,
+        token_id: &str,
+        records: &[(&str, &str, String)],
+        task: &TaskEnvelope,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let deleted = sqlx::query("DELETE FROM records WHERE bucket=? AND id=?")
+            .bind(token_bucket)
+            .bind(token_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        anyhow::ensure!(deleted == 1, "令牌已被使用");
+        for (bucket, id, value) in records {
+            sqlx::query("DELETE FROM records WHERE bucket=? AND id=?")
+                .bind(*bucket)
+                .bind(*id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("INSERT INTO records(bucket,id,value) VALUES(?,?,?)")
+                .bind(*bucket)
+                .bind(*id)
+                .bind(value)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("INSERT INTO tasks(id,node_id,task_key,digest,value) VALUES(?,?,?,?,?)")
+            .bind(&task.id)
+            .bind(&task.node_id)
+            .bind(&task.key)
+            .bind(&task.digest)
+            .bind(serde_json::to_string(task)?)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
     pub async fn accept_task(&self, task: &TaskEnvelope) -> Result<TaskEnvelope> {
         anyhow::ensure!(

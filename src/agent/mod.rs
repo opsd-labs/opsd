@@ -255,13 +255,14 @@ async fn renew_certificate(ctx: &ContextState, force: bool) -> Result<()> {
     Ok(())
 }
 async fn capabilities() -> NodeCapabilities {
+    let container = container_mode();
     NodeCapabilities {
         os: std::env::consts::OS.into(),
         docker: std::path::Path::new("/var/run/docker.sock").exists(),
         compose: command("/usr/bin/docker", &["compose", "version"], 10)
             .await
             .is_ok(),
-        systemd: std::path::Path::new("/run/systemd/system").exists(),
+        systemd: !container && std::path::Path::new("/run/systemd/system").exists(),
         firewall: ["nft", "iptables", "ufw", "firewall-cmd"]
             .iter()
             .filter(|c| {
@@ -272,11 +273,16 @@ async fn capabilities() -> NodeCapabilities {
             .collect(),
         metrics: cfg!(target_os = "linux"),
         hostinfo: cfg!(target_os = "linux"),
-        storage: cfg!(target_os = "linux"),
+        storage: !container && cfg!(target_os = "linux"),
         database: cfg!(target_os = "linux"),
         // 探测只用 ping 或 TCP 握手，不需要额外特权；`ping` 缺失时
         // 结果里会如实写出「本机没有 ping 命令」，而不是假装网络不通。
         probe: cfg!(target_os = "linux"),
+        execution_mode: if container {
+            AgentInstallMode::Docker
+        } else {
+            AgentInstallMode::Host
+        },
     }
 }
 async fn connection(ctx: ContextState, worker: mpsc::Sender<String>) -> Result<()> {
@@ -549,6 +555,9 @@ pub async fn report(ctx: &ContextState, task: &mut TaskEnvelope) -> Result<()> {
     }
     Ok(())
 }
+fn container_mode() -> bool {
+    std::env::var("OPSD_AGENT_MODE").as_deref() == Ok("container")
+}
 async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
     let mut task = ctx.db.task(id).await?.context("任务不存在")?;
     if !matches!(task.status, TaskStatus::Pending | TaskStatus::Accepted) {
@@ -595,10 +604,12 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
         }
         Action::FirewallPlan { operation } => firewall::plan(ctx, operation).await,
         Action::FirewallApply { plan_id, witness } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持防火墙写入");
             let _lock = ctx.network.lock().await;
             firewall::apply(ctx, plan_id, witness.as_deref()).await
         }
         Action::PeerSync { set } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持节点地址发布");
             let _lock = ctx.network.lock().await;
             firewall::peers(ctx, set).await
         }
@@ -614,6 +625,7 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
             digest: expected,
             size,
         } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件写入");
             let _lock = ctx.network.lock().await;
             file_put(&file_jail(ctx), path, expected, *size).await
         }
@@ -622,6 +634,7 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
             recursive,
             confirmed,
         } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件删除");
             let _lock = ctx.network.lock().await;
             let jail = file_jail(ctx);
             let removed = files::remove(&jail, path, *recursive, *confirmed)?;
@@ -630,21 +643,25 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
             Ok(json!({ "removed": removed }))
         }
         Action::FileRename { from, to } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
             let _lock = ctx.network.lock().await;
             files::rename(&file_jail(ctx), from, to)?;
             Ok(json!({ "from": from, "to": to }))
         }
         Action::FileMkdir { path } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
             let _lock = ctx.network.lock().await;
             files::mkdir(&file_jail(ctx), path)?;
             Ok(json!({ "path": path }))
         }
         Action::FileChmod { path, mode } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
             let _lock = ctx.network.lock().await;
             files::chmod(&file_jail(ctx), path, *mode)?;
             Ok(json!({ "path": path, "mode": mode }))
         }
         Action::FileChown { path, uid, gid } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
             let _lock = ctx.network.lock().await;
             files::chown(&file_jail(ctx), path, *uid, *gid)?;
             Ok(json!({ "path": path, "uid": uid, "gid": gid }))
@@ -657,6 +674,7 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
             devices,
             filesystem,
         } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持存储变更");
             let _lock = ctx.network.lock().await;
             anyhow::ensure!(
                 cfg!(target_os = "linux"),
@@ -673,6 +691,7 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
             access_key,
             secret_key,
         } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持存储变更");
             let _lock = ctx.network.lock().await;
             storage::deploy(
                 &ctx.dir,
@@ -701,6 +720,7 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
             bucket,
             remove,
         } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持存储变更");
             let _lock = ctx.network.lock().await;
             storage::bucket(cluster, bucket, *remove).await
         }
@@ -711,6 +731,7 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
             policy,
             remove,
         } => {
+            anyhow::ensure!(!container_mode(), "Docker Agent 不支持存储变更");
             let _lock = ctx.network.lock().await;
             storage::user(cluster, user, secret, policy, *remove).await
         }

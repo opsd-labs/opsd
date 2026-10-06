@@ -3,6 +3,7 @@ services:
     image: ${OPSD_IMAGE:-ghcr.io/opsd-labs/opsd:latest}
     build:
       context: .
+      target: ${OPSD_BUILD_TARGET:-hub}
       args:
         VCS_REF: ${OPSD_VCS_REF:-local}
         VERSION: ${OPSD_VERSION:-local}

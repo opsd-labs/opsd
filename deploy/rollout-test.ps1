@@ -156,7 +156,7 @@ try {
     Copy-Remote $node.Host $service "$remoteTmp/opsd-agent.service"
     Copy-Remote $node.Host $agentScript "$remoteTmp/install.sh"
     $hubUrl = "https://${C091Host}:$HubConsolePort"
-    $agentUrl = "wss://${C091Host}:$HubAgentPort"
+    $agentUrl = "wss://${C091Host}:$HubAgentPort/agent"
     $output = Invoke-SshScript $node.Host $agentScript @("$remoteTmp/opsd-agent",$hubUrl,$agentUrl,"$remoteTmp/ca.pem",$fingerprint,"$remoteTmp/token",$node.Id)
     $output | Set-Content -LiteralPath (Join-Path $runDir "$name-agent-install.log") -Encoding utf8
     Run-RemoteCommand $node.Host @('rm','-rf',$remoteTmp) | Out-Null

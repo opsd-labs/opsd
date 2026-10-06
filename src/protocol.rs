@@ -3,6 +3,18 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub const VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInstallMode {
+    Host,
+    Docker,
+}
+impl Default for AgentInstallMode {
+    fn default() -> Self {
+        Self::Host
+    }
+}
 pub fn digest(bytes: impl AsRef<[u8]>) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -38,6 +50,8 @@ pub struct NodeCapabilities {
     /// 因此这里只是"平台具备能力"，真正能不能测到由探测结果自己说明。
     #[serde(default)]
     pub probe: bool,
+    #[serde(default)]
+    pub execution_mode: AgentInstallMode,
 }
 
 /// 单个挂载点的容量与 inode 用量。

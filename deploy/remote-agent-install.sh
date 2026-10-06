@@ -8,8 +8,8 @@ ca=${4:?缺少 CA 文件}
 fingerprint=${5:?缺少 CA 指纹}
 token=${6:?缺少一次性令牌文件}
 node_id=${7:?缺少节点编号}
-[[ "$node_id" =~ ^C(001|091|101)$ ]] || { echo '节点编号不在灰度范围' >&2; exit 2; }
-[[ "$hub" =~ ^https:// ]] && [[ "$agent_url" =~ ^wss:// ]] || { echo 'Hub 和 Agent 地址必须使用 TLS' >&2; exit 2; }
+[[ "$node_id" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo '节点编号格式无效' >&2; exit 2; }
+[[ "$hub" =~ ^https:// ]] && [[ "$agent_url" =~ ^wss://.+/agent$ ]] || { echo 'Hub 和 Agent 地址必须使用 TLS，Agent 地址必须以 /agent 结尾' >&2; exit 2; }
 [[ -x "$binary" ]] || { echo 'Agent 二进制不可执行' >&2; exit 1; }
 file "$binary" | grep -Eiq 'ELF.*executable' || { echo 'Agent 不是 Linux ELF' >&2; exit 1; }
 if systemctl is-active --quiet opsd-agent.service; then echo 'opsd-agent 已运行，拒绝覆盖' >&2; exit 1; fi

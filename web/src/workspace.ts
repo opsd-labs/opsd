@@ -8,7 +8,7 @@ import {
   watch,
   type InjectionKey,
 } from "vue";
-import { api, apiPath, submit, setCsrf, type Entry, type Task } from "./api";
+import { api, apiPath, submit, setCsrf, type Entry, type Task, type EnrollmentSummary } from "./api";
 import { demoNodes, demoTasks, demoPeers, demoMetrics } from "./demo";
 /** 一级菜单。任务不再占用一级入口，见 AppShell 的顶栏任务面板。 */
 export const navigation = [
@@ -57,6 +57,7 @@ export function createWorkspace() {
   );
   const environment = ref(query.get("node") || ""),
     nodes = ref<Entry[]>([]),
+    enrollments = ref<EnrollmentSummary[]>([]),
     tasks = ref<Task[]>([]),
     peers = ref<any>(null),
     /** 各节点最新指标，键为节点 ID。缺失表示尚未上报。 */
@@ -157,14 +158,16 @@ export function createWorkspace() {
     if (refreshPromise) return refreshPromise;
     refreshing.value = true;
     refreshPromise = (async () => {
-      const [n, t, p, m] = await Promise.all([
+      const [n, e, t, p, m] = await Promise.all([
         api("/nodes"),
+        api("/enrollment-tokens"),
         api("/tasks"),
         api("/peer-addresses"),
         // 指标是不可选数据：接口失败不应让整个工作台报错，页面按「未上报」展示。
         api("/metrics/overview").catch(() => ({ nodes: [] })),
       ]);
       nodes.value = n;
+      enrollments.value = e;
       tasks.value = t;
       peers.value = p;
       metrics.value = Object.fromEntries(
@@ -231,6 +234,17 @@ export function createWorkspace() {
       await load();
     });
   }
+  async function revokeEnrollment(nodeId: string) {
+    await guarded(async () => {
+      if (demo.value) {
+        notice.value = "演示模式：未提交服务器操作";
+        return;
+      }
+      await api(`/enrollment-tokens/${nodeId}`, "DELETE");
+      notice.value = "待接入令牌已撤销";
+      await load();
+    });
+  }
   async function refresh() {
     if (demo.value) {
       notice.value = "演示数据：未请求服务器";
@@ -245,7 +259,7 @@ export function createWorkspace() {
     token.value = null;
     form.value =
       name === "node"
-        ? { name: "", public_addresses: "", overlay_address: "", ssh_port: 22 }
+        ? { name: "", public_addresses: "", overlay_address: "", ssh_port: 22, install_mode: "host" }
         : name === "stack"
           ? { project: "", directory: "", files: "compose.yml", env_files: "" }
           : name === "rule"
@@ -308,7 +322,9 @@ export function createWorkspace() {
             .map((s: string) => s.trim())
             .filter(Boolean),
           overlay_address: form.value.overlay_address || null,
+          install_mode: form.value.install_mode || "host",
         });
+        await load();
         return;
       }
       const target = selected.value?.node_id || node.value?.node.id;
@@ -411,6 +427,7 @@ export function createWorkspace() {
     demo.value = true;
     authenticated.value = true;
     nodes.value = structuredClone(demoNodes);
+    enrollments.value = [];
     tasks.value = structuredClone(demoTasks);
     peers.value = structuredClone(demoPeers);
     metrics.value = structuredClone(demoMetrics());
@@ -449,6 +466,7 @@ export function createWorkspace() {
     page,
     environment,
     nodes,
+    enrollments,
     tasks,
     peers,
     metrics,
@@ -482,6 +500,7 @@ export function createWorkspace() {
     login,
     logout,
     dispatch,
+    revokeEnrollment,
     refresh,
     open,
     close,

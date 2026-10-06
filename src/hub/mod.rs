@@ -353,7 +353,14 @@ pub async fn run() -> Result<()> {
                     "/api/v1/nodes/{id}",
                     put(api::update_node).delete(api::revoke),
                 )
-                .route("/api/v1/enrollment-tokens", post(api::token))
+                .route(
+                    "/api/v1/enrollment-tokens",
+                    get(api::enrollments).post(api::token),
+                )
+                .route(
+                    "/api/v1/enrollment-tokens/{node_id}",
+                    delete(api::revoke_enrollment),
+                )
                 .route("/api/v1/peer-addresses", get(api::peers))
                 .route("/api/v1/nodes/{id}/actions", post(api::action))
                 .route("/api/v1/nodes/{id}/stream", get(channel::browser_stream))

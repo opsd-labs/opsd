@@ -107,8 +107,10 @@ try{
  assertHttpResponse(unknownField,{status:422,route:'/api/v1/auth/login',method:'post',kind:'plain',schema:responseSchema('/api/v1/auth/login','post',422,'text/plain'),contentType:'text/plain'});
  assert.equal((await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],ssh_port:22},{headers:{'X-CSRF-Token':'wrong'}})).status,403);
  const registration=await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],overlay_address:'127.0.0.1',ssh_port:22});assert.equal(registration.status,200);
+ const pending=await request('/enrollment-tokens');assert.equal(pending.status,200);assert.equal(pending.data.some(e=>e.node_id===registration.data.node_id&&e.status==='pending'),true);assert.equal(JSON.stringify(pending.data).includes(registration.data.token),false);
  const tokenFile=path.join(run,'token');await writeFile(tokenFile,registration.data.token,{mode:0o600});
  await command('opsd-agent',['--data-dir',agentDir,'enroll','--hub',`https://localhost:${base}`,'--agent-url','wss://localhost:19444/agent','--ca',path.join(hubDir,'pki','ca.pem'),'--fingerprint',registration.data.ca_fingerprint,'--token-file',tokenFile]);
+ const afterEnroll=await request('/enrollment-tokens');assert.equal(afterEnroll.data.some(e=>e.node_id===registration.data.node_id),false);
  // Agent 豁免路径挂在入口之外，仍然受一次性令牌保护：无效 CSR 必须被拒绝。
  const badEnroll=await ungated('/api/v1/enroll','POST',{token:registration.data.token,csr:'invalid'});
  assert.equal(badEnroll.status,401,`无效 CSR 应被拒绝，实际 ${badEnroll.status}`);

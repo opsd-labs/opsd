@@ -356,7 +356,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** 读取待接入节点 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 待接入摘要，不包含令牌明文。 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnrollmentSummary"][];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
         put?: never;
         /**
          * 签发一次性注册令牌
@@ -401,6 +422,49 @@ export interface paths {
             };
         };
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/enrollment-tokens/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 撤销待接入令牌 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    node_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已撤销。 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Ok"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -3874,6 +3938,8 @@ export interface components {
             type: "storage_user";
             user: string;
         };
+        /** @enum {string} */
+        AgentInstallMode: "host" | "docker";
         ApiKey: {
             /**
              * Format: int64
@@ -4183,11 +4249,35 @@ export interface components {
         };
         /** @enum {string} */
         DockerOperation: "start" | "stop" | "restart";
+        EnrollmentSummary: {
+            /** Format: int64 */
+            created_at: number;
+            /** Format: int64 */
+            expires_at: number;
+            install_mode: components["schemas"]["AgentInstallMode"];
+            name: string;
+            node_id: string;
+            overlay_address?: string | null;
+            public_addresses: string[];
+            ssh_port: number;
+            /** @enum {string} */
+            status: "pending" | "expired";
+        };
         EnrollmentToken: {
+            /** @description Agent 镜像引用；部署时应替换为固定 digest。 */
+            agent_image: string;
+            /**
+             * Format: uri
+             * @description Agent mTLS WebSocket 地址，路径固定为 /agent。
+             */
+            agent_url: string;
             /** @description CA 证书 SHA-256 指纹（hex），供 Agent 核对。 */
             ca_fingerprint: string;
+            /** Format: int64 */
+            expires_at: number;
             /** @constant */
             expires_in: 600;
+            install_mode: components["schemas"]["AgentInstallMode"];
             node_id: string;
             /** @description 注册令牌明文，一次性使用，仅在本次响应中出现。 */
             token: string;
@@ -4533,6 +4623,8 @@ export interface components {
             /** @description 数据库只读巡检能力，缺省 false。 */
             database?: boolean;
             docker: boolean;
+            /** @description Agent 实际运行方式，旧 Agent 缺省为 host。 */
+            execution_mode?: components["schemas"]["AgentInstallMode"];
             /** @description 该节点可用的防火墙后端列表。 */
             firewall: string[];
             /** @description 主机盘点能力，缺省 false。 */
@@ -4852,6 +4944,8 @@ export interface components {
             weight: number;
         };
         Registration: {
+            /** @description Agent 安装方式，缺省为宿主机 systemd。 */
+            install_mode?: components["schemas"]["AgentInstallMode"];
             /** @description 节点名称，非空且不超过 100 字符。 */
             name: string;
             /** @description 覆盖网地址，须为合法 IP。 */

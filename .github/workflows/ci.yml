@@ -80,13 +80,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: 构建镜像
-        run: docker build --pull --build-arg VCS_REF=${GITHUB_SHA} --build-arg VERSION=ci-${GITHUB_SHA::12} --tag opsd-ci:${GITHUB_SHA} .
-      - name: 运行 CLI smoke test
+      - name: 构建 Hub 镜像
+        run: docker build --pull --target hub --build-arg VCS_REF=${GITHUB_SHA} --build-arg VERSION=ci-${GITHUB_SHA::12} --tag opsd-ci:${GITHUB_SHA} .
+      - name: 构建 Agent 镜像
+        run: docker build --pull --target agent --build-arg VCS_REF=${GITHUB_SHA} --build-arg VERSION=ci-${GITHUB_SHA::12} --tag opsd-agent-ci:${GITHUB_SHA} .
+      - name: 运行 Hub CLI smoke test
         run: docker run --rm opsd-ci:${GITHUB_SHA} --help
+      - name: 运行 Agent 包装器 smoke test
+        run: docker run --rm opsd-agent-ci:${GITHUB_SHA} --help
       - name: 清理镜像
         if: always()
-        run: docker image rm -f opsd-ci:${GITHUB_SHA} || true
+        run: docker image rm -f opsd-ci:${GITHUB_SHA} opsd-agent-ci:${GITHUB_SHA} || true
 
   secret-scan:
     name: 敏感文件与实验数据检查

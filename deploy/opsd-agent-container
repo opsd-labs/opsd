@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+data_dir="${OPSD_AGENT_DIR:-/var/lib/opsd-agent}"
+if [ "${1:-run}" = "bootstrap" ] && [ ! -f "$data_dir/config.json" ]; then
+  shift
+  hub=
+  agent_url=
+  ca=
+  fingerprint=
+  token_file=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --hub) hub=${2:?缺少 Hub 地址}; shift 2 ;;
+      --agent-url) agent_url=${2:?缺少 Agent 地址}; shift 2 ;;
+      --ca) ca=${2:?缺少 CA 文件}; shift 2 ;;
+      --fingerprint) fingerprint=${2:?缺少 CA 指纹}; shift 2 ;;
+      --token-file) token_file=${2:?缺少令牌文件}; shift 2 ;;
+      *) echo "不支持的 bootstrap 参数" >&2; exit 2 ;;
+    esac
+  done
+  test -n "$hub" && test -n "$agent_url" && test -n "$ca" && test -n "$fingerprint" && test -n "$token_file"
+  temp_token=$(mktemp)
+  trap 'rm -f "$temp_token"' EXIT HUP INT TERM
+  umask 077
+  cat "$token_file" > "$temp_token"
+  /usr/local/bin/opsd-agent --data-dir "$data_dir" enroll \
+    --hub "$hub" --agent-url "$agent_url" --ca "$ca" \
+    --fingerprint "$fingerprint" --token-file "$temp_token"
+  rm -f "$temp_token"
+  trap - EXIT HUP INT TERM
+fi
+if [ "${1:-run}" = "--help" ] || [ "${1:-run}" = "-h" ]; then
+  exec /usr/local/bin/opsd-agent --help
+fi
+exec /usr/local/bin/opsd-agent --data-dir "$data_dir" run

@@ -51,6 +51,41 @@ async function stackAction(operation: string) {
   )
     w.close();
 }
+const installCommands = computed(() => {
+  const token = w.token;
+  if (!token) return null;
+  const hub = location.protocol + "//" + location.host;
+  const agent = token.agent_url || (location.protocol === "https:" ? "wss" : "ws") + "://" + location.host + ":8444/agent";
+  const host = [
+    "opsd-agent --data-dir /var/lib/opsd-agent enroll",
+    "  --hub " + hub + " --agent-url " + agent,
+    "  --ca /etc/opsd/ca.pem",
+    "  --fingerprint " + token.ca_fingerprint + " --token-file /etc/opsd/token",
+    "&& systemctl enable --now opsd-agent",
+  ].join(" ");
+  const docker = [
+    "docker run -d --name opsd-agent --restart unless-stopped",
+    "--network host --read-only --tmpfs /tmp:size=32m,mode=1777",
+    "--cap-add NET_RAW --cap-add NET_ADMIN",
+    "-v /var/run/docker.sock:/var/run/docker.sock",
+    "-v /var/lib/opsd-agent:/var/lib/opsd-agent",
+    "-v $PWD/opsd-ca.pem:/run/opsd/ca.pem:ro",
+    "-v $PWD/opsd-token:/run/opsd/token:ro",
+    "-e OPSD_AGENT_MODE=container " + (token.agent_image || "ghcr.io/opsd-labs/opsd-agent:main"),
+    "bootstrap",
+    "--hub " + hub + " --agent-url " + agent + " --ca /run/opsd/ca.pem",
+    "--fingerprint " + token.ca_fingerprint + " --token-file /run/opsd/token",
+  ].join(" ");
+  return { host, docker, pinned: (token.agent_image || "").includes("@sha256:") };
+});
+async function copyCommand(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    w.notice = "安装命令已复制";
+  } catch {
+    w.error = "浏览器拒绝访问剪贴板，请手动复制命令";
+  }
+}
 const ownedContainers = computed(() =>
   w.containers.filter(
     (c) =>
@@ -91,12 +126,29 @@ const ownedContainers = computed(() =>
             min="1"
             max="65535"
             required /></Field
-        ><Notice>一次性注册令牌有效期十分钟。</Notice
+        ><Field label="Agent 安装方式"
+          ><Select
+            v-model="w.form.install_mode"
+            :options="[
+              { value: 'host', label: '宿主机 systemd（完整能力）' },
+              { value: 'docker', label: 'Docker Agent（Docker 与只读采集）' },
+            ]" /></Field
+        ><Notice>一次性注册令牌有效期十分钟，只在本次响应中显示明文。</Notice
+        ><template v-if="w.token && installCommands">
+          ><Notice>令牌已绑定节点。先准备 CA 文件和令牌文件，再执行对应安装命令。</Notice
+          ><Field label="宿主机安装命令">
+            <pre class="mono command-preview">{{ installCommands.host }}</pre>
+            <Button type="button" @click="copyCommand(installCommands.host)">复制命令</Button></Field>
+          ><Field label="Docker Agent 命令">
+            <Notice v-if="!installCommands.pinned" tone="warning">当前镜像未固定 digest，仅适合实验；生产部署请在 OPSD_AGENT_IMAGE 中配置 @sha256 摘要。</Notice>
+            <pre class="mono command-preview">{{ installCommands.docker }}</pre>
+            <Button type="button" @click="copyCommand(installCommands.docker)">复制命令</Button></Field>
+        ></template
         ><ResourceDetails :omit="['action','digest','key']"
           :labels="resourceLabels"
           v-if="w.token"
           :value="w.token" /></template
-      ><template v-else-if="w.modal === 'stack'"
+            ><template v-else-if="w.modal === 'stack'"
         ><Notice>核对原文件和工作目录；导入不会重建现有容器。</Notice
         ><Field label="原项目名"
           ><Input v-model="w.form.project" required /></Field

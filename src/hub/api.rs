@@ -187,7 +187,7 @@ pub async fn update_entrance(
     Ok(Json(json!({ "value": value, "changed": true })))
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
     pub name: String,
@@ -196,6 +196,8 @@ pub struct Registration {
     pub overlay_address: Option<String>,
     #[serde(default = "ssh_port")]
     pub ssh_port: u16,
+    #[serde(default)]
+    pub install_mode: AgentInstallMode,
 }
 fn ssh_port() -> u16 {
     22
@@ -218,25 +220,125 @@ fn validate(r: &Registration) -> Result<()> {
 struct Enrollment {
     node_id: String,
     registration: Registration,
+    #[serde(default)]
+    created_at: i64,
     expires: i64,
 }
+
+fn agent_url(origin: &str) -> String {
+    origin
+        .parse::<reqwest::Url>()
+        .ok()
+        .and_then(|mut url| {
+            url.set_scheme("wss").ok()?;
+            url.set_port(Some(8444)).ok()?;
+            url.set_path("/agent");
+            url.set_query(None);
+            url.set_fragment(None);
+            Some(url.to_string())
+        })
+        .unwrap_or_else(|| "wss://localhost:8444/agent".into())
+}
+
+fn agent_image() -> String {
+    std::env::var("OPSD_AGENT_IMAGE").unwrap_or_else(|_| "ghcr.io/opsd-labs/opsd-agent:main".into())
+}
+
 pub async fn token(S(s): S<State>, Json(r): Json<Registration>) -> ApiResult<Json<Value>> {
     validate(&r)?;
     let value = format!("{}{}", id(), id());
     let node_id = id();
+    let created_at = now();
+    let expires = created_at + 600;
     s.db.insert(
         "enrollment",
         &digest(&value),
         &Enrollment {
             node_id: node_id.clone(),
-            registration: r,
-            expires: now() + 600,
+            registration: r.clone(),
+            created_at,
+            expires,
         },
     )
     .await?;
-    Ok(Json(
-        json!({"token":value,"node_id":node_id,"expires_in":600,"ca_fingerprint":pki::cert_fingerprint(&std::fs::read_to_string(s.dir.join("pki/ca.pem")).map_err(anyhow::Error::from)?)?}),
-    ))
+    let ca_fingerprint = pki::cert_fingerprint(
+        &std::fs::read_to_string(s.dir.join("pki/ca.pem")).map_err(anyhow::Error::from)?,
+    )?;
+    let _ = s.events.send(json!({"type":"enrollment"}));
+    Ok(Json(json!({
+        "token": value,
+        "node_id": node_id,
+        "expires_in": 600,
+        "expires_at": expires,
+        "ca_fingerprint": ca_fingerprint,
+        "install_mode": r.install_mode,
+        "agent_url": agent_url(&s.origin),
+        "agent_image": agent_image(),
+    })))
+}
+
+#[derive(Serialize)]
+pub struct EnrollmentSummary {
+    node_id: String,
+    name: String,
+    public_addresses: Vec<String>,
+    overlay_address: Option<String>,
+    ssh_port: u16,
+    install_mode: AgentInstallMode,
+    status: String,
+    created_at: i64,
+    expires_at: i64,
+}
+
+pub async fn enrollments(S(s): S<State>) -> ApiResult<Json<Vec<EnrollmentSummary>>> {
+    let records = s.db.list_with_ids::<Enrollment>("enrollment").await?;
+    let cutoff = now() - 24 * 60 * 60;
+    let mut summaries = Vec::new();
+    for (key, e) in records {
+        let created_at = if e.created_at > 0 {
+            e.created_at
+        } else {
+            e.expires - 600
+        };
+        if e.expires <= now() && created_at < cutoff {
+            let _ = s.db.delete("enrollment", &key).await?;
+            continue;
+        }
+        summaries.push(EnrollmentSummary {
+            node_id: e.node_id,
+            name: e.registration.name,
+            public_addresses: e.registration.public_addresses,
+            overlay_address: e.registration.overlay_address,
+            ssh_port: e.registration.ssh_port,
+            install_mode: e.registration.install_mode,
+            status: if e.expires > now() {
+                "pending"
+            } else {
+                "expired"
+            }
+            .into(),
+            created_at: if e.created_at > 0 {
+                e.created_at
+            } else {
+                e.expires - 600
+            },
+            expires_at: e.expires,
+        });
+    }
+    Ok(Json(summaries))
+}
+
+pub async fn revoke_enrollment(
+    S(s): S<State>,
+    Path(node_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let records = s.db.list_with_ids::<Enrollment>("enrollment").await?;
+    let Some((key, _)) = records.into_iter().find(|(_, e)| e.node_id == node_id) else {
+        return Err(bad("pending enrollment not found"));
+    };
+    s.db.delete("enrollment", &key).await?;
+    let _ = s.events.send(json!({"type":"enrollment"}));
+    Ok(Json(json!({"ok":true})))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -258,10 +360,6 @@ pub async fn enroll(
             .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "注册令牌无效或过期".into()))?;
     let pem = pki::sign_csr(&s.dir.join("pki"), &input.csr, &e.node_id)?;
     let fingerprint = pki::cert_fingerprint(&pem)?;
-    check(
-        s.db.delete("enrollment", &token_key).await? == 1,
-        "令牌已被使用",
-    )?;
     let node = Node {
         id: e.node_id.clone(),
         name: e.registration.name,
@@ -281,30 +379,41 @@ pub async fn enroll(
         hidden: false,
         public_remark: None,
     };
-    s.db.insert("nodes", &node.id, &node).await?;
-    s.db.insert(
-        "certificates",
-        &fingerprint,
-        &CertificateBinding {
-            node_id: node.id.clone(),
-            expires: now() + 90 * 86400,
-        },
-    )
-    .await?;
-    s.db.put(
-        "connection_source",
-        &node.id,
-        &peer.address.ip().to_string(),
-    )
-    .await?;
-    s.db.accept_task(&TaskEnvelope::new(
+    let binding = CertificateBinding {
+        node_id: node.id.clone(),
+        expires: now() + 90 * 86400,
+    };
+    let task = TaskEnvelope::new(
         node.id.clone(),
         "initial-inspect".into(),
         Action::Inspect {},
-    ))
-    .await?;
-    synchronize_peers(&s).await?;
-    synchronize_probes(&s).await?;
+    );
+    let records = [
+        (
+            "nodes",
+            node.id.as_str(),
+            serde_json::to_string(&node).map_err(anyhow::Error::from)?,
+        ),
+        (
+            "certificates",
+            fingerprint.as_str(),
+            serde_json::to_string(&binding).map_err(anyhow::Error::from)?,
+        ),
+        (
+            "connection_source",
+            node.id.as_str(),
+            serde_json::to_string(&peer.address.ip().to_string()).map_err(anyhow::Error::from)?,
+        ),
+    ];
+    s.db.commit_enrollment("enrollment", &token_key, &records, &task)
+        .await?;
+    if let Err(error) = synchronize_peers(&s).await {
+        tracing::warn!(%error, "节点接入后同步对端地址失败");
+    }
+    if let Err(error) = synchronize_probes(&s).await {
+        tracing::warn!(%error, "节点接入后同步探测目标失败");
+    }
+    let _ = s.events.send(json!({"type":"nodes"}));
     Ok(Json(json!({"node_id":e.node_id,"certificate":pem})))
 }
 #[derive(Deserialize)]

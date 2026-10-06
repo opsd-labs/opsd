@@ -122,6 +122,28 @@ opsd-agent --data-dir /var/lib/opsd-agent run
 - 节点能力和指标开始更新；
 - 节点侧日志中没有持续的证书或连接错误。
 
+### Docker Agent（仅 Docker 与只读采集）
+
+控制台也可以生成 Docker Agent 命令。该模式使用宿主机 Docker socket，具备 Docker、Compose、日志、终端和防火墙只读发现能力，不开放防火墙写入、systemd 控制或存储破坏性操作。生产命令必须使用 CI 输出的固定镜像摘要：
+
+```bash
+# 令牌和 CA 只通过本地文件挂载，不放入环境变量或命令参数
+docker run -d --name opsd-agent --restart unless-stopped \
+  --network host --read-only --tmpfs /tmp:size=32m,mode=1777 \
+  --cap-add NET_RAW --cap-add NET_ADMIN \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/lib/opsd-agent:/var/lib/opsd-agent \
+  -v "$PWD/opsd-ca.pem:/run/opsd/ca.pem:ro" \
+  -v "$PWD/opsd-token:/run/opsd/token:ro" \
+  -e OPSD_AGENT_MODE=container \
+  ghcr.io/opsd-labs/opsd-agent@sha256:<固定摘要> bootstrap \
+  --hub https://hub.example.com:65535 \
+  --agent-url wss://hub.example.com:8444/agent \
+  --ca /run/opsd/ca.pem --fingerprint '<CA 指纹>' \
+  --token-file /run/opsd/token
+```
+
+没有固定摘要时只能用于实验，不能把 `main` 或 `latest` 当作生产版本。Agent 注册成功后确认节点在线，再手动删除宿主机令牌文件。
 ## 7. 数据库配置
 
 默认使用本地控制库 `data/control.db`。如需使用独立 MariaDB，设置：

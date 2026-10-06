@@ -21,6 +21,9 @@ export type Entry = Omit<components['schemas']['NodeEntry'], 'node'> & {
 export type Task = Omit<components['schemas']['TaskEnvelope'], 'result'> & {
   result?: FreeJson;
 };
+export type EnrollmentSummary = components['schemas']['EnrollmentSummary'];
+export type EnrollmentToken = components['schemas']['EnrollmentToken'];
+export type InstallMode = components['schemas']['AgentInstallMode'];
 let csrf='';
 export function setCsrf(value:string){csrf=value;}
 export function getCsrf(){return csrf;}

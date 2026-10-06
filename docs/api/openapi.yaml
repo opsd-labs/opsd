@@ -266,6 +266,23 @@ paths:
         "403":
           $ref: "#/components/responses/OriginOrCsrfRejected"
   /api/v1/enrollment-tokens:
+    get:
+      tags:
+        - nodes
+      summary: 读取待接入节点
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 待接入摘要，不包含令牌明文。
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EnrollmentSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
     post:
       tags:
         - nodes
@@ -304,6 +321,33 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/enrollment-tokens/{node_id}:
+    parameters:
+      - name: node_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags:
+        - nodes
+      summary: 撤销待接入令牌
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "200":
+          description: 已撤销。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
   /api/v1/peer-addresses:
     get:
       tags:
@@ -5072,6 +5116,9 @@ components:
         probe:
           type: boolean
           description: 对端延迟探测能力，缺省 false。
+        execution_mode:
+          $ref: "#/components/schemas/AgentInstallMode"
+          description: Agent 实际运行方式，旧 Agent 缺省为 host。
       additionalProperties: false
     Registration:
       type: object
@@ -5097,6 +5144,50 @@ components:
           type: integer
           minimum: 1
           description: SSH 端口，缺省 22。
+        install_mode:
+          $ref: "#/components/schemas/AgentInstallMode"
+          description: Agent 安装方式，缺省为宿主机 systemd。
+      additionalProperties: false
+    AgentInstallMode:
+      type: string
+      enum: [host, docker]
+    EnrollmentSummary:
+      type: object
+      required:
+        - node_id
+        - name
+        - public_addresses
+        - ssh_port
+        - install_mode
+        - status
+        - created_at
+        - expires_at
+      properties:
+        node_id:
+          type: string
+        name:
+          type: string
+        public_addresses:
+          type: array
+          items:
+            type: string
+        overlay_address:
+          type:
+            - string
+            - "null"
+        ssh_port:
+          type: integer
+        install_mode:
+          $ref: "#/components/schemas/AgentInstallMode"
+        status:
+          type: string
+          enum: [pending, expired]
+        created_at:
+          type: integer
+          format: int64
+        expires_at:
+          type: integer
+          format: int64
       additionalProperties: false
     EnrollmentToken:
       type: object
@@ -5105,6 +5196,10 @@ components:
         - node_id
         - expires_in
         - ca_fingerprint
+        - expires_at
+        - install_mode
+        - agent_url
+        - agent_image
       properties:
         token:
           type: string
@@ -5117,6 +5212,18 @@ components:
         ca_fingerprint:
           type: string
           description: CA 证书 SHA-256 指纹（hex），供 Agent 核对。
+        expires_at:
+          type: integer
+          format: int64
+        install_mode:
+          $ref: "#/components/schemas/AgentInstallMode"
+        agent_url:
+          type: string
+          format: uri
+          description: Agent mTLS WebSocket 地址，路径固定为 /agent。
+        agent_image:
+          type: string
+          description: Agent 镜像引用；部署时应替换为固定 digest。
       additionalProperties: false
     PeerAddressSet:
       type: object
