@@ -81,12 +81,11 @@ jobs:
             -v "$tmp/data:/var/lib/opsd" \
             --tmpfs /tmp:size=32m,mode=1777 \
             -p 127.0.0.1:36535:65535 \
-            -p 127.0.0.1:36534:65534 \
             ghcr.io/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA} \
-            serve --listen 0.0.0.0:65535 --agent-listen 0.0.0.0:8444 --health-listen 0.0.0.0:65534 --web /opt/opsd/web
+            serve --listen 0.0.0.0:65535 --agent-listen 0.0.0.0:8444 --health-listen 127.0.0.1:65534 --web /opt/opsd/web
           health_ok=0
           for _ in {1..30}; do
-            health_port=36534
+            if docker exec "$name" /usr/local/bin/opsd-hub probe; then health_ok=1; break; fi
             if curl -fsS "http://127.0.0.1:${health_port}/api/v1/health"; then health_ok=1; break; fi
             sleep 2
           done
