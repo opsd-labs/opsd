@@ -1,5 +1,5 @@
 /* 设计令牌：中性底 + 局部靛蓝强调。浅色为默认，深色由 data-theme 覆盖。
-   取值与 docs/ui/design-study.html 的 themeFor() 同源；轻底由语义色与内容面按
+   令牌由控制台样式统一维护；轻底由语义色与内容面按
    固定比例混合生成（浅色 7%，深色 12%）。修改令牌前请先核对文字对比度 ≥ 4.5:1。 */
 :root {
   font-family: "Segoe UI", "Microsoft YaHei", sans-serif;

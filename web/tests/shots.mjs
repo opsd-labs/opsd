@@ -1,15 +1,19 @@
 /**
  * 截取页面截图，用于人工核对视觉密度与暗色模式。
  *
- * 例：node tests/shots.mjs database "../docs/ui/database"
+ * 用法：node tests/shots.mjs <页面> <输出前缀>
  */
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 const page = process.argv[2];
-// 默认落到仓库的 docs/ui（本脚本在 web/tests 下）
-const prefix = process.argv[3] || `../../docs/ui/${page}`;
+const prefix = process.argv[3];
+if (!page || !prefix) {
+  console.error("用法：node tests/shots.mjs <页面> <输出前缀>");
+  process.exit(2);
+}
+
 const base = "http://127.0.0.1:5173";
 const executablePath = process.env.OPSD_BROWSER_EXECUTABLE;
 

@@ -48,7 +48,7 @@ jobs:
           npm test -- --run
           npm run build
       - name: 检查生成物漂移
-        run: git diff --exit-code -- docs/api/_extract web/src/generated/api.ts
+        run: git diff --exit-code -- web/src/generated/api.ts
 
   integration:
     name: HTTP 集成与负向门禁
