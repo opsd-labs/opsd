@@ -1,7 +1,7 @@
 ---
 feature: contract-gates-and-wsl-lab
 status: delivered
-updated: 2026-09-24
+updated: 2026-10-06
 branch: feat/v01-contract-fixes
 commits:
 ---
@@ -12,7 +12,13 @@ commits:
 
 **What was built** — 共享 HTTP 校验器严格匹配媒体类型并校验 JSON/纯文本 schema；OpenAPI 结构门禁检查 400/415/422 响应形状和全部内部引用；负向门禁在临时契约副本上运行，检查器异常不计为预期失败。WSL 脚本执行真实 Docker 与防火墙只读检查，控制面场景调用现有集成测试；缺少发行版或 Linux 产物时记录 `NOT_RUN` 并返回非零。
 
-**Verification** — `cargo test --locked` 190 PASS；本轮 Rust 文件 Rust 2024 `rustfmt --check` PASS；`npm run api --prefix web` PASS（0 warning）；前端测试 40 PASS；构建 PASS；`node tests/integration.mjs` PASS；`node tests/negative-gates.mjs` 14/14 PASS。当前主机仅有普通 `Debian` WSL、没有 Docker CLI；Bootstrap 在修改系统前明确停止，矩阵生成 `NOT_RUN` 并以退出码 2 结束。没有创建发行版，也没有执行 WSL Docker/防火墙实验。
+**Verification** — `cargo test --locked` 190 PASS；本轮 Rust 文件 Rust 2024 `rustfmt --check` PASS；`npm run api --prefix web` PASS（0 warning）；前端测试 40 PASS；构建 PASS；`node tests/integration.mjs` PASS；`node tests/negative-gates.mjs` 14/14 PASS。宿主机 Docker CLI 不是前置条件；Bootstrap 复用现有 Debian 13 导出模板，在四个专用发行版内安装并启动独立 Docker Engine。完整 WSL 验收结果见下文。
+
+**WSL 实验室验收（2026-10-06）** — 已从现有 Debian 13 模板创建并验证 opsd_hub_lab、opsd_c001_lab、opsd_c052_lab、opsd_c061_lab 四个 WSL2 发行版。四个发行版均使用各自的 /var/lib/docker 和 /var/run/docker.sock，Docker Engine 26.1.5、Compose 2.26.1、Node.js v22.20.0（zlib.crc32 可用）均已核验。Linux Hub/Agent 构建为 x86_64 ELF。
+
+控制面真实矩阵通过 10/10：管理员认证、三节点注册与 mTLS 心跳、证书续期、幂等任务、离线已接收任务恢复、不确定结果、证书撤销和备份恢复均有真实命令与日志证据。Docker 矩阵四节点通过容器日志、重启后 ID/挂载/卷保持、Compose 正常部署、非法配置拒绝、镜像拉取失败和部分服务失败。防火墙仅执行四后端只读发现；完整报告 .data/opsd-wsl-report.md 为 35 PASS、0 FAIL、8 SKIP、0 NOT_RUN。8 项 SKIP 是 UFW 未启用或 firewalld 未运行。
+
+清理脚本已验证按运行标识幂等执行，并只删除 opsd-test-<run-id>- 资源。WSL2 共享宿主机内核，以上结果不能替代独立 Linux 内核的防火墙写入、验证、回滚、转发和连接跟踪实验；experimental-firewall 保持关闭，未执行生产节点操作。
 
 **Journey log** — 整文件覆盖 integration.mjs 会丢业务断言，应从 HEAD 恢复后增量打补丁。request() 必须回传 headers 才能断言 Content-Type。负向门禁里「服务端应返回 415/422」是正向断言，不能套 expectFail。
 
@@ -22,7 +28,7 @@ commits:
 - OpenAPI 门禁验证 400 双媒体类型、415/422 的 `text/plain` 字符串 schema，并遍历检查悬空引用；`OPSD_CONTRACT_PATH` 可将门禁指向临时契约。
 - 负向门禁只改写临时目录中的契约副本；要求检查器正常启动、非零退出且输出目标诊断。现有测试覆盖 14 个故障与拒绝场景。
 - WSL 脚本验证 `opsd_` 发行版名并严格限定测试资源前缀；矩阵状态为 PASS/FAIL/SKIP/NOT_RUN，存在未运行项目时退出码非零。WSL 共用内核不代表生产防火墙验收。
-- 当前机器缺 Docker CLI，且四个实验发行版不存在；WSL 创建与矩阵运行仍待满足前置条件后执行。
+- 四个实验发行版已创建并完成本轮矩阵；后续仍需在独立 Linux 内核环境验证防火墙写入、回滚和真实转发路径。
 - OpenAPI 文件仍保留先前交付产生的大范围 YAML 风格重排；本轮未重写或重排该文件，以免改动已暂存的契约内容。
 
 

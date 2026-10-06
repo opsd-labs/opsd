@@ -600,10 +600,6 @@ pub async fn action(
             .filter(|n| !n.revoked)
             .ok_or_else(|| bad("节点不可用"))?;
     check(
-        s.channels.read().await.contains_key(&node_id),
-        "节点离线，无法提交新操作",
-    )?;
-    check(
         !matches!(input.action, Action::PeerSync { .. }),
         "地址集合只能由节点目录生成",
     )?;
