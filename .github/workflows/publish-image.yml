@@ -79,7 +79,7 @@ jobs:
             init --password-file /run/password > "$tmp/init.log"
           docker run -d --name "$name" \
             -v "$tmp/data:/var/lib/opsd" \
-            --tmpfs /tmp:size=32m,mode=1777 \\
+            --tmpfs /tmp:size=32m,mode=1777 \
             -p 127.0.0.1:36535:65535 \
             -p 127.0.0.1:36534:65534 \
             ghcr.io/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA} \
@@ -101,3 +101,4 @@ jobs:
           set -euo pipefail
           docker image inspect ghcr.io/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA} --format '{{index .RepoDigests 0}}'
           docker image inspect ghcr.io/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA} --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' | grep -Fx "$GITHUB_SHA"
+
