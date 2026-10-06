@@ -86,7 +86,6 @@ jobs:
           health_ok=0
           for _ in {1..30}; do
             if docker exec "$name" /usr/local/bin/opsd-hub probe; then health_ok=1; break; fi
-            if curl -fsS "http://127.0.0.1:${health_port}/api/v1/health"; then health_ok=1; break; fi
             sleep 2
           done
           if [ "$health_ok" -ne 1 ]; then docker logs "$name"; docker inspect "$name"; exit 1; fi
