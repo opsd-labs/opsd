@@ -3,15 +3,24 @@
    fetch 封装：basePath 推导、CSRF 头自动注入、统一错误处理
    ========================================================================== */
 
-/** 从当前 URL 推导安全入口前缀（支持子路径部署） */
-export function basePath(): string {
-  const segments = window.location.pathname.split('/').filter(Boolean)
-  // 开发环境无前缀（Vite 代理处理），生产环境首段是安全入口
-  if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV || segments.length === 0) return ''
-  return '/' + segments[0]
+/**
+ * 推导安全入口路径（URL 第一段始终是安全入口）
+ * 支持两种部署路径格式：
+ *   /{entrance}/               内置前端
+ *   /{entrance}/frontend/{short}/  外部主题前端
+ */
+export function entrancePath(): string {
+  const parts = window.location.pathname.split('/').filter(Boolean)
+  if (parts.length === 0) return ''
+  return '/' + parts[0]  // 第一段始终是安全入口
 }
 
-/** 从 cookie 中读取 CSRF token */
+/** 生成 API 请求路径（安全入口 + API 路径） */
+export function apiPath(path: string): string {
+  return entrancePath() + path
+}
+
+/** 读取登录响应保存的 CSRF token */
 function getCsrfToken(): string | null {
   // CSRF token 通过 GET /api/v1/auth/me 接口获取，存储于模块状态
   return _csrfToken
@@ -42,15 +51,8 @@ export class ApiError extends Error {
     this.name = 'ApiError'
   }
 
-  /** 判断是否未登录 */
-  get isUnauthorized(): boolean {
-    return this.status === 401
-  }
-
-  /** 判断是否权限不足 */
-  get isForbidden(): boolean {
-    return this.status === 403
-  }
+  get isUnauthorized(): boolean { return this.status === 401 }
+  get isForbidden(): boolean { return this.status === 403 }
 }
 
 interface FetchOptions extends Omit<RequestInit, 'body'> {
@@ -73,8 +75,12 @@ export async function apiFetch(path: string, opts: FetchOptions = {}): Promise<R
   const headers = new Headers(init.headers)
 
   if (body !== undefined) {
-    headers.set('Content-Type', 'application/json')
-    ;(init as RequestInit).body = JSON.stringify(body)
+    if (body instanceof Blob) {
+      ;(init as RequestInit).body = body
+    } else {
+      headers.set('Content-Type', 'application/json')
+      ;(init as RequestInit).body = JSON.stringify(body)
+    }
   }
 
   // 注入 CSRF token（非 GET/HEAD）
@@ -83,7 +89,7 @@ export async function apiFetch(path: string, opts: FetchOptions = {}): Promise<R
     if (csrf) headers.set('X-CSRF-Token', csrf)
   }
 
-  const url = basePath() + path
+  const url = apiPath(path)
   const response = await fetch(url, { ...init, headers, method })
 
   if (!response.ok) {

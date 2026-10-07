@@ -1,26 +1,31 @@
 <script setup lang="ts">
 /**
  * ConsolePage — 多节点总览
- * 显示所有节点卡片，异常聚合，指标概览
+ * 显示所有节点卡片，指标概览
+ * NodeEntry = { connected: boolean, node: Node }
+ * MetricsOverviewNode.sample = MetricsSample | null
  */
 import { computed } from 'vue'
 import { workspace } from '../state/workspace'
-import { formatPercent, formatUptime } from '../utils/format'
+import {
+  formatPercent, formatUptime,
+  metricCpuPercent, metricMemPercent, metricDiskPercent, metricUptime,
+} from '../utils/format'
 import Status from '../components/ui/Status.vue'
 import Skeleton from '../components/ui/Skeleton.vue'
 import type { StatusTone } from '../components/ui/Status.vue'
 
-const nodes = computed(() => workspace.state.nodes)
+const entries = computed(() => workspace.state.nodeEntries)
 const metrics = computed(() => workspace.state.metrics)
 const loading = computed(() => workspace.state.loading)
 
-function nodeStatus(nodeId: string): { tone: StatusTone; label: string } {
-  const node = nodes.value.find(n => n.id === nodeId)
-  if (!node) return { tone: 'unknown', label: '未知' }
-  if (!node.connected) return { tone: 'danger', label: '离线' }
+function nodeStatus(nodeId: string, connected: boolean): { tone: StatusTone; label: string } {
+  if (!connected) return { tone: 'danger', label: '离线' }
   const m = metrics.value[nodeId]
-  if (!m || m.error) return { tone: 'warning', label: '指标异常' }
-  if (m.cpu_percent > 90 || m.mem_percent > 90) return { tone: 'warning', label: '高负载' }
+  if (!m || m.error || !m.sample) return { tone: 'warning', label: '指标异常' }
+  const cpu = metricCpuPercent(m) ?? 0
+  const mem = metricMemPercent(m) ?? 0
+  if (cpu > 90 || mem > 90) return { tone: 'warning', label: '高负载' }
   return { tone: 'success', label: '正常' }
 }
 
@@ -32,11 +37,11 @@ function goToNode(nodeId: string) {
 <template>
   <div class="console-page">
     <div class="console-page__header">
-      <span class="console-page__count">{{ nodes.length }} 个节点</span>
+      <span class="console-page__count">{{ entries.length }} 个节点</span>
     </div>
 
     <!-- 骨架加载 -->
-    <div v-if="loading && nodes.length === 0" class="nodes-grid">
+    <div v-if="loading && entries.length === 0" class="nodes-grid">
       <div v-for="i in 4" :key="i" class="node-card node-card--skeleton">
         <Skeleton height="18px" width="60%" />
         <Skeleton height="13px" width="40%" />
@@ -51,74 +56,74 @@ function goToNode(nodeId: string) {
     <!-- 节点卡片网格 -->
     <div v-else class="nodes-grid">
       <button
-        v-for="node in nodes"
-        :key="node.id"
+        v-for="entry in entries"
+        :key="entry.node.id"
         class="node-card"
-        :class="{ 'node-card--offline': !node.connected }"
-        @click="goToNode(node.id)"
+        :class="{ 'node-card--offline': !entry.connected }"
+        @click="goToNode(entry.node.id)"
       >
         <div class="node-card__header">
-          <span class="node-card__name">{{ node.name }}</span>
-          <Status v-bind="nodeStatus(node.id)" />
+          <span class="node-card__name">{{ entry.node.name }}</span>
+          <Status v-bind="nodeStatus(entry.node.id, entry.connected)" />
         </div>
 
-        <div class="node-card__address">{{ node.address }}</div>
+        <div class="node-card__address">{{ entry.node.overlay_address ?? entry.node.public_addresses[0] ?? '—' }}</div>
 
         <!-- 指标行 -->
-        <template v-if="node.connected && metrics[node.id] && !metrics[node.id].error">
+        <template v-if="entry.connected && metrics[entry.node.id]?.sample">
           <div class="node-card__metrics">
             <div class="metric-item">
               <span class="metric-item__label">CPU</span>
               <span class="metric-item__value">
-                {{ formatPercent(metrics[node.id].cpu_percent) }}
+                {{ formatPercent(metricCpuPercent(metrics[entry.node.id]) ?? 0) }}
               </span>
               <div class="metric-bar">
                 <div
                   class="metric-bar__fill"
-                  :class="metrics[node.id].cpu_percent > 80 ? 'metric-bar__fill--warn' : ''"
-                  :style="{ width: `${Math.min(metrics[node.id].cpu_percent, 100)}%` }"
+                  :class="(metricCpuPercent(metrics[entry.node.id]) ?? 0) > 80 ? 'metric-bar__fill--warn' : ''"
+                  :style="{ width: `${Math.min(metricCpuPercent(metrics[entry.node.id]) ?? 0, 100)}%` }"
                 />
               </div>
             </div>
             <div class="metric-item">
               <span class="metric-item__label">内存</span>
               <span class="metric-item__value">
-                {{ formatPercent(metrics[node.id].mem_percent) }}
+                {{ formatPercent(metricMemPercent(metrics[entry.node.id])) }}
               </span>
               <div class="metric-bar">
                 <div
                   class="metric-bar__fill"
-                  :class="metrics[node.id].mem_percent > 85 ? 'metric-bar__fill--warn' : ''"
-                  :style="{ width: `${Math.min(metrics[node.id].mem_percent, 100)}%` }"
+                  :class="(metricMemPercent(metrics[entry.node.id]) ?? 0) > 85 ? 'metric-bar__fill--warn' : ''"
+                  :style="{ width: `${Math.min(metricMemPercent(metrics[entry.node.id]) ?? 0, 100)}%` }"
                 />
               </div>
             </div>
             <div class="metric-item">
               <span class="metric-item__label">磁盘</span>
               <span class="metric-item__value">
-                {{ formatPercent(metrics[node.id].disk_percent) }}
+                {{ formatPercent(metricDiskPercent(metrics[entry.node.id])) }}
               </span>
               <div class="metric-bar">
                 <div
                   class="metric-bar__fill"
-                  :class="metrics[node.id].disk_percent > 90 ? 'metric-bar__fill--warn' : ''"
-                  :style="{ width: `${Math.min(metrics[node.id].disk_percent, 100)}%` }"
+                  :class="(metricDiskPercent(metrics[entry.node.id]) ?? 0) > 90 ? 'metric-bar__fill--warn' : ''"
+                  :style="{ width: `${Math.min(metricDiskPercent(metrics[entry.node.id]) ?? 0, 100)}%` }"
                 />
               </div>
             </div>
           </div>
           <div class="node-card__uptime">
-            运行时间 {{ formatUptime(metrics[node.id].uptime_secs) }}
+            运行时间 {{ formatUptime(metricUptime(metrics[entry.node.id]) ?? 0) }}
           </div>
         </template>
 
-        <div v-else-if="!node.connected" class="node-card__offline-msg">
+        <div v-else-if="!entry.connected" class="node-card__offline-msg">
           节点离线，无法获取指标
         </div>
       </button>
 
       <!-- 空状态 -->
-      <div v-if="nodes.length === 0" class="console-empty">
+      <div v-if="entries.length === 0" class="console-empty">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="2" y="3" width="20" height="14" rx="2"/>

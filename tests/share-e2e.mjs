@@ -11,8 +11,9 @@ import https from "node:https";
 import { randomBytes } from "node:crypto";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { makeZip } from './lib/theme-zip.mjs';
 const require = createRequire(new URL("../tools/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium, expect } = require("@playwright/test");
 
 // 分享页由主仓库维护，浏览器依赖由 tools 提供。
 const root = path.resolve(import.meta.dirname, "..");
@@ -91,6 +92,7 @@ function request(route, method = "GET", body) {
 }
 
 let hub;
+let agent;
 const logs = [];
 function launch() {
   const c = spawn(
@@ -141,7 +143,7 @@ try {
     `会话 Cookie 应限定在入口路径，实际：${login.cookie}`,
   );
 
-  // 造一个演示节点：直接用 enroll 太绕，这里用控制库写入一个节点记录
+  // 分享页与内置控制台共用真实 Hub，令牌仅留在本次进程内。
   await request("/share/settings", "PUT", {
     enabled: true,
     site: { name: "十二节点状态", description: "只读展示", footer: "" },
@@ -154,17 +156,75 @@ try {
     executablePath: process.env.OPSD_BROWSER_EXECUTABLE,
   });
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
-  // 把控制台会话 Cookie 装进浏览器，模拟"管理员已登录"
-  await context.addCookies([
-    {
-      name: "opsd_session",
-      value: cookie.replace("opsd_session=", ""),
-      domain: "localhost",
-      path: `/${entrance}/`,
-      httpOnly: true,
-      secure: true,
-    },
-  ]);
+  const consolePage = await context.newPage();
+  await consolePage.goto(`https://localhost:${base}/${entrance}/`);
+  await consolePage.getByLabel('密码', { exact: true }).fill(password);
+  await consolePage.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(consolePage.locator('.shell')).toBeVisible();
+  await consolePage.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(consolePage.locator('.entrance-value')).toHaveText(entrance);
+  await consolePage.getByRole('tab', { name: '审计日志' }).click();
+  await expect(consolePage.locator('.audit-table tbody tr').first()).not.toContainText('暂无审计记录');
+
+  await consolePage.getByRole('tab', { name: '分享', exact: true }).click();
+  await expect(consolePage.getByText('公开分享：已启用')).toBeVisible();
+  await consolePage.getByPlaceholder('标签（如：团队演示）').fill('界面分享验证');
+  await consolePage.getByRole('button', { name: '创建', exact: true }).click();
+  const createdLink = consolePage.locator('a[href*="/share/"]');
+  await expect(createdLink).toBeVisible();
+  assert.ok((await createdLink.getAttribute('href')).startsWith(`https://localhost:${base}/share/`));
+  consolePage.on('dialog', dialog => dialog.accept());
+  const shareItem = consolePage.locator('.share-item').filter({ hasText: '界面分享验证' });
+  await shareItem.getByRole('button', { name: '撤销' }).click();
+  await expect(shareItem).toContainText('已撤销');
+  await consolePage.getByRole('button', { name: '关闭分享' }).click();
+  await expect(consolePage.getByText('公开分享：已关闭')).toBeVisible();
+  await consolePage.getByRole('button', { name: '启用分享' }).click();
+  await expect(consolePage.getByText('公开分享：已启用')).toBeVisible();
+
+  await consolePage.getByRole('tab', { name: '主题', exact: true }).click();
+  const zip = makeZip({
+    'theme.json': JSON.stringify({ short: 'browser-console', name: '浏览器主题', version: '1.0.0', surfaces: ['console'], console_frontend: { api_version: 1 } }),
+    'index.html': '<!doctype html><html><head><title>浏览器主题</title></head><body>外部控制台验证</body></html>',
+  });
+  await consolePage.locator('input[type=file]').setInputFiles({ name: 'console.zip', mimeType: 'application/zip', buffer: zip });
+  const themeItem = consolePage.locator('.theme-item').filter({ hasText: 'browser-console' });
+  await expect(themeItem).toContainText('浏览器主题');
+  await consolePage.locator('input[type=file]').setInputFiles({ name: 'console.zip', mimeType: 'application/zip', buffer: zip });
+  await expect(consolePage.locator('.settings-error')).toContainText('已存在');
+  await consolePage.getByPlaceholder('https://github.com/opsd-labs/opsd-theme-web').fill('https://localhost/repo');
+  await consolePage.getByRole('button', { name: '解析', exact: true }).click();
+  await expect(consolePage.locator('.settings-error').filter({ hasText: 'GitHub' })).toBeVisible();
+  await themeItem.getByRole('button', { name: '切换', exact: true }).click();
+  await expect(consolePage.getByText('外部控制台验证')).toBeVisible();
+  await consolePage.goto(`https://localhost:${base}/${entrance}/frontend/default/?page=settings`);
+  await consolePage.getByRole('tab', { name: '主题', exact: true }).click();
+  await expect(consolePage.locator('.theme-item').filter({ hasText: 'browser-console' })).toContainText('当前激活');
+  await consolePage.locator('.theme-item').filter({ hasText: 'browser-console' }).getByRole('button', { name: '卸载' }).click();
+  await expect(consolePage.locator('.shell')).toBeVisible();
+  assert.equal((await request('/themes/active')).data.console_frontend, null);
+
+  const registration = await request('/enrollment-tokens', 'POST', { name: '浏览器节点', public_addresses: [], ssh_port: 22 });
+  assert.equal(registration.status, 200);
+  const tokenFile = path.join(run, 'agent-token');
+  const agentDir = path.join(run, 'agent');
+  await writeFile(tokenFile, registration.data.token, { mode: 0o600 });
+  await command('opsd-agent', ['--data-dir', agentDir, 'enroll', '--hub', `https://localhost:${base}`, '--agent-url', 'wss://localhost:19443/agent', '--ca', path.join(hubDir, 'pki', 'ca.pem'), '--fingerprint', registration.data.ca_fingerprint, '--token-file', tokenFile]);
+  agent = spawn(exe('opsd-agent'), ['--data-dir', agentDir, 'run'], { cwd: root, windowsHide: true });
+  agent.stdout.on('data', b => logs.push(b.toString()));
+  agent.stderr.on('data', b => logs.push(b.toString()));
+  await expect.poll(async () => (await request('/nodes')).data[0]?.connected, { timeout: 20000 }).toBe(true);
+  await consolePage.getByRole('button', { name: 'Docker', exact: true }).click();
+  await expect(consolePage.getByRole('button', { name: '刷新', exact: true })).toBeVisible();
+  const refreshResponse = consolePage.waitForResponse(r => r.url().endsWith(`/nodes/${registration.data.node_id}/actions`) && r.request().method() === 'POST');
+  await consolePage.getByRole('button', { name: '刷新', exact: true }).click();
+  const submitted = await refreshResponse;
+  assert.equal(submitted.status(), 202);
+  assert.equal(submitted.request().postDataJSON().action.type, 'inspect');
+  const submittedTask = await submitted.json();
+  await expect.poll(async () => (await request(`/tasks/${submittedTask.task_id}`)).data.status, { timeout: 30000 }).toBe('succeeded');
+  await expect(consolePage.getByText('盘点任务已提交，完成后列表将自动更新')).toBeVisible();
+
   const page = await context.newPage();
   const seen = [];
   page.on("request", (req) => {
@@ -212,6 +272,7 @@ try {
   console.log(
     JSON.stringify(
       {
+        内置控制台: '真实登录、设置、分享、ZIP、冲突、错误、全局切换、恢复卸载及 Agent 盘点任务通过',
         分享页: info,
         分享路径请求数: seen.length,
         带控制台Cookie的请求: leaked.length,
@@ -223,6 +284,7 @@ try {
   );
   await browser.close();
 } finally {
+  await stop(agent);
   await stop(hub);
   await writeFile(path.join(run, "hub.log"), logs.join(""));
   await rm(run, { recursive: true, force: true }).catch(() => {});

@@ -27,6 +27,7 @@ const collapsed = computed(() => workspace.state.sidebarCollapsed)
       <Topbar />
 
       <main class="shell__content">
+        <p v-if="workspace.state.error" role="alert" class="shell__error">{{ workspace.state.error }}</p>
         <ConsolePage  v-if="page === 'console'" />
         <NodesPage    v-else-if="page === 'nodes'" />
         <DockerPage   v-else-if="page === 'docker'" />
@@ -40,6 +41,7 @@ const collapsed = computed(() => workspace.state.sidebarCollapsed)
 </template>
 
 <style scoped>
+.shell__error { color: var(--color-danger); margin-bottom: var(--sp-3); }
 .shell {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;

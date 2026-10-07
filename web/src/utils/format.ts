@@ -2,6 +2,22 @@
  * opsd web3 — 格式化工具函数
  */
 
+import type { components as _components } from '../api/generated'
+
+export type MetricsSample = _components['schemas']['MetricsSample']
+
+// 只读结构兼容 Vue 深层只读状态，数组也保留只读约束。
+type AnyMetricsNode = {
+  readonly sample: {
+    readonly cpu_usage: number
+    readonly memory_used: number
+    readonly memory_total: number
+    readonly uptime: number
+    readonly disks: ReadonlyArray<{ readonly used: number; readonly total: number }>
+  } | null
+  readonly error?: string | null
+}
+
 /** 字节转可读字符串（B / KB / MB / GB / TB） */
 export function formatBytes(bytes: number, decimals = 1): string {
   if (bytes === 0) return '0 B'
@@ -17,7 +33,8 @@ export function formatBytesPerSec(bps: number): string {
 }
 
 /** 百分比，保留 1 位小数 */
-export function formatPercent(value: number, decimals = 1): string {
+export function formatPercent(value: number | null, decimals = 1): string {
+  if (value === null) return '未知'
   return `${value.toFixed(decimals)}%`
 }
 
@@ -44,15 +61,11 @@ export function formatRelativeTime(isoString: string): string {
   return `${Math.floor(diff / 86400)} 天前`
 }
 
-/** 时间戳转本地日期时间字符串 */
-export function formatDateTime(isoString: string): string {
-  return new Date(isoString).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
+/** 时间戳（Unix 秒）转本地日期时间字符串 */
+export function formatUnixTime(unixSecs: number): string {
+  return new Date(unixSecs * 1000).toLocaleString('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
   })
 }
 
@@ -67,3 +80,30 @@ export function generateIdempotencyKey(): string {
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
 }
+
+// ---- 指标辅助：从 MetricsOverviewNode 提取展示用数值 ----
+
+/** CPU 使用率 0-100（百分比） */
+export function metricCpuPercent(m: AnyMetricsNode): number | null {
+  return m.sample?.cpu_usage ?? null
+}
+
+/** 内存使用率 0-100（百分比） */
+export function metricMemPercent(m: AnyMetricsNode): number | null {
+  const s = m.sample
+  if (!s || s.memory_total === 0) return null
+  return (s.memory_used / s.memory_total) * 100
+}
+
+/** 主磁盘使用率（取 disks[0]，0-100） */
+export function metricDiskPercent(m: AnyMetricsNode): number | null {
+  const disk = m.sample?.disks?.[0]
+  if (!disk || disk.total === 0) return null
+  return (disk.used / disk.total) * 100
+}
+
+/** 运行时长（秒） */
+export function metricUptime(m: AnyMetricsNode): number | null {
+  return m.sample?.uptime ?? null
+}
+

@@ -3,7 +3,7 @@ import {mkdir,writeFile,readFile,unlink} from 'node:fs/promises';
 import path from 'node:path';
 import https from 'node:https';
 import http from 'node:http';
-import zlib from 'node:zlib';
+import {makeZip} from './lib/theme-zip.mjs';
 import {randomBytes} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {loadContract} from './lib/http-assert.mjs';
@@ -38,41 +38,6 @@ function raw(route,method,body,contentType){
 function request(route,method='GET',body,options={}){return new Promise((resolve,reject)=>{const data=body===undefined?undefined:JSON.stringify(body);const req=https.request({hostname:'localhost',port:base,path:`/${entrance}/api/v1`+route,method,ca,...options,headers:{Origin:`https://localhost:${base}`,Cookie:cookie,'X-CSRF-Token':csrf,...(data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{}),...options.headers}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,headers:res.headers,cookie:res.headers['set-cookie']?.[0]});});});req.on('error',reject);req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));if(data)req.write(data);req.end();});}
 /** 上传主题包等原始字节；需要会话与 CSRF。 */
 function upload(route,bytes){return new Promise((resolve,reject)=>{const req=https.request({hostname:'localhost',port:base,path:route,method:'POST',ca,headers:{Origin:`https://localhost:${base}`,Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/zip','Content-Length':bytes.length}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,headers:res.headers});});});req.on('error',reject);req.setTimeout(10000,()=>req.destroy(new Error('请求超时')));req.write(bytes);req.end();});}
-
-/**
- * 生成一个「仅存储、不压缩」的 zip，用于在测试里构造主题包。
- * 只用到未压缩条目，因此不需要引入压缩库。
- */
-function makeZip(files){
- const crc32=zlib.crc32;
- const localParts=[],central=[];
- let offset=0;
- for(const [name,content] of Object.entries(files)){
-  const data=Buffer.from(content,'utf8');
-  const nameBuf=Buffer.from(name,'utf8');
-  const crc=crc32(data)>>>0;
-  const local=Buffer.alloc(30);
-  local.writeUInt32LE(0x04034b50,0);local.writeUInt16LE(20,4);local.writeUInt16LE(0,6);
-  local.writeUInt16LE(0,8);local.writeUInt16LE(0,10);local.writeUInt16LE(0,12);
-  local.writeUInt32LE(crc,14);local.writeUInt32LE(data.length,18);local.writeUInt32LE(data.length,22);
-  local.writeUInt16LE(nameBuf.length,26);local.writeUInt16LE(0,28);
-  localParts.push(local,nameBuf,data);
-  const dir=Buffer.alloc(46);
-  dir.writeUInt32LE(0x02014b50,0);dir.writeUInt16LE(20,4);dir.writeUInt16LE(20,6);
-  dir.writeUInt16LE(0,8);dir.writeUInt16LE(0,10);dir.writeUInt16LE(0,12);dir.writeUInt16LE(0,14);
-  dir.writeUInt32LE(crc,16);dir.writeUInt32LE(data.length,20);dir.writeUInt32LE(data.length,24);
-  dir.writeUInt16LE(nameBuf.length,28);dir.writeUInt16LE(0,30);dir.writeUInt16LE(0,32);
-  dir.writeUInt16LE(0,34);dir.writeUInt16LE(0,36);dir.writeUInt32LE(0,38);dir.writeUInt32LE(offset,42);
-  central.push(dir,nameBuf);
-  offset+=local.length+nameBuf.length+data.length;
- }
- const centralBuf=Buffer.concat(central);
- const end=Buffer.alloc(22);
- end.writeUInt32LE(0x06054b50,0);end.writeUInt16LE(0,4);end.writeUInt16LE(0,6);
- end.writeUInt16LE(Object.keys(files).length,8);end.writeUInt16LE(Object.keys(files).length,10);
- end.writeUInt32LE(centralBuf.length,12);end.writeUInt32LE(offset,16);end.writeUInt16LE(0,20);
- return Buffer.concat([...localParts,centralBuf,end]);
-}
 
 let hub,agent;const logs=[];
 function launch(name,args){const c=spawn(exe(name),args,{cwd:root,windowsHide:true});c.stdout.on('data',b=>logs.push(b.toString()));c.stderr.on('data',b=>logs.push(b.toString()));return c;}

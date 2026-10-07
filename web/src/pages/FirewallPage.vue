@@ -3,8 +3,11 @@
 import { computed } from 'vue'
 import { workspace } from '../state/workspace'
 
-const node = computed(() => workspace.selectedNode.value)
-const hasFirewall = computed(() => !!node.value?.capabilities.firewall)
+const entry = computed(() => workspace.selectedEntry.value)
+// firewall 是字符串数组，非空即有防火墙能力
+const hasFirewall = computed(() =>
+  entry.value?.connected && (entry.value.node.capabilities?.firewall?.length ?? 0) > 0
+)
 </script>
 
 <template>

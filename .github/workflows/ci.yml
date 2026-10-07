@@ -171,7 +171,7 @@ jobs:
     name: Docker 构建与探针
     runs-on: ubuntu-24.04
     needs: [rust, web-contract]
-    if: ${{ always() && !cancelled() && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (contains(inputs.reuse_passed, 'rust') && needs.rust.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && !contains(inputs.reuse_passed, 'docker') && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (contains(inputs.reuse_passed, 'rust') && needs.rust.result == 'skipped')) }}
     permissions:
       contents: read
     steps:

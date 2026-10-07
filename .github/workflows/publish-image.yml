@@ -39,8 +39,8 @@ jobs:
         with:
           images: ghcr.io/${{ env.OWNER }}/${{ matrix.image }}
           tags: |
-            type=raw,value=latest
-            type=raw,value=main
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=sha-,format=long
           labels: |
             org.opencontainers.image.title=${{ matrix.title }}

@@ -10,7 +10,7 @@ import { useTheme } from '../../composables/useTheme'
 const { resolved, toggleTheme } = useTheme()
 
 const page = computed(() => workspace.state.page)
-const nodes = computed(() => workspace.state.nodes)
+const nodes = computed(() => workspace.state.nodeEntries)
 const selectedNodeId = computed(() => workspace.state.selectedNodeId)
 const taskCount = computed(() => workspace.state.activeTaskCount)
 
@@ -39,13 +39,13 @@ function onNodeChange(e: Event) {
       <template v-if="showNodeSelect && nodes.length > 0">
         <select
           class="node-select"
-          :value="selectedNodeId ?? nodes[0]?.id"
+          :value="selectedNodeId ?? nodes[0]?.node.id"
           aria-label="选择节点"
           @change="onNodeChange"
         >
-          <option v-for="n in nodes" :key="n.id" :value="n.id">
-            <span>{{ n.name }}</span>
-            <span v-if="!n.connected"> (离线)</span>
+          <option v-for="e in nodes" :key="e.node.id" :value="e.node.id">
+            <span>{{ e.node.name }}</span>
+            <span v-if="!e.connected"> (离线)</span>
           </option>
         </select>
       </template>
@@ -54,7 +54,7 @@ function onNodeChange(e: Event) {
       <button
         v-if="taskCount > 0"
         class="task-indicator"
-        aria-label="`${taskCount} 个任务进行中`"
+        :aria-label="`${taskCount} 个任务进行中`"
         title="查看任务"
         @click="workspace.navigate('console')"
       >

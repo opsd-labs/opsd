@@ -1,17 +1,37 @@
 <script setup lang="ts">
 /**
  * NodesPage — 单节点深度视图
- * 指标曲线 + 文件管理 + 宿主机 Shell
+ * 指标概览（后续扩展为曲线图 + 文件管理 + 宿主机 Shell）
+ * MetricsOverviewNode.sample = MetricsSample | null
  */
 import { computed } from 'vue'
 import { workspace } from '../state/workspace'
 import { formatPercent, formatBytes, formatUptime } from '../utils/format'
 import Status from '../components/ui/Status.vue'
 
-const node = computed(() => workspace.selectedNode.value)
-const metrics = computed(() =>
+const entry = computed(() => workspace.selectedEntry.value)
+const node = computed(() => entry.value?.node ?? null)
+const metricsNode = computed(() =>
   node.value ? workspace.state.metrics[node.value.id] : null
 )
+// 便捷访问 sample 内层（避免模板里反复 .sample?.）
+const m = computed(() => metricsNode.value?.sample ?? null)
+
+function nodeAddr(): string {
+  if (!node.value) return '—'
+  return node.value.overlay_address ?? node.value.public_addresses[0] ?? '—'
+}
+
+const memPercent = computed(() => {
+  if (!m.value || m.value.memory_total === 0) return null
+  return (m.value.memory_used / m.value.memory_total) * 100
+})
+
+const diskPercent = computed(() => {
+  const disk = m.value?.disks?.[0]
+  if (!disk || disk.total === 0) return null
+  return (disk.used / disk.total) * 100
+})
 </script>
 
 <template>
@@ -25,37 +45,40 @@ const metrics = computed(() =>
       <div class="node-header">
         <div class="node-header__info">
           <h2 class="node-header__name">{{ node.name }}</h2>
-          <code class="node-header__addr">{{ node.address }}</code>
+          <code class="node-header__addr">{{ nodeAddr() }}</code>
         </div>
-        <Status :tone="node.connected ? 'success' : 'danger'"
-                :label="node.connected ? '在线' : '离线'" />
+        <Status :tone="entry!.connected ? 'success' : 'danger'"
+                :label="entry!.connected ? '在线' : '离线'" />
       </div>
 
-      <!-- 指标卡片（占位，完整实现在 MetricsChart） -->
-      <div v-if="metrics && !metrics.error" class="metrics-grid">
+      <!-- 指标卡片 -->
+      <div v-if="m" class="metrics-grid">
         <div class="metric-card">
           <span class="metric-card__label">CPU</span>
-          <span class="metric-card__value">{{ formatPercent(metrics.cpu_percent) }}</span>
+          <span class="metric-card__value">{{ formatPercent(m.cpu_usage) }}</span>
         </div>
         <div class="metric-card">
           <span class="metric-card__label">内存</span>
-          <span class="metric-card__value">{{ formatPercent(metrics.mem_percent) }}</span>
-          <span class="metric-card__sub">{{ formatBytes(metrics.mem_used_bytes) }} / {{ formatBytes(metrics.mem_total_bytes) }}</span>
+          <span class="metric-card__value">{{ formatPercent(memPercent) }}</span>
+          <span class="metric-card__sub">{{ formatBytes(m.memory_used) }} / {{ formatBytes(m.memory_total) }}</span>
         </div>
         <div class="metric-card">
           <span class="metric-card__label">磁盘</span>
-          <span class="metric-card__value">{{ formatPercent(metrics.disk_percent) }}</span>
-          <span class="metric-card__sub">{{ formatBytes(metrics.disk_used_bytes) }} / {{ formatBytes(metrics.disk_total_bytes) }}</span>
+          <span class="metric-card__value">{{ formatPercent(diskPercent) }}</span>
+          <template v-if="m.disks[0]">
+            <span class="metric-card__sub">{{ formatBytes(m.disks[0].used) }} / {{ formatBytes(m.disks[0].total) }}</span>
+          </template>
         </div>
         <div class="metric-card">
           <span class="metric-card__label">运行时间</span>
-          <span class="metric-card__value">{{ formatUptime(metrics.uptime_secs) }}</span>
+          <span class="metric-card__value">{{ formatUptime(m.uptime) }}</span>
         </div>
       </div>
 
-      <div v-else-if="!node.connected" class="nodes-page__offline">
+      <div v-else-if="!entry!.connected" class="nodes-page__offline">
         节点离线，指标不可用
       </div>
+      <div v-else class="nodes-page__offline">{{ metricsNode?.error || '尚未采集指标' }}</div>
     </template>
   </div>
 </template>
