@@ -31,9 +31,15 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: 检查格式
+        if: ${{ !contains(inputs.reuse_passed, 'other-subsystems') }}
         run: rustfmt --edition 2024 --check src/hub/api.rs
       - name: 运行 Rust 测试
-        run: cargo test --locked
+        run: |
+          if [ "${{ contains(inputs.reuse_passed, 'other-subsystems') }}" = "true" ]; then
+            cargo test --locked hub::theme::
+          else
+            cargo test --locked
+          fi
 
   web-contract:
     name: Web 与契约
@@ -58,7 +64,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: opsd-labs/opsd-theme-web
-          ref: d1f3979e972f082ec668fc6f3eca5c9113dbd0f6
+          ref: fa0d381
           path: themes/web
       - name: 检出现代控制台主题
         uses: actions/checkout@v4

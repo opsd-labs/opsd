@@ -858,6 +858,8 @@ pub struct ThemeManifestInput {
     pub tokens: Option<ThemeTokensInput>,
     #[serde(default)]
     pub configuration: Option<ThemeConfigurationInput>,
+    #[serde(default)]
+    pub console_frontend: Option<ConsoleFrontend>,
 }
 
 impl From<ThemeManifestInput> for Manifest {
@@ -889,7 +891,7 @@ impl From<ThemeManifestInput> for Manifest {
                     })
                     .collect(),
             }),
-            console_frontend: None,
+            console_frontend: input.console_frontend,
         }
     }
 }
@@ -1161,7 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn 声明控制台就必须给出令牌() {
+    fn 控制台样式需要令牌而完整前端声明_api_版本() {
         let mut m = manifest("ok", vec![Surface::Console]);
         m.tokens = None;
         assert!(
@@ -1174,6 +1176,12 @@ mod tests {
             ..manifest("shareonly", vec![Surface::Share])
         };
         validate(&m).unwrap();
+        let input: ThemeManifestInput = serde_json::from_value(serde_json::json!({
+            "short": "web", "name": "完整前端", "surfaces": ["console"],
+            "console_frontend": { "api_version": 1 }
+        }))
+        .unwrap();
+        validate(&input.into()).unwrap();
     }
 
     #[test]
