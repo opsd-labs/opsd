@@ -64,7 +64,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: opsd-labs/opsd-theme-web
-          ref: fa0d3818a29aea40a4af648ec514ee698bdbd679
+          ref: cd95139c8950d4bddc16b09cd1d14bb884e0a033
           path: themes/web
       - name: 检出现代控制台主题
         uses: actions/checkout@v4
