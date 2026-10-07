@@ -37,18 +37,60 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            tools/package-lock.json
+            web/package-lock.json
+      - name: 安装契约工具
+        working-directory: tools
+        run: npm ci
+      - name: OpenAPI 与生成类型
+        working-directory: tools
+        run: npm run api
+      - name: 检出经典控制台主题
+        uses: actions/checkout@v4
+        with:
+          repository: opsd-labs/opsd-theme-web
+          ref: 4ddd656def5a701eaf9b2b129ae468906dfb961c
+          path: themes/web
+      - name: 检出现代控制台主题
+        uses: actions/checkout@v4
+        with:
+          repository: opsd-labs/opsd-theme-web2
+          ref: eebf241892c6e70ca05b412908e83f3b37cdce42
+          path: themes/web2
+      - name: 经典主题契约、原有单元测试与打包
+        working-directory: themes/web
+        run: |
+          npm ci
+          npm run api
+          npm test
+          npm run package -- --out releases/web.zip
+      - name: 现代主题契约与打包
+        working-directory: themes/web2
+        run: |
+          npm ci
+          npm run api
+          npm run package -- --out releases/web2.zip
+      - name: 经典主题原有浏览器测试
+        working-directory: themes/web
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:browser
       - name: 安装前端依赖
         working-directory: web
         run: npm ci
-      - name: OpenAPI、类型、测试与构建
+      - name: 内置控制台与分享页构建
         working-directory: web
         run: |
-          npm run api
-          npm test -- --run
           npm run build
+          npx vite build --config vite.share.config.ts
       - name: 检查生成物漂移
-        run: git diff --exit-code -- web/src/generated/api.ts
+        run: git diff --exit-code -- web/src/api/generated.ts
+      - name: 传递集成测试所需的内置页面
+        uses: actions/upload-artifact@v4
+        with:
+          name: builtin-web
+          path: web/dist
 
   integration:
     name: HTTP 集成与负向门禁
@@ -63,14 +105,25 @@ jobs:
         with:
           node-version: 22.x
       - name: 安装契约检查依赖
-        working-directory: web
+        working-directory: tools
         run: npm ci
+      - name: 获取已构建的内置页面
+        uses: actions/download-artifact@v4
+        with:
+          name: builtin-web
+          path: web/dist
       - name: 构建调试二进制
         run: cargo build --locked --bins
       - name: HTTP 集成测试
         run: node tests/integration.mjs
       - name: 负向契约门禁
         run: node tests/negative-gates.mjs
+      - name: 分享页原有浏览器隔离测试
+        working-directory: tools
+        run: |
+          npx playwright install --with-deps chromium
+          cd ..
+          node tests/share-e2e.mjs
 
   docker-smoke:
     name: Docker 构建与探针
