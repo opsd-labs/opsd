@@ -44,6 +44,8 @@ jobs:
   web-contract:
     name: Web 与契约
     runs-on: ubuntu-24.04
+    outputs:
+      static_pages_ready: ${{ steps.static-pages.outputs.ready }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -86,6 +88,7 @@ jobs:
           if [ "${{ contains(inputs.reuse_passed, 'modern-api') }}" != "true" ]; then npm run api; fi
           if [ "${{ contains(inputs.reuse_passed, 'modern-package') }}" != "true" ]; then npm run package -- --out releases/web2.zip; fi
       - name: 经典主题原有浏览器测试
+        if: ${{ !contains(inputs.reuse_passed, 'classic-browser') }}
         working-directory: themes/web
         run: |
           npx playwright install --with-deps chromium
@@ -93,24 +96,35 @@ jobs:
       - name: 安装前端依赖
         working-directory: web
         run: npm ci
-      - name: 内置控制台与分享页构建
+      - name: 内置控制台类型检查
+        id: builtin-types
+        continue-on-error: true
+        working-directory: web
+        run: npx vue-tsc -b
+      - name: 后端集成所需的控制台与分享页资源
+        id: static-pages
         working-directory: web
         run: |
-          npm run build
+          npx vite build
           npx vite build --config vite.share.config.ts
+          echo "ready=true" >> "$GITHUB_OUTPUT"
       - name: 检查生成物漂移
+        if: ${{ !contains(inputs.reuse_passed, 'contract') }}
         run: git diff --exit-code -- web/src/api/generated.ts
       - name: 传递集成测试所需的内置页面
         uses: actions/upload-artifact@v4
         with:
           name: builtin-web
           path: web/dist
+      - name: 保留内置控制台类型检查失败
+        if: ${{ steps.builtin-types.outcome == 'failure' }}
+        run: exit 1
 
   integration:
     name: HTTP 集成与负向门禁
     runs-on: ubuntu-24.04
     needs: [rust, web-contract]
-    if: ${{ always() && !cancelled() && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (contains(inputs.reuse_passed, 'rust') && needs.rust.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && needs.web-contract.outputs.static_pages_ready == 'true' && (needs.rust.result == 'success' || (contains(inputs.reuse_passed, 'rust') && needs.rust.result == 'skipped')) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
