@@ -1,5 +1,5 @@
 /**
- * 分享面的端到端验证：真实主控 + 真实浏览器。
+ * 内置控制台与分享面的端到端验证：真实主控、浏览器及 Agent。
  *
  * 重点是那条隔离承诺——**浏览器不会把控制台会话 Cookie 发给分享路径**。
  * 这一点只能在实际浏览器里看请求头才能确认，单元测试与接口测试都覆盖不到。
@@ -104,7 +104,7 @@ function launch() {
       "--listen",
       `127.0.0.1:${base}`,
       "--agent-listen",
-      "127.0.0.1:19443",
+      "127.0.0.1:8444",
       "--health-listen",
       "127.0.0.1:19543",
       "--origin",
@@ -212,19 +212,75 @@ try {
   assert.equal(recovered.status, 200);
   assert.equal(recovered.data.console_frontend.short, 'default');
 
-  const registration = await request('/enrollment-tokens', 'POST', { name: '浏览器节点', public_addresses: [], ssh_port: 22 });
-  assert.equal(registration.status, 200);
+  await consolePage.getByRole('button', { name: '节点', exact: true }).click();
+  await expect(consolePage.getByRole('button', { name: '添加节点', exact: true })).toBeVisible();
+  await expect(consolePage.getByText('还没有节点，点击“添加节点”开始接入')).toBeVisible();
+  await consolePage.getByRole('button', { name: '添加节点', exact: true }).click();
+  const enrollmentDrawer = consolePage.getByRole('dialog', { name: '添加节点', exact: true });
+  await enrollmentDrawer.getByLabel('节点名称', { exact: true }).fill('浏览器 Docker 节点');
+  await enrollmentDrawer.getByLabel('公网 IP（选填）', { exact: true }).fill('127.0.0.1');
+  const invalidRegistration = consolePage.waitForResponse(r => r.url().endsWith('/enrollment-tokens') && r.request().method() === 'POST');
+  await enrollmentDrawer.getByRole('button', { name: '生成注册信息', exact: true }).click();
+  assert.equal((await invalidRegistration).status(), 400);
+  await expect(enrollmentDrawer.getByRole('alert')).toBeVisible();
+  assert.equal((await request('/nodes')).data.length, 0);
+  assert.equal((await request('/enrollment-tokens')).data.length, 0);
+  await enrollmentDrawer.getByLabel('公网 IP（选填）', { exact: true }).fill('');
+  await enrollmentDrawer.getByLabel('安装方式', { exact: true }).selectOption('docker');
+  const dockerRegistrationResponse = consolePage.waitForResponse(r => r.url().endsWith('/enrollment-tokens') && r.request().method() === 'POST');
+  await enrollmentDrawer.getByRole('button', { name: '生成注册信息', exact: true }).click();
+  const dockerResponse = await dockerRegistrationResponse;
+  assert.equal(dockerResponse.status(), 200);
+  const dockerRegistration = await dockerResponse.json();
+  assert.equal(dockerRegistration.install_mode, 'docker');
+  await expect(enrollmentDrawer.getByText('注册信息已生成，等待 Agent 接入')).toBeVisible();
+  const dockerCommand = await enrollmentDrawer.locator('.enrollment-command').innerText();
+  assert.ok(dockerCommand.includes(dockerRegistration.agent_image));
+  assert.ok(dockerCommand.includes(dockerRegistration.agent_url));
+  assert.ok(dockerCommand.includes('bootstrap') && dockerCommand.includes('OPSD_AGENT_MODE=container'));
+  assert.ok(dockerCommand.includes('--token-file /run/opsd/token') && !dockerCommand.includes(dockerRegistration.token), 'Docker 命令应使用令牌文件');
+  await enrollmentDrawer.locator('.drawer__footer').getByRole('button', { name: '关闭', exact: true }).click();
+  const dockerPending = consolePage.locator('.enrollment-row').filter({ hasText: '浏览器 Docker 节点' });
+  await expect(dockerPending).toContainText('待注册');
+  await dockerPending.getByRole('button', { name: '取消注册', exact: true }).click();
+  await expect(dockerPending).toHaveCount(0);
+
+  await consolePage.getByRole('button', { name: '添加节点', exact: true }).click();
+  await enrollmentDrawer.getByLabel('节点名称', { exact: true }).fill('浏览器节点');
+  const registrationResponse = consolePage.waitForResponse(r => r.url().endsWith('/enrollment-tokens') && r.request().method() === 'POST');
+  await enrollmentDrawer.getByRole('button', { name: '生成注册信息', exact: true }).click();
+  const response = await registrationResponse;
+  assert.equal(response.status(), 200);
+  const registration = await response.json();
+  assert.equal(registration.install_mode, 'host');
+  const hostCommand = await enrollmentDrawer.locator('.enrollment-command').innerText();
+  assert.ok(hostCommand.includes(registration.agent_url) && hostCommand.includes(registration.ca_fingerprint));
+  assert.ok(hostCommand.includes('--token-file ./opsd-token') && !hostCommand.includes(registration.token), '宿主机命令应使用令牌文件');
   const tokenFile = path.join(run, 'agent-token');
+  const downloadResponse = consolePage.waitForEvent('download');
+  await enrollmentDrawer.getByRole('button', { name: '下载令牌文件', exact: true }).click();
+  await (await downloadResponse).saveAs(tokenFile);
+  assert.ok((await readFile(tokenFile, 'utf8')).trim() === registration.token, '下载文件应包含本次令牌');
+  await enrollmentDrawer.locator('.drawer__footer').getByRole('button', { name: '关闭', exact: true }).click();
+  await consolePage.reload();
+  const hostPending = consolePage.locator('.enrollment-row').filter({ hasText: '浏览器节点' });
+  await expect(hostPending).toContainText('待注册');
+  const summaries = await request('/enrollment-tokens');
+  assert.equal(summaries.data.length, 1);
+  assert.ok(!('token' in summaries.data[0]), '重新加载的注册摘要不得返回令牌');
+  await expect(consolePage.locator('.enrollment-command')).toHaveCount(0);
   const agentDir = path.join(run, 'agent');
-  await writeFile(tokenFile, registration.data.token, { mode: 0o600 });
-  await command('opsd-agent', ['--data-dir', agentDir, 'enroll', '--hub', `https://localhost:${base}`, '--agent-url', 'wss://localhost:19443/agent', '--ca', path.join(hubDir, 'pki', 'ca.pem'), '--fingerprint', registration.data.ca_fingerprint, '--token-file', tokenFile]);
+  await command('opsd-agent', ['--data-dir', agentDir, 'enroll', '--hub', `https://localhost:${base}`, '--agent-url', registration.agent_url, '--ca', path.join(hubDir, 'pki', 'ca.pem'), '--fingerprint', registration.ca_fingerprint, '--token-file', tokenFile]);
   agent = spawn(exe('opsd-agent'), ['--data-dir', agentDir, 'run'], { cwd: root, windowsHide: true });
   agent.stdout.on('data', b => logs.push(b.toString()));
   agent.stderr.on('data', b => logs.push(b.toString()));
   await expect.poll(async () => (await request('/nodes')).data[0]?.connected, { timeout: 20000 }).toBe(true);
+  await expect(hostPending).toHaveCount(0);
+  await expect(consolePage.locator('.node-header')).toContainText('浏览器节点');
+  await expect(consolePage.locator('.node-header')).toContainText('在线');
   await consolePage.getByRole('button', { name: 'Docker', exact: true }).click();
   await expect(consolePage.getByRole('button', { name: '刷新', exact: true })).toBeVisible();
-  const refreshResponse = consolePage.waitForResponse(r => r.url().endsWith(`/nodes/${registration.data.node_id}/actions`) && r.request().method() === 'POST');
+  const refreshResponse = consolePage.waitForResponse(r => r.url().endsWith(`/nodes/${registration.node_id}/actions`) && r.request().method() === 'POST');
   await consolePage.getByRole('button', { name: '刷新', exact: true }).click();
   const submitted = await refreshResponse;
   assert.equal(submitted.status(), 202);
@@ -280,7 +336,7 @@ try {
   console.log(
     JSON.stringify(
       {
-        内置控制台: '真实登录、设置、分享、ZIP、冲突、错误、全局切换、恢复卸载及 Agent 盘点任务通过',
+        内置控制台: '真实登录、设置、分享、ZIP、冲突、错误、全局切换、恢复卸载、界面注册、令牌下载、待接入恢复、真实 Agent 上线及盘点任务通过',
         分享页: info,
         分享路径请求数: seen.length,
         带控制台Cookie的请求: leaked.length,

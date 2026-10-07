@@ -340,6 +340,7 @@ export const workspace = {
 
   // 数据
   loadAll,
+  refreshEnrollments: loadEnrollments,
   submitAction,
 }
 

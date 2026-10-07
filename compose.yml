@@ -11,6 +11,7 @@ services:
     restart: unless-stopped
     environment:
       OPSD_ORIGIN: ${OPSD_ORIGIN:-https://localhost:${OPSD_CONSOLE_PORT:-65535}}
+      OPSD_AGENT_IMAGE: ${OPSD_AGENT_IMAGE:-ghcr.io/opsd-labs/opsd-agent:main}
       # 独立 MariaDB 使用 mysql:// 格式，凭据通过部署环境注入。
       # OPSD_DATABASE_URL: ${OPSD_DATABASE_URL}
     ports:

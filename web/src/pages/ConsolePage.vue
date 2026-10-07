@@ -13,6 +13,7 @@ import {
 } from '../utils/format'
 import Status from '../components/ui/Status.vue'
 import Skeleton from '../components/ui/Skeleton.vue'
+import Button from '../components/ui/Button.vue'
 import type { StatusTone } from '../components/ui/Status.vue'
 
 const entries = computed(() => workspace.state.nodeEntries)
@@ -129,7 +130,8 @@ function goToNode(nodeId: string) {
           <rect x="2" y="3" width="20" height="14" rx="2"/>
           <path d="M8 21h8M12 17v4"/>
         </svg>
-        <span>尚无节点，请前往设置添加注册令牌</span>
+        <span>尚无节点，可在节点页添加并注册 Agent</span>
+        <Button variant="primary" @click="workspace.navigate('nodes')">前往节点管理</Button>
       </div>
     </div>
   </div>
