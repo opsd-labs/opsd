@@ -49,7 +49,7 @@ $env:OPSD_TARGET = "https://localhost:65535"
 npm run dev
 ```
 
-迁入的内置前端开发代理仍待配合适配；环境变量、入口前缀和 WebSocket 支持按 [控制台主题配合说明](console-themes.md) 接入。两个独立主题的代理支持 `OPSD_ENTRANCE`、`OPSD_TARGET`，运行时不提供演示模式。
+浏览器打开 `http://127.0.0.1:5173/{安全入口}/`。内置前端和两个独立主题的代理均支持 `OPSD_ENTRANCE`、`OPSD_TARGET` 与 WebSocket；运行时不提供演示模式。
 
 ## API 契约工作流
 
