@@ -208,7 +208,9 @@ try {
   await expect(consolePage.locator('.theme-item').filter({ hasText: 'browser-console' })).toContainText('当前激活');
   await consolePage.locator('.theme-item').filter({ hasText: 'browser-console' }).getByRole('button', { name: '卸载' }).click();
   await expect(consolePage.locator('.shell')).toBeVisible();
-  assert.equal((await request('/themes/active')).data.console_frontend, null);
+  const recovered = await request('/themes/active');
+  assert.equal(recovered.status, 200);
+  assert.equal(recovered.data.console_frontend.short, 'default');
 
   const registration = await request('/enrollment-tokens', 'POST', { name: '浏览器节点', public_addresses: [], ssh_port: 22 });
   assert.equal(registration.status, 200);
