@@ -50,6 +50,8 @@ API 的唯一定义见 [OpenAPI](api/openapi.yaml)。以下路径均相对于 `/
 
 ## 内置前端维护者需要完成
 
+当前云端类型检查阻断在 `web/vite.config.ts`：缺少 Node 类型声明，报 `path` 模块及 `__dirname` 不存在。先补齐前端的 Node 类型依赖与配置，再继续下面的契约和业务适配。本轮保留原文件，未代改这一部分。
+
 1. 从 `web/src/api/generated.ts` 引入正式生成类型，替换手写类型。会话字段为 `csrf`，节点条目为 `{ connected, node }`，指标列表响应为 `{ nodes: [...] }`；注册令牌摘要和创建响应分别使用 `EnrollmentSummary`、`EnrollmentToken`。
 2. 将构建资源基址设为相对路径。API、SSE 和 WebSocket 从安全入口首段生成地址，不从 `document.baseURI` 或 `/frontend/{short}/` 推导管理接口。开发代理补齐安全入口，并保留 WebSocket 支持。
 3. 接入完整前端列表、上传、GitHub 解析与资产选择、安装、卸载及全局选择。完整前端、样式覆盖、明暗模式分别表达；明暗模式仍为本机偏好。
@@ -77,6 +79,18 @@ npm run package -- --out releases/theme.zip
 ## 验收与请求成本
 
 验证渠道统一为现有云端 CI，不另建流水线或重复本地整批检查。受影响的 Rust 和 HTTP 测试覆盖类型兼容、安装、冲突、登录前分发、稳定资源地址、正常重启、入口丢失回退及卸载；GitHub 地址和发行版筛选使用确定性输入测试，不把公网不可达当作成功。
+
+2026-10-07 本批已确认的云端结果如下。引用的是各步骤结果，各次工作流并未全部通过；当前内置前端类型检查仍失败，不能算整批验收通过。
+
+| 范围 | 结果与证据 |
+| --- | --- |
+| Rust 与完整主题声明 | [原有 Rust 测试通过](https://github.com/opsd-labs/opsd/actions/runs/37606799292)；严格输入修正后，仅重跑的 [主题单元测试通过](https://github.com/opsd-labs/opsd/actions/runs/37609086218) |
+| 官方契约、经典单元测试与 ZIP | [契约检查及 40 项原有单元测试通过](https://github.com/opsd-labs/opsd/actions/runs/37606799292)；[经典主题打包通过](https://github.com/opsd-labs/opsd/actions/runs/37607376574)，[现代主题打包通过](https://github.com/opsd-labs/opsd/actions/runs/37608166256) |
+| 经典浏览器测试 | [24 项通过](https://github.com/opsd-labs/opsd/actions/runs/37609548304)，使用接口夹具，未执行真实节点操作 |
+| HTTP、负向门禁及静态页面 | [HTTP 集成、负向契约门禁、内置静态资源与独立分享页构建通过](https://github.com/opsd-labs/opsd/actions/runs/37609940773)；静态构建不能替代内置类型检查 |
+| 分享页浏览器隔离 | [真实 Hub 与 Chromium 检查通过](https://github.com/opsd-labs/opsd/actions/runs/37610450010)，分享路径未携带控制台会话 Cookie，无效分享令牌连接被丢弃 |
+
+现有 CI 的 `reuse_passed` 只复用同批输入未变的成功步骤，`reuse_static_run` 复用已构建的页面制品。已知的内置类型失败仍保留失败结果；不通过略过检查宣布整批成功。Docker 构建与发布门禁尚未执行，正式主题 ZIP、C091 部署及三套前端真实业务验收均待内置前端配合完成。
 
 内置前端配合完成后再集中验收三套前端的真实登录、CSRF、任务提交、终端、文件操作、分享页隔离、仓库安装成功和无发行版／无 ZIP 的失败情况，然后通过现有发布门禁固定制品。完成这些步骤前不更新 C091，不宣称默认控制台功能完整。
 
