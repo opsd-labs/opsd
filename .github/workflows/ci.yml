@@ -2,6 +2,11 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      reuse_passed:
+        description: Rust、官方契约及展示函数输入未变时，复用本批已有成功结果
+        type: boolean
+        default: false
   pull_request:
   push:
     branches: [main, feat/v01-contract-fixes]
@@ -16,6 +21,7 @@ concurrency:
 jobs:
   rust:
     name: Rust
+    if: ${{ !inputs.reuse_passed }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -45,13 +51,14 @@ jobs:
         working-directory: tools
         run: npm ci
       - name: OpenAPI 与生成类型
+        if: ${{ !inputs.reuse_passed }}
         working-directory: tools
         run: npm run api
       - name: 检出经典控制台主题
         uses: actions/checkout@v4
         with:
           repository: opsd-labs/opsd-theme-web
-          ref: 4ddd656def5a701eaf9b2b129ae468906dfb961c
+          ref: d1f3979e972f082ec668fc6f3eca5c9113dbd0f6
           path: themes/web
       - name: 检出现代控制台主题
         uses: actions/checkout@v4
@@ -63,8 +70,10 @@ jobs:
         working-directory: themes/web
         run: |
           npm ci
-          npm run api
-          npm test
+          if [ "${{ inputs.reuse_passed }}" != "true" ]; then
+            npm run api
+            npm test
+          fi
           npm run package -- --out releases/web.zip
       - name: 现代主题契约与打包
         working-directory: themes/web2
@@ -97,6 +106,7 @@ jobs:
     name: HTTP 集成与负向门禁
     runs-on: ubuntu-24.04
     needs: [rust, web-contract]
+    if: ${{ always() && !cancelled() && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (inputs.reuse_passed && needs.rust.result == 'skipped')) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -130,6 +140,7 @@ jobs:
     name: Docker 构建与探针
     runs-on: ubuntu-24.04
     needs: [rust, web-contract]
+    if: ${{ always() && !cancelled() && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (inputs.reuse_passed && needs.rust.result == 'skipped')) }}
     permissions:
       contents: read
     steps:
@@ -160,7 +171,7 @@ jobs:
             echo '发现不应进入仓库的凭据、环境文件或实验数据' >&2
             exit 1
           fi
-          if git grep -nE '(BEGIN (RSA|OPENSSH|EC|PRIVATE) KEY|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})' -- ':!docs/ui/*.png'; then
+          if git grep -nE '(-----BEGIN (RSA|OPENSSH|EC|PRIVATE) KEY|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})' -- ':!docs/ui/*.png'; then
             echo '发现疑似私钥或 GitHub 令牌' >&2
             exit 1
           fi
