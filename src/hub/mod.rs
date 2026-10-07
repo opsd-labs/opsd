@@ -391,6 +391,14 @@ pub async fn run() -> Result<()> {
                     get(theme::read_active).put(theme::activate),
                 )
                 .route("/api/v1/themes/console", post(theme::install_console_theme))
+                .route(
+                    "/api/v1/themes/console/repository/resolve",
+                    post(theme::resolve_repository),
+                )
+                .route(
+                    "/api/v1/themes/console/repository/install",
+                    post(theme::install_repository),
+                )
                 .route("/api/v1/themes/{short}", delete(theme::remove_theme))
                 .route("/api/v1/audit", get(audit::query))
                 .route("/api/v1/storage/readiness", get(storage::readiness))
@@ -434,15 +442,17 @@ pub async fn run() -> Result<()> {
             let console = Router::new()
                 .merge(public)
                 .merge(private)
-                .fallback_service(tower_http::services::ServeDir::new(&web).not_found_service(
-                    tower_http::services::ServeFile::new(web.join("index.html")),
-                ))
+                .route("/frontend/{short}/", get(theme::console_frontend_index))
+                .route("/frontend/{short}/{*path}", get(theme::console_frontend_asset))
+                .nest_service("/assets", tower_http::services::ServeDir::new(web.join("assets")))
+                .fallback(theme::console_index)
                 .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
                 .with_state(state.clone());
             // 主题包上传需要更大的体积上限。它必须在全局 1 MB 限制**之后**合并，
             // 否则会被那条限制覆盖，导致稍大的主题包直接被 413 拒绝。
             let theme_upload = Router::new()
                 .route("/api/v1/themes/share", post(theme::install_share_theme))
+                .route("/api/v1/themes/console/package", post(theme::install_console_package))
                 .route_layer(middleware::from_fn_with_state(state.clone(), auth::require))
                 .layer(axum::extract::DefaultBodyLimit::max(
                     theme::MAX_PACKAGE_BYTES,
@@ -453,7 +463,7 @@ pub async fn run() -> Result<()> {
             let trimmed = prefix.clone();
             // nest 不会匹配裸的 `/{入口}/`，因此显式补一条根路由；
             // 单页应用使用查询串路由，未知路径回退到 index.html。
-            let index = tower_http::services::ServeFile::new(web.join("index.html"));
+            let index_state = state.clone();
             // 分享面：页面、页面数据与机器接口。全部位于 /share/{令牌}/ 之下。
             let share_routes = Router::new()
                 // 缺结尾斜杠时补上，否则页面里的相对资源路径会丢掉令牌那一层
@@ -507,7 +517,9 @@ pub async fn run() -> Result<()> {
                         async move { axum::response::Redirect::permanent(&target) }
                     }),
                 )
-                .route(&format!("{prefix}/"), axum::routing::get_service(index));
+                .route(&format!("{prefix}/"), get(move || {
+                    theme::console_index(axum::extract::State(index_state.clone()))
+                }));
             // 健康检查独立监听，只绑定回环地址，不经入口门禁。
             let health = Router::new().route(
                 "/api/v1/health",
@@ -560,6 +572,7 @@ impl State {
             .unwrap_or_default()
     }
 }
+#[derive(Debug)]
 pub struct ApiError(pub axum::http::StatusCode, pub String);
 impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {

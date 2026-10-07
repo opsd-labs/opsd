@@ -17,7 +17,7 @@ import net from 'node:net'
 import { loadContract } from './lib/http-assert.mjs'
 
 const root = process.cwd()
-const require2 = createRequire(path.join(root, 'web', 'package.json'))
+const require2 = createRequire(path.join(root, 'tools', 'package.json'))
 const { load } = require2('js-yaml')
 const { dump } = require2('js-yaml')
 
@@ -95,7 +95,7 @@ async function expectGateFailure(label, contractFile, expected) {
 }
 
 const node = process.execPath
-const apiContract = path.join(root, 'web', 'scripts', 'api-contract.mjs')
+const apiContract = path.join(root, 'tools', 'api-contract.mjs')
 let base
 let healthPort
 let agentPort

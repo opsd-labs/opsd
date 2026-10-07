@@ -1,0 +1,181 @@
+/* ==========================================================================
+   opsd web3 — 设计令牌汇总入口
+   引入顺序：颜色 → 字体 → 间距 → 形状 → 动画 → 全局基础样式
+   ========================================================================== */
+
+@import './colors.css';
+@import './typography.css';
+@import './spacing.css';
+@import './shape.css';
+@import './motion.css';
+
+/* ==========================================================================
+   CSS Reset（现代化，不破坏表单控件基础可访问性）
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -moz-tab-size: 4;
+  tab-size: 4;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--color-ink);
+  background-color: var(--color-bg);
+  font-feature-settings: 'tnum';        /* 表格数字对齐，运维 UI 关键 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  overflow-wrap: break-word;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* 聚焦时的默认轮廓由各组件用 --shadow-focus 统一覆盖 */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* 使用者不与按钮交互时不显示焦点环 */
+:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+/* ==========================================================================
+   全局基础样式
+   ========================================================================== */
+
+/* 代码 */
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+code {
+  padding: 1px 5px;
+  background: var(--color-code-bg);
+  border-radius: var(--radius-sm);
+}
+
+pre {
+  overflow-x: auto;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--color-code-bg);
+  border-radius: var(--radius-md);
+}
+
+pre code {
+  padding: 0;
+  background: transparent;
+}
+
+/* 滚动条（Chromium/WebKit） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+  background-clip: padding-box;
+}
+
+/* 文字选中 */
+::selection {
+  background: var(--color-accent-muted);
+  color: var(--color-ink);
+}
+
+/* 禁用状态通用 */
+[disabled],
+[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* ==========================================================================
+   工具类（最小化，仅高频通用用途）
+   ========================================================================== */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}

@@ -1,0 +1,43 @@
+/* ==========================================================================
+   opsd web3 — 形状令牌：圆角 + 阴影
+   ========================================================================== */
+
+:root {
+  /* ---- 圆角（3 档 + 特殊） ---- */
+  --radius-sm:   4px;      /* badge、tag、chip、代码块 */
+  --radius-md:   6px;      /* 按钮、输入框、select、开关 */
+  --radius-lg:   10px;     /* 卡片、面板、工具提示 */
+  --radius-xl:   14px;     /* 抽屉角、对话框角 */
+  --radius-full: 9999px;   /* 药丸形（spinner、头像） */
+
+  /* ---- 阴影 ---- */
+  /* 原则：优先细线 border + 轻阴影，强阴影仅用于真正悬浮的层 */
+  --shadow-xs: 0 1px 2px oklch(0% 0 0 / 0.06);
+
+  --shadow-sm: 0 1px 3px oklch(0% 0 0 / 0.08),
+               0 1px 2px oklch(0% 0 0 / 0.04);
+
+  --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.10),
+               0 2px  4px oklch(0% 0 0 / 0.06);
+
+  --shadow-lg: 0 12px 32px oklch(0% 0 0 / 0.14),
+               0  4px  8px oklch(0% 0 0 / 0.08);
+
+  /* focus ring：无论明暗主题，始终用 accent 色 */
+  --shadow-focus: 0 0 0 2px var(--color-accent);
+
+  /* inset 内嵌阴影（输入框 pressed 感） */
+  --shadow-inset: inset 0 1px 2px oklch(0% 0 0 / 0.06);
+}
+
+/* 暗色下阴影略深一点，因为 surface 已经很暗 */
+:root[data-theme="dark"] {
+  --shadow-sm: 0 1px 3px oklch(0% 0 0 / 0.18),
+               0 1px 2px oklch(0% 0 0 / 0.12);
+
+  --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.28),
+               0 2px  4px oklch(0% 0 0 / 0.16);
+
+  --shadow-lg: 0 12px 32px oklch(0% 0 0 / 0.40),
+               0  4px  8px oklch(0% 0 0 / 0.20);
+}

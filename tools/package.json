@@ -1,0 +1,20 @@
+{
+  "name": "opsd-contract-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "api:lint": "redocly lint ../docs/api/openapi.yaml",
+    "api:contract": "node api-contract.mjs",
+    "api:generate": "node api.mjs write",
+    "api:check": "node api.mjs check",
+    "api": "npm run api:lint && npm run api:contract && npm run api:check"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.54.2",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "js-yaml": "4.3.2",
+    "openapi-typescript": "7.13.0",
+    "@playwright/test": "1.63.0"
+  }
+}

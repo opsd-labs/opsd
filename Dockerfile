@@ -7,6 +7,7 @@ COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
+RUN npx vite build --config vite.share.config.ts
 
 FROM rust:${RUST_VERSION}-bookworm AS rust
 WORKDIR /source

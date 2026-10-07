@@ -7,7 +7,7 @@ import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
 import path from 'node:path'
 
-const require2 = createRequire(path.join(process.cwd(), 'web', 'package.json'))
+const require2 = createRequire(path.join(process.cwd(), 'tools', 'package.json'))
 const Ajv = require2('ajv')
 const addFormats = require2('ajv-formats')
 const { load: loadYaml } = require2('js-yaml')

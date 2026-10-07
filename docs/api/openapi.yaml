@@ -1902,8 +1902,8 @@ paths:
     get:
       tags:
         - theme
-      summary: 读取两个界面的启用主题
-      description: 返回控制台与分享页当前启用主题的 describe 输出；未启用时回落到内置主题形态。
+      summary: 读取控制台前端、样式覆盖与分享页主题
+      description: 三项选择分别保存；console_frontend 为当前可用的完整控制台前端，未安装或入口文件丢失时返回 default。
       responses:
         "200":
           description: 两个界面各自的启用主题描述。
@@ -1943,9 +1943,10 @@ paths:
                 $ref: "#/components/schemas/ThemeActivateResult"
         "400":
           description: |
-            surface 不是 console 或 share（「未知界面：<x>」）；short 非 default 且未安装（「主题未安装」）；
+            surface 不是 console、console_frontend 或 share（「未知界面：<x>」）；short 非 default 且未安装（「主题未安装」）；
             主题未声明覆盖目标界面（「该主题未声明支持这个界面」）；合并默认值后的设置编码超过
-            MAX_SETTINGS_BYTES（32 KiB，「主题设置体积过大」）。这是 400 而不是 404。
+            MAX_SETTINGS_BYTES（32 KiB，「主题设置体积过大」）；console_frontend 选择不是完整前端、入口文件不存在或 settings 非空。
+            完整前端不能作为 console 样式覆盖或 share 主题选择。这些错误返回 400。
           content:
             application/json:
               schema:
@@ -1972,7 +1973,8 @@ paths:
       description: |
         清单直接以 JSON 提交，不携带资源文件；校验通过后入库，digest 为主控对序列化清单计算的 sha256。
         short 相同时覆盖既有记录（无幂等键）。short 只能含大小写字母/数字/下划线/连字符（1-48 字符），
-        不得为 default（大小写不敏感）。整个路由处于控制台面默认 1 MiB 请求体上限之下。
+        不得为 default（大小写不敏感）。不能覆盖完整控制台前端，也不能通过此 JSON 接口安装完整前端。
+        整个路由处于控制台面默认 1 MiB 请求体上限之下。
       requestBody:
         required: true
         content:
@@ -2009,6 +2011,273 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/themes/console/package:
+    post:
+      tags:
+        - theme
+      summary: 上传完整控制台前端主题包
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: |
+        上传 ZIP 原始字节。包根目录必须包含 theme.json、UTF-8 index.html 和相对路径资源；
+        清单必须声明 surfaces 为 [console]、console_frontend.api_version 为 1，不能同时声明 tokens 或 configuration。
+        index.html 必须包含 head 标签，Hub 在响应时注入资源基址。压缩包最多 20 MiB，解压最多 64 MiB。
+        同 short 的记录或资源目录存在时拒绝覆盖。安装不自动启用，摘要由 Hub 计算。
+      requestBody:
+        required: true
+        content:
+          application/zip:
+            schema:
+              type: string
+              format: binary
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: 主题已安装，尚未改变全局选择。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeInstallShareResult"
+        "400":
+          description: ZIP、清单、API 版本、入口文件或解压路径不合法。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "409":
+          description: 主题标识已安装，请先卸载原主题。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: 上传超过 20 MiB 请求体上限。
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: 主题包解压任务中断。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/themes/console/repository/resolve:
+    post:
+      tags:
+        - theme
+      summary: 解析公开 GitHub 主题发行版
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: |
+        只接受公开 github.com HTTPS 仓库首页、releases/latest 或 releases/tag/{标签} 链接。
+        不接受凭据、查询参数或片段。仓库首页解析最新稳定发行版，指定标签链接解析该发行版。
+        只列出已上传的 ZIP 资产，不包含 GitHub 自动生成的源码压缩包；解析不下载或安装主题。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThemeRepositoryResolveRequest"
+      responses:
+        "200":
+          description: 可供用户选择的发行版及 ZIP 资产。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeRepositoryRelease"
+        "400":
+          description: 链接不支持、发行版未发布或没有已上传的 ZIP；JSON 语法错误时为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "404":
+          description: 公开 GitHub 仓库或发行版不存在。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          description: 无法初始化 GitHub 客户端。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: GitHub 请求超时、连接失败、访问限制或响应错误。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/themes/console/repository/install:
+    post:
+      tags:
+        - theme
+      summary: 下载并安装用户选定的 GitHub 主题 ZIP
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: |
+        使用 url、tag、asset_id 重新读取该发行版，确认资产属于其已上传 ZIP 后下载并复用主题包安装流程。
+        不克隆仓库或执行源码。不自动启用，不自动重试，不接受任意资产下载 URL；下载重定向仅允许 GitHub HTTPS 资源。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThemeRepositoryInstallRequest"
+      responses:
+        "200":
+          description: 主题已安装，尚未改变全局选择。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeInstallShareResult"
+        "400":
+          description: 链接、选择、主题包不合法，或资产不属于所选发行版的 ZIP；JSON 语法错误时为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "404":
+          description: 公开 GitHub 仓库或指定发行版不存在。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: 主题标识已安装，请先卸载原主题。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: 主题 ZIP 超过 20 MiB 上限。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          description: GitHub 客户端初始化失败或主题包解压任务中断。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: GitHub 访问、响应或下载失败；不会登记未完整下载的主题。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /frontend/{short}/:
+    parameters:
+      - name: short
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - theme
+      security: []
+      summary: 访问固定控制台前端入口
+      description: 实际路径位于安全入口下。default 始终指向内置前端，访问不会改变全局选择，可在登录前用于恢复管理。
+      responses:
+        "200":
+          description: 注入独立资源基址的 HTML，Cache-Control 为 no-store。
+          content:
+            text/html:
+              schema:
+                type: string
+        "400":
+          description: 入口 HTML 缺少 head 标签。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 前端未安装或尚未构建。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /frontend/{short}/{path}:
+    parameters:
+      - name: short
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: 包内资源相对路径，可包含多个目录段。
+    get:
+      tags:
+        - theme
+      security: []
+      summary: 读取指定控制台前端资源
+      description: 实际路径位于安全入口下；只允许已安装的完整控制台主题或 default，目录穿越与越界符号链接返回 404。
+      responses:
+        "200":
+          description: 按资源扩展名返回正文，Cache-Control 为 no-cache。
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            text/javascript:
+              schema:
+                type: string
+            text/css:
+              schema:
+                type: string
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: 主题或资源不存在，或者请求路径越界。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
   /api/v1/themes/share:
     post:
       tags:
@@ -3633,7 +3902,7 @@ components:
       additionalProperties: false
     ThemeManifest:
       type: object
-      description: 主题清单。控制台主题以此 JSON 提交；分享页主题包内的 theme.json 同构。
+      description: 主题清单。样式覆盖以 JSON 提交；完整控制台与分享页主题包根目录使用 theme.json。
       required:
         - short
         - name
@@ -3674,12 +3943,17 @@ components:
           oneOf:
             - $ref: "#/components/schemas/ThemeTokens"
             - type: "null"
-          description: 令牌覆盖，仅控制台主题使用；声明了 console 则必须提供。
+          description: 样式覆盖使用；声明 console 且没有 console_frontend 时必须提供。完整前端不得声明。
         configuration:
           oneOf:
             - $ref: "#/components/schemas/ThemeConfiguration"
             - type: "null"
           description: 托管配置项声明，仅控制台主题使用。
+        console_frontend:
+          oneOf:
+            - $ref: "#/components/schemas/ThemeConsoleFrontend"
+            - type: "null"
+          description: 完整控制台前端声明，须以 ZIP 安装；存在时 surfaces 只能是 [console]。
       additionalProperties: false
     ThemeInstalled:
       type: object
@@ -3692,6 +3966,7 @@ components:
         - installed_at
         - digest
         - fields
+        - console_mode
       properties:
         short:
           type: string
@@ -3722,6 +3997,12 @@ components:
         has_assets:
           type: boolean
           description: 包级主题是否已解压出资源目录。
+        console_mode:
+          type:
+            - string
+            - "null"
+          enum: [tokens, frontend, null]
+          description: 控制台类型；仅分享页主题时为 null。
         installed_at:
           type: integer
           format: int64
@@ -3782,6 +4063,7 @@ components:
       required:
         - console
         - share
+        - console_frontend
       properties:
         console:
           $ref: "#/components/schemas/ThemeDescribe"
@@ -3789,6 +4071,9 @@ components:
         share:
           $ref: "#/components/schemas/ThemeDescribe"
           description: 分享页界面当前启用主题（describe 输出）。
+        console_frontend:
+          $ref: "#/components/schemas/ThemeConsoleFrontendDescribe"
+          description: 当前可用的完整控制台前端，与 console 样式覆盖独立。
       additionalProperties: false
     ThemeActivateRequest:
       type: object
@@ -3800,6 +4085,7 @@ components:
           type: string
           enum:
             - console
+            - console_frontend
             - share
           description: 目标界面，大小写敏感。
         short:
@@ -3808,7 +4094,7 @@ components:
         settings:
           type: object
           additionalProperties: true
-          description: 主题配置键值对，键为配置项 key；省略时用声明默认值补齐。
+          description: 主题配置键值对，键为配置项 key；省略时用声明默认值补齐。console_frontend 只接受省略或空对象。
       additionalProperties: false
     ThemeActivateResult:
       type: object
@@ -3822,6 +4108,82 @@ components:
           type: object
           additionalProperties: true
           description: 实际生效的设置（含默认值补齐）；回落到内置主题时响应不含此键。
+      additionalProperties: false
+    ThemeConsoleFrontend:
+      type: object
+      required: [api_version]
+      properties:
+        api_version:
+          type: integer
+          const: 1
+          description: 完整控制台前端契约版本，当前只支持 1。
+      additionalProperties: false
+    ThemeConsoleFrontendDescribe:
+      type: object
+      required: [short, name, version, api_version]
+      properties:
+        short:
+          type: string
+        name:
+          $ref: "#/components/schemas/ThemeLocalized"
+        version:
+          type: [string, "null"]
+        api_version:
+          type: integer
+          const: 1
+      additionalProperties: false
+    ThemeRepositoryResolveRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: 公开 GitHub 仓库首页或发行版链接。
+      additionalProperties: false
+    ThemeRepositoryInstallRequest:
+      type: object
+      required: [url, tag, asset_id]
+      properties:
+        url:
+          type: string
+          format: uri
+        tag:
+          type: string
+          minLength: 1
+          description: 解析响应中的发行版标签。
+        asset_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 解析响应中所选 ZIP 资产的 id。
+      additionalProperties: false
+    ThemeRepositoryRelease:
+      type: object
+      required: [owner, repository, tag, assets]
+      properties:
+        owner:
+          type: string
+        repository:
+          type: string
+        tag:
+          type: string
+        assets:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [id, name, size]
+            properties:
+              id:
+                type: integer
+                format: int64
+              name:
+                type: string
+              size:
+                type: integer
+                format: int64
+            additionalProperties: false
       additionalProperties: false
     ThemeInstallConsoleResult:
       type: object

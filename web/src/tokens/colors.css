@@ -1,0 +1,148 @@
+/* ==========================================================================
+   opsd web3 — 颜色令牌
+   使用 OKLCH 构建：感知亮度均匀，色相在不同明度下稳定
+   ========================================================================== */
+
+/* ---- 中性色阶（hue ≈ 250，冷蓝调灰） ---- */
+:root {
+  --gray-50:  oklch(98.5% 0.002 250);   /* 最亮底，仅用于悬浮层 */
+  --gray-100: oklch(96.5% 0.004 250);   /* 页面背景 */
+  --gray-200: oklch(93.0% 0.005 250);   /* 悬停背景 */
+  --gray-300: oklch(89.0% 0.006 250);   /* 微妙分割线 */
+  --gray-400: oklch(82.0% 0.007 250);   /* 控件边框 */
+  --gray-500: oklch(72.0% 0.009 250);   /* 占位符文字 */
+  --gray-600: oklch(58.0% 0.010 250);   /* muted / 辅助文字 */
+  --gray-700: oklch(44.0% 0.010 250);   /* 次要文字 */
+  --gray-800: oklch(28.0% 0.011 250);   /* 主文字（次） */
+  --gray-900: oklch(16.0% 0.009 250);   /* 主文字（主） */
+}
+
+/* ---- Accent 色阶（蓝色，hue ≈ 235）---- */
+/* L=54% 在白底对比度 ≈ 5.2:1，满足 WCAG AA */
+:root {
+  --accent-50:  oklch(97.0% 0.012 235);  /* 极淡背景 */
+  --accent-100: oklch(95.0% 0.025 235);  /* 轻背景 */
+  --accent-200: oklch(88.0% 0.055 235);  /* 选中态 */
+  --accent-300: oklch(76.0% 0.130 235);  /* 轻强调 */
+  --accent-400: oklch(66.0% 0.170 235);  /* hover */
+  --accent-500: oklch(54.0% 0.200 235);  /* 基准 accent */
+  --accent-600: oklch(44.0% 0.190 235);  /* pressed */
+  --accent-700: oklch(34.0% 0.165 235);  /* 深色文字链接 */
+}
+
+/* ---- 语义色 ---- */
+:root {
+  /* 成功 — 绿色 hue ≈ 155 */
+  --success-50:   oklch(97.0% 0.015 155);
+  --success-100:  oklch(94.0% 0.025 155);
+  --success-500:  oklch(50.0% 0.140 155);
+  --success-600:  oklch(41.0% 0.130 155);
+
+  /* 警告 — 琥珀 hue ≈ 68 */
+  --warning-50:   oklch(97.5% 0.020 68);
+  --warning-100:  oklch(95.0% 0.035 68);
+  --warning-500:  oklch(52.0% 0.130 68);
+  --warning-600:  oklch(43.0% 0.120 68);
+
+  /* 危险 — 红 hue ≈ 22 */
+  --danger-50:    oklch(97.5% 0.015 22);
+  --danger-100:   oklch(95.0% 0.030 22);
+  --danger-500:   oklch(50.0% 0.190 22);
+  --danger-600:   oklch(41.0% 0.175 22);
+}
+
+/* ==========================================================================
+   浅色模式语义角色映射
+   ========================================================================== */
+:root {
+  /* 背景层级 */
+  --color-bg:            var(--gray-100);          /* 页面底色 */
+  --color-surface:       oklch(100% 0 0);           /* 卡片/面板 */
+  --color-raised:        var(--gray-50);            /* 下拉/悬浮层 */
+
+  /* 边框 */
+  --color-border-subtle: var(--gray-300);
+  --color-border:        var(--gray-400);
+
+  /* 文字 */
+  --color-ink:           var(--gray-900);           /* 主文字 */
+  --color-secondary:     var(--gray-700);           /* 次要文字 */
+  --color-muted:         var(--gray-600);           /* 辅助/占位 */
+  --color-placeholder:   var(--gray-500);
+
+  /* Accent */
+  --color-accent:        var(--accent-500);
+  --color-accent-hover:  var(--accent-400);
+  --color-accent-pressed:var(--accent-600);
+  --color-accent-subtle: var(--accent-100);
+  --color-accent-muted:  var(--accent-200);
+  --color-on-accent:     oklch(99% 0.002 250);      /* accent 背景上的文字 */
+
+  /* 语义角色 */
+  --color-positive:      var(--success-500);
+  --color-positive-bg:   var(--success-100);
+  --color-warning:       var(--warning-500);
+  --color-warning-bg:    var(--warning-100);
+  --color-danger:        var(--danger-500);
+  --color-danger-bg:     var(--danger-100);
+  --color-neutral:       var(--gray-600);
+  --color-neutral-bg:    var(--gray-200);
+
+  /* 特殊 */
+  --color-overlay:       oklch(16% 0.009 250 / 0.50);
+  --color-terminal-bg:   oklch(11% 0.008 240);
+  --color-terminal-fg:   oklch(88% 0.005 240);
+  --color-code-bg:       var(--gray-200);
+
+  /* 交互状态 */
+  --color-hover-bg:      var(--gray-200);
+  --color-selected-bg:   var(--accent-100);
+  --color-selected-text: var(--accent-700);
+}
+
+/* ==========================================================================
+   暗色模式语义角色映射
+   ========================================================================== */
+:root[data-theme="dark"] {
+  /* 背景层级 */
+  --color-bg:            oklch(13.0% 0.009 250);   /* #151a22 */
+  --color-surface:       oklch(17.5% 0.011 250);   /* #1d2330 */
+  --color-raised:        oklch(22.0% 0.011 250);   /* #252d3a */
+
+  /* 边框 */
+  --color-border-subtle: oklch(27.0% 0.010 250);
+  --color-border:        oklch(35.0% 0.010 250);
+
+  /* 文字 */
+  --color-ink:           oklch(88.0% 0.005 250);
+  --color-secondary:     oklch(68.0% 0.008 250);
+  --color-muted:         oklch(55.0% 0.009 250);
+  --color-placeholder:   oklch(45.0% 0.009 250);
+
+  /* Accent — 暗底降 chroma 防刺眼，提高 L 保可见 */
+  --color-accent:        oklch(66.0% 0.160 235);
+  --color-accent-hover:  oklch(72.0% 0.150 235);
+  --color-accent-pressed:oklch(60.0% 0.165 235);
+  --color-accent-subtle: oklch(22.0% 0.050 235);
+  --color-accent-muted:  oklch(28.0% 0.065 235);
+  --color-on-accent:     oklch(13.0% 0.009 250);
+
+  /* 语义角色 */
+  --color-positive:      oklch(68.0% 0.130 155);
+  --color-positive-bg:   oklch(20.0% 0.040 155);
+  --color-warning:       oklch(72.0% 0.120 68);
+  --color-warning-bg:    oklch(20.0% 0.038 68);
+  --color-danger:        oklch(68.0% 0.165 22);
+  --color-danger-bg:     oklch(20.0% 0.048 22);
+  --color-neutral:       oklch(55.0% 0.009 250);
+  --color-neutral-bg:    oklch(22.0% 0.011 250);
+
+  /* 特殊 */
+  --color-overlay:       oklch(0% 0 0 / 0.65);
+  --color-code-bg:       oklch(22.0% 0.011 250);
+
+  /* 交互状态 */
+  --color-hover-bg:      oklch(23.0% 0.011 250);
+  --color-selected-bg:   oklch(22.0% 0.050 235);
+  --color-selected-text: oklch(72.0% 0.150 235);
+}

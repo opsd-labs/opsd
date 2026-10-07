@@ -2,13 +2,12 @@
 /.data/
 /web/node_modules/
 /web/dist/
-/web2/node_modules/
-/web2/dist/
-/web2/*.tsbuildinfo
 /test-results/
 /playwright-report/
 /web/test-results/
 /web/playwright-report/
 /web/*.tsbuildinfo
+/themes/
+/tools/node_modules/
 *.pem
 .env

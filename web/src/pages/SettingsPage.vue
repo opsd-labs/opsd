@@ -1,109 +1,124 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { useWorkspace } from "../workspace";
-import { api, basePath } from "../api";
-import Field from "../components/resources/Field.vue";
-import Select from "../components/ui/Select.vue";
-import Button from "../components/ui/Button.vue";
-import Input from "../components/ui/Input.vue";
-import Notice from "../components/ui/Notice.vue";
-import Status from "../components/ui/Status.vue";
-import ShareSettings from "../components/settings/ShareSettings.vue";
-import ThemeSettings from "../components/settings/ThemeSettings.vue";
-import AuditSettings from "../components/settings/AuditSettings.vue";
-const w = useWorkspace();
-const current = ref(basePath().replace(/^\//, ""));
-const draft = ref("");
-const error = ref("");
-const notice = ref("");
-const busy = ref(false);
-const valid = computed(() => draft.value.length === 16 && draft.value !== current.value);
-/** 入口是路径第一段；这里只展示地址形状，不泄露到日志或错误信息。 */
-const url = computed(
-  () => `${location.origin}/${current.value}/`,
-);
-async function save() {
-  busy.value = true;
-  error.value = "";
-  notice.value = "";
-  try {
-    if (w.demo) {
-      notice.value = "演示模式：未提交设置变更";
-      return;
-    }
-    const result = await api("/settings/entrance", "PUT", { value: draft.value });
-    if (result.changed) {
-      notice.value = `安全入口已更新；旧地址立即失效，60 秒宽限后需重新登录。新地址：${location.origin}/${result.value}/`;
-      // 宽限期结束后再跳转，让当前会话平滑过渡。
-      setTimeout(() => {
-        location.href = `/${result.value}/`;
-      }, 60000);
-    } else notice.value = "安全入口未变化";
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
-}
-onMounted(async () => {
-  if (w.demo) return;
-  try {
-    const result = await api("/settings/entrance");
-    current.value = result.value;
-    draft.value = result.value;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  }
-});
+/**
+ * SettingsPage — 设置页
+ * 安全入口 / 主题 / 分享令牌 / API Key / 审计日志
+ */
+import { ref } from 'vue'
+import { useTheme } from '../composables/useTheme'
+
+type SettingsTab = 'general' | 'share' | 'audit'
+
+const tabs: { key: SettingsTab; label: string }[] = [
+  { key: 'general', label: '通用' },
+  { key: 'share',   label: '分享' },
+  { key: 'audit',   label: '审计日志' },
+]
+
+const active = ref<SettingsTab>('general')
+const { preference, setTheme } = useTheme()
 </script>
+
 <template>
-  <section class="settings-section">
-    <h2>外观</h2>
-    <Field label="主题"
-      ><Select
-        v-model="w.theme"
-        :options="[
-          { value: 'system', label: '跟随系统' },
-          { value: 'light', label: '亮色' },
-          { value: 'dark', label: '柔和深色' },
-        ]"
-    /></Field>
-    <p class="muted">中性底 + 局部靛蓝 · 13px 正文 · 36px 表格行高</p>
-  </section>
-  <section class="settings-section">
-    <h2>安全入口</h2>
-    <Field label="当前地址"
-      ><span class="mono">{{ url }}</span></Field
-    >
-    <Field label="访问规则">
-      <Status tone="neutral" mark="blocked">仅入口路径可访问</Status>
-      <span class="muted"
-        >不带安全入口的请求会被直接丢弃，不返回任何响应。</span
+  <div class="settings-page">
+    <!-- Tab 导航 -->
+    <div class="settings-tabs" role="tablist">
+      <button
+        v-for="t in tabs"
+        :key="t.key"
+        class="settings-tab"
+        :class="{ 'settings-tab--active': active === t.key }"
+        role="tab"
+        :aria-selected="active === t.key"
+        @click="active = t.key"
       >
-    </Field>
-    <Field label="修改入口">
-      <Input
-        v-model="draft"
-        :maxlength="16"
-        aria-label="新的安全入口"
-        placeholder="16 位字母、数字与 - . _ ~"
-      /><Button :disabled="!valid || busy" @click="save">应用新入口</Button>
-    </Field>
-    <Notice v-if="error" tone="danger">{{ error }}</Notice>
-    <Notice v-if="notice">{{ notice }}</Notice>
-    <p class="muted">
-      安全入口不是认证，只是降低被扫描到的概率。会话 Cookie、CSRF 与来源校验仍然生效。
-      修改后旧地址立即失效，当前会话有 60 秒宽限；请务必保存新地址，否则将无法再进入控制台。
-    </p>
-  </section>
-  <ThemeSettings />
-  <AuditSettings />
-  <ShareSettings />
-  <section class="settings-section">
-    <h2>备份与恢复</h2>
-    <p>通过主控 CLI 创建一致性备份。恢复前停止原主控，使用全新控制库。</p>
-    <p class="muted">
-      备份包含控制记录、CA 和身份密钥；部署配置需一同保存。安全入口、分享令牌与 API Key 随控制记录一起备份。
-    </p>
-  </section>
+        {{ t.label }}
+      </button>
+    </div>
+
+    <!-- 通用设置 -->
+    <div v-if="active === 'general'" class="settings-section">
+      <div class="settings-group">
+        <h3 class="settings-group__title">外观</h3>
+        <div class="settings-row">
+          <span class="settings-row__label">主题</span>
+          <div class="theme-options">
+            <button
+              v-for="opt in (['light', 'dark', 'system'] as const)"
+              :key="opt"
+              class="theme-btn"
+              :class="{ 'theme-btn--active': preference === opt }"
+              @click="setTheme(opt)"
+            >
+              {{ opt === 'light' ? '浅色' : opt === 'dark' ? '深色' : '跟随系统' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <h3 class="settings-group__title">安全入口</h3>
+        <p class="settings-group__desc">安全入口是所有管理接口的路径前缀，变更后当前会话失效。</p>
+        <div class="settings-placeholder">安全入口管理（实现中）</div>
+      </div>
+    </div>
+
+    <!-- 分享 -->
+    <div v-else-if="active === 'share'" class="settings-section">
+      <div class="settings-placeholder">分享令牌 / API Key 管理（实现中）</div>
+    </div>
+
+    <!-- 审计日志 -->
+    <div v-else-if="active === 'audit'" class="settings-section">
+      <div class="settings-placeholder">审计日志（实现中）</div>
+    </div>
+  </div>
 </template>
+
+<style scoped>
+.settings-page { display: flex; flex-direction: column; gap: var(--sp-5); max-width: var(--narrow-max); }
+
+.settings-tabs {
+  display: flex; gap: 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.settings-tab {
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--text-sm); font-weight: var(--weight-medium);
+  color: var(--color-muted); background: transparent;
+  border: none; border-bottom: 2px solid transparent;
+  cursor: pointer; margin-bottom: -1px;
+  transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+.settings-tab:hover { color: var(--color-ink); }
+.settings-tab--active { color: var(--color-accent); border-bottom-color: var(--color-accent); }
+.settings-tab:focus-visible { outline: none; box-shadow: var(--shadow-focus); border-radius: var(--radius-sm); }
+
+.settings-section { display: flex; flex-direction: column; gap: var(--sp-6); }
+
+.settings-group { display: flex; flex-direction: column; gap: var(--sp-3); }
+.settings-group__title { font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--color-ink); }
+.settings-group__desc { font-size: var(--text-sm); color: var(--color-muted); }
+
+.settings-row {
+  display: flex; align-items: center;
+  justify-content: space-between; gap: var(--sp-4);
+}
+.settings-row__label { font-size: var(--text-sm); color: var(--color-secondary); }
+
+.theme-options { display: flex; gap: var(--sp-1); }
+.theme-btn {
+  padding: var(--sp-1) var(--sp-3); font-size: var(--text-sm);
+  background: var(--color-surface); color: var(--color-secondary);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--duration-fast), color var(--duration-fast), border-color var(--duration-fast);
+}
+.theme-btn:hover { background: var(--color-hover-bg); color: var(--color-ink); }
+.theme-btn--active {
+  background: var(--color-accent-subtle); color: var(--color-accent);
+  border-color: var(--color-accent-muted);
+}
+.theme-btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+.settings-placeholder { color: var(--color-muted); font-size: var(--text-sm); padding: var(--sp-6); text-align: center; }
+</style>

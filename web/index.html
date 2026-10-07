@@ -1,2 +1,21 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="theme-color" content="#161a20"><title>opsd · 节点控制台</title><script>try{const t=localStorage.getItem('opsd.theme')||'system';document.documentElement.dataset.theme=t==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t}catch{}</script></head><body><div id="app"></div><script type="module" src="/src/main.ts"></script></body></html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>opsd</title>
+    <!-- 在 CSS 加载前设置主题，防止暗色模式闪烁 -->
+    <script>
+      ;(function () {
+        const saved = localStorage.getItem('opsd3.theme')
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+        const theme = saved === 'light' || saved === 'dark' ? saved : prefersDark ? 'dark' : 'light'
+        document.documentElement.setAttribute('data-theme', theme)
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

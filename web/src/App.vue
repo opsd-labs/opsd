@@ -1,40 +1,63 @@
 <script setup lang="ts">
-import { defineAsyncComponent, provide } from "vue";
-import { createWorkspace, workspaceKey } from "./workspace";
-import AppShell from "./components/AppShell.vue";
-import OperationDrawer from "./components/OperationDrawer.vue";
-const TerminalDock = defineAsyncComponent(
-  () => import("./components/TerminalDock.vue"),
-);
-import TaskPanel from "./components/TaskPanel.vue";
-import LoginPage from "./pages/LoginPage.vue";
-import ConsolePage from "./pages/ConsolePage.vue";
-import NodesPage from "./pages/NodesPage.vue";
-import DatabasePage from "./pages/DatabasePage.vue";
-import DockerPage from "./pages/DockerPage.vue";
-import FirewallPage from "./pages/FirewallPage.vue";
-import StoragePage from "./pages/StoragePage.vue";
-import SettingsPage from "./pages/SettingsPage.vue";
-const w = createWorkspace();
-provide(workspaceKey, w);
-const showcase =
-  import.meta.env.DEV && new URLSearchParams(location.search).has("components");
-const Showcase = import.meta.env.DEV
-  ? defineAsyncComponent(() => import("./pages/ComponentShowcase.vue"))
-  : null;
+import { onMounted, computed } from 'vue'
+import { workspace } from './state/workspace'
+import ToastProvider from './components/toast/ToastProvider.vue'
+import LoginPage from './pages/LoginPage.vue'
+import AppShell from './components/layout/AppShell.vue'
+
+onMounted(() => {
+  workspace.init()
+})
+
+const isLoggedIn = computed(() => workspace.state.session !== null)
+const isLoading = computed(() => workspace.state.loading)
 </script>
+
 <template>
-  <div v-if="w.loading" class="loading" role="status">正在连接控制台…</div>
-  <LoginPage v-else-if="!w.authenticated" />
-  <template v-else
-    ><AppShell
-      ><component :is="Showcase" v-if="showcase" /><ConsolePage
-        v-else-if="w.page === 'console'" /><NodesPage
-        v-else-if="w.page === 'nodes'" /><DatabasePage
-        v-else-if="w.page === 'database'" /><DockerPage
-        v-else-if="w.page === 'docker'" /><FirewallPage
-        v-else-if="w.page === 'firewall'" /><StoragePage
-        v-else-if="w.page === 'storage'" /><SettingsPage v-else /></AppShell
-    ><OperationDrawer /><TaskPanel /><TerminalDock v-if="w.sessions.length"
-  /></template>
+  <ToastProvider>
+    <!-- 初始连接中 -->
+    <div v-if="isLoading" class="app-loading" role="status" aria-label="正在连接控制台">
+      <div class="app-loading__spinner" aria-hidden="true"></div>
+      <span class="app-loading__text">正在连接…</span>
+    </div>
+
+    <!-- 未登录 -->
+    <LoginPage v-else-if="!isLoggedIn" />
+
+    <!-- 主界面 -->
+    <AppShell v-else />
+  </ToastProvider>
 </template>
+
+<style scoped>
+.app-loading {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  gap: var(--sp-3);
+  background: var(--color-bg);
+}
+
+/* 内部 grid 无法直接用 flex-direction，用嵌套 flex */
+.app-loading {
+  place-items: center;
+}
+
+.app-loading__spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: var(--radius-full);
+  animation: spin 600ms linear infinite;
+}
+
+.app-loading__text {
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+</style>

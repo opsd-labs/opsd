@@ -1,0 +1,41 @@
+/* ==========================================================================
+   opsd web3 — 字体与排版令牌
+   Inter 的 tabular numerals 对运维数字数据非常友好
+   ========================================================================== */
+
+:root {
+  /* ---- 字体栈 ---- */
+  --font-sans:  'Inter var', 'Inter', -apple-system, 'Segoe UI', system-ui, sans-serif;
+  --font-mono:  'JetBrains Mono', 'Cascadia Code', 'Cascadia Mono', Consolas,
+                'Courier New', monospace;
+
+  /* ---- 字号比例尺 ---- */
+  --text-2xs:  10px;  /* 极小标注、角标 */
+  --text-xs:   11px;  /* badge、tag、状态标签 */
+  --text-sm:   12px;  /* 表格内容、辅助文字、代码 */
+  --text-base: 13px;  /* body 默认（密集管理 UI 用 13，不用 14） */
+  --text-md:   14px;  /* 适当突出的正文、表单 label */
+  --text-lg:   16px;  /* 节标题、抽屉标题 */
+  --text-xl:   20px;  /* 页面大标题 */
+  --text-2xl:  24px;  /* 登录品牌字 */
+  --text-3xl:  32px;  /* 仅登录装饰用 */
+  --text-4xl:  40px;  /* 极大数字展示 */
+
+  /* ---- 行高 ---- */
+  --leading-tight:   1.25;  /* 大标题 */
+  --leading-snug:    1.375; /* 标题 */
+  --leading-normal:  1.5;   /* 正文 */
+  --leading-relaxed: 1.625; /* 长文本阅读 */
+
+  /* ---- 字重 ---- */
+  --weight-normal:   400;
+  --weight-medium:   500;   /* label、强调 */
+  --weight-semibold: 600;   /* 标题 */
+  --weight-bold:     700;   /* 品牌字、数字大标 */
+
+  /* ---- 字间距 ---- */
+  --tracking-tight:  -0.025em;
+  --tracking-normal:  0em;
+  --tracking-wide:    0.025em;
+  --tracking-wider:   0.05em;  /* 全大写标签 */
+}

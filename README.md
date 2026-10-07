@@ -8,7 +8,7 @@ opsd 是一个用于管理多台 Linux 服务器的主控系统。它由三个�
 
 Hub 不挂载 Docker socket。需要访问节点 Docker、主机或本地运维工具时，由节点侧 Agent 在本机执行并返回结构化结果。
 
-> **当前状态**：opsd 仍处于开发和首版验收阶段。默认构建不会执行防火墙写入；`experimental-firewall` 仅用于隔离实验室。生产节点接管、真实数据库集群回归和独立 Linux 内核下的防火墙验收尚未完成，不能把当前版本视为完整生产就绪版本。
+> **当前状态**：opsd 仍处于开发和首版验收阶段。默认构建不会执行防火墙写入；`experimental-firewall` 仅用于隔离实验室。生产节点接管、真实数据库集群回归和独立 Linux 内核下的防火墙验收尚未完成，不能把当前版本视为完整生产就绪版本。内置控制台已迁为原 web3，其契约适配和占位业务仍待完成，详见 [配合说明](docs/console-themes.md)。
 
 ## 快速入口
 
@@ -20,6 +20,7 @@ Hub 不挂载 Docker socket。需要访问节点 Docker、主机或本地运维�
 | 理解系统边界 | [架构说明](docs/architecture.md) |
 | 日常运维 | [运维手册](docs/operations.md) |
 | API 契约和类型生成 | [API 说明](docs/api.md) |
+| 独立控制台主题与前端配合 | [控制台主题](docs/console-themes.md) |
 | 安全模型 | [安全说明](docs/security.md) |
 | 当前完成度 | [状态矩阵](docs/status.md) |
 | 排查常见问题 | [故障排查](docs/troubleshooting.md) |
@@ -52,7 +53,9 @@ Hub 不挂载 Docker socket。需要访问节点 Docker、主机或本地运维�
 
 ```text
 src/                 Rust Hub 与 Agent
-web/                 Vue 3 控制台和前端契约工具
+web/                 唯一内置控制台（原 web3）及独立分享入口
+tools/               前端契约生成与检查工具
+themes/              本机独立主题仓库，主仓库与镜像忽略
 docs/api/openapi.yaml
                      HTTP 契约源文件
 compose.yml          标准 Docker Compose 部署

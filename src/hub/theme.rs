@@ -1,20 +1,13 @@
 //! 主题系统。
 //!
-//! 两条主题线的粒度**刻意不同**，这不是实现偷懒，而是风险差异决定的：
-//!
-//! | | 控制台主题 | 分享页主题 |
-//! |---|---|---|
-//! | 粒度 | **令牌级**：颜色、圆角、密度、字体、明暗 | **包级**：完整前端包 |
-//! | 替换范围 | 不替换组件结构 | 替换整个分享页前端 |
-//! | 理由 | 含终端/任务/表单/键盘交互，结构替换风险过高 | 纯只读展示，隔离后可自由替换 |
-//!
-//! 参考项目 Komari 也明确约定主题不替换 `/admin` 与 `/terminal`，只替换公开监控面。
+//! 控制台完整前端、控制台样式覆盖、分享页主题分别选择。
+//! 完整控制台主题与内置前端使用相同的认证与 API，安装意味着信任其管理员侧代码。
 //!
 //! 安全边界：
 //!
 //! - 首版只支持 `configuration.type = "managed"`；**`raw` 不做**——它允许主题在管理区
 //!   渲染自带 HTML，等于在控制台里执行第三方代码。
-//! - 主题包使用 SHA-256 校验，仅支持本地上传安装，**不接在线市场、不自动远程拉取**。
+//! - 主题包沿用内容摘要与解包限制；完整控制台支持上传或公开 GitHub 发行版安装。
 //! - 分享页主题运行在 `/share/{令牌}/` 之下，与控制台**不同路径**，
 //!   控制台会话 Cookie 的 Path 限定在安全入口之下，因此主题拿不到它。
 //! - 分享页主题的响应带独立 CSP，默认禁止外联。
@@ -27,11 +20,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod repository;
+pub use repository::{install_repository, resolve_repository};
+
 pub const BUCKET: &str = "themes";
-/// 当前启用的主题：`settings` 桶中的两条记录。
+/// 当前启用的主题分别保存在 `settings` 桶中。
 pub const SETTINGS_BUCKET: &str = "settings";
 pub const CONSOLE_ID: &str = "theme_console";
+pub const CONSOLE_FRONTEND_ID: &str = "theme_console_frontend";
 pub const SHARE_ID: &str = "theme_share";
+pub const CONSOLE_API_VERSION: u32 = 1;
 /// 内置主题的 `short`，不可删除。
 pub const DEFAULT: &str = "default";
 /// 单个主题包的体积上限。
@@ -101,6 +99,13 @@ pub struct Tokens {
     pub dark: HashMap<String, String>,
 }
 
+/// 完整控制台前端使用的正式 API 版本。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsoleFrontend {
+    pub api_version: u32,
+}
+
 /// 托管配置项的声明。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Field {
@@ -151,6 +156,9 @@ pub struct Manifest {
     /// 仅控制台主题使用：说明该主题替代了哪些令牌，便于界面提示。
     #[serde(default)]
     pub configuration: Option<Configuration>,
+    /// 存在时表示完整控制台前端；旧清单仍表示样式覆盖或分享页主题。
+    #[serde(default)]
+    pub console_frontend: Option<ConsoleFrontend>,
 }
 
 /// 已安装主题的索引记录。清单与资源分开存放。
@@ -168,6 +176,7 @@ pub struct Installed {
 pub fn validate(manifest: &Manifest) -> Result<()> {
     let short = manifest.short.trim();
     anyhow::ensure!(!short.is_empty(), "主题标识不能为空");
+    anyhow::ensure!(short == manifest.short, "主题标识不能包含首尾空白");
     anyhow::ensure!(short.len() <= 48, "主题标识过长（不超过 48 个字符）");
     anyhow::ensure!(
         short
@@ -185,9 +194,24 @@ pub fn validate(manifest: &Manifest) -> Result<()> {
             .surfaces
             .iter()
             .any(|s| matches!(s, Surface::Console))
-            || manifest.tokens.is_some(),
+            || manifest.tokens.is_some()
+            || manifest.console_frontend.is_some(),
         "控制台主题必须提供 tokens，否则不会产生任何效果"
     );
+    if let Some(frontend) = &manifest.console_frontend {
+        anyhow::ensure!(
+            manifest.surfaces == [Surface::Console],
+            "完整控制台前端只能声明 console 界面"
+        );
+        anyhow::ensure!(
+            frontend.api_version == CONSOLE_API_VERSION,
+            "不支持的控制台 API 版本"
+        );
+        anyhow::ensure!(
+            manifest.tokens.is_none() && manifest.configuration.is_none(),
+            "完整控制台前端不能同时声明样式覆盖或托管配置"
+        );
+    }
     if let Some(tokens) = &manifest.tokens {
         for (mode, values) in [("light", &tokens.light), ("dark", &tokens.dark)] {
             for (key, value) in values {
@@ -318,6 +342,16 @@ pub async fn install_console(db: &Store, manifest: Manifest, digest: String) -> 
         manifest.surfaces.contains(&Surface::Console),
         "该主题未声明支持控制台"
     );
+    anyhow::ensure!(
+        manifest.console_frontend.is_none(),
+        "完整控制台前端必须以主题包安装"
+    );
+    if let Some(previous) = db.get::<Installed>(BUCKET, &manifest.short).await? {
+        anyhow::ensure!(
+            previous.manifest.console_frontend.is_none(),
+            "该标识已用于完整控制台前端"
+        );
+    }
     let installed = Installed {
         manifest,
         digest,
@@ -368,6 +402,12 @@ pub async fn install_share(
         }
     };
     let destination = asset_dir(data, &manifest.short);
+    if let Some(previous) = db.get::<Installed>(BUCKET, &manifest.short).await? {
+        if previous.manifest.console_frontend.is_some() {
+            let _ = std::fs::remove_dir_all(&staging);
+            anyhow::bail!("该标识已用于完整控制台前端");
+        }
+    }
     let _ = std::fs::remove_dir_all(&destination);
     std::fs::rename(&staging, &destination).context("主题资源就位失败")?;
     let installed = Installed {
@@ -423,6 +463,255 @@ pub async fn active(db: &Store, id: &str) -> Result<Option<(Installed, Settings)
     Ok(Some((installed, settings)))
 }
 
+/// 只选择可用的完整前端；卸载或丢失入口文件时使用内置前端。
+async fn active_frontend(s: &State) -> Result<Option<Installed>> {
+    let Some((installed, _)) = active(&s.db, CONSOLE_FRONTEND_ID).await? else {
+        return Ok(None);
+    };
+    if installed.manifest.console_frontend.is_none()
+        || !installed.has_assets
+        || validate(&installed.manifest).is_err()
+        || !asset_dir(&s.dir, &installed.manifest.short)
+            .join("index.html")
+            .is_file()
+    {
+        return Ok(None);
+    }
+    Ok(Some(installed))
+}
+
+fn describe_frontend(frontend: Option<Installed>) -> serde_json::Value {
+    match frontend {
+        Some(installed) => serde_json::json!({
+            "short": installed.manifest.short,
+            "name": installed.manifest.name,
+            "version": installed.manifest.version,
+            "api_version": CONSOLE_API_VERSION,
+        }),
+        None => serde_json::json!({
+            "short": DEFAULT,
+            "name": { "zh-CN": "内置前端" },
+            "version": env!("CARGO_PKG_VERSION"),
+            "api_version": CONSOLE_API_VERSION,
+        }),
+    }
+}
+
+/// 完整前端包只新增安装，不覆盖既有记录或目录。
+async fn install_frontend_package(s: &State, body: Bytes) -> ApiResult<Installed> {
+    check(!body.is_empty(), "请求体为空")?;
+    check(body.len() <= MAX_PACKAGE_BYTES, "主题包超过 20 MiB 上限")?;
+    let digest = opsd::protocol::digest(&body);
+    let data = s.dir.clone();
+    let (staging, manifest) = tokio::task::spawn_blocking(move || {
+        let staging = data
+            .join("themes")
+            .join(format!(".staging-{}", opsd::protocol::id()));
+        let prepared = (|| -> Result<Manifest> {
+            extract(&body, &staging)?;
+            let manifest = read_manifest(&staging)?;
+            validate(&manifest)?;
+            anyhow::ensure!(
+                manifest.console_frontend.is_some(),
+                "主题包必须声明 console_frontend"
+            );
+            let html = std::fs::read_to_string(staging.join("index.html"))
+                .context("控制台主题包根目录必须包含 UTF-8 index.html")?;
+            anyhow::ensure!(
+                html.to_ascii_lowercase().contains("<head>"),
+                "控制台主题入口必须包含 head 标签"
+            );
+            Ok(manifest)
+        })();
+        match prepared {
+            Ok(manifest) => Ok((staging, manifest)),
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(staging);
+                Err(error)
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "主题包解压任务中断".into(),
+        )
+    })??;
+    let _lock = s.gate.lock().await;
+    let destination = asset_dir(&s.dir, &manifest.short);
+    let result = async {
+        if s.db
+            .get::<Installed>(BUCKET, &manifest.short)
+            .await?
+            .is_some()
+            || destination.exists()
+        {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "主题标识已安装，请先卸载原主题".into(),
+            ));
+        }
+        std::fs::rename(&staging, &destination).context("主题资源就位失败")?;
+        let installed = Installed {
+            manifest,
+            digest,
+            installed_at: now(),
+            has_assets: true,
+        };
+        if let Err(error) =
+            s.db.put(BUCKET, &installed.manifest.short, &installed)
+                .await
+        {
+            let _ = std::fs::remove_dir_all(&destination);
+            return Err(error.into());
+        }
+        Ok(installed)
+    }
+    .await;
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(staging);
+    }
+    result
+}
+
+pub async fn install_console_package(
+    S(s): S<State>,
+    body: Bytes,
+) -> ApiResult<Json<serde_json::Value>> {
+    let installed = install_frontend_package(&s, body).await?;
+    Ok(Json(
+        serde_json::json!({ "short": installed.manifest.short, "digest": installed.digest }),
+    ))
+}
+
+async fn frontend_directory(s: &State, short: &str) -> ApiResult<PathBuf> {
+    if short == DEFAULT {
+        return Ok(s.web.clone());
+    }
+    let installed =
+        s.db.get::<Installed>(BUCKET, short)
+            .await?
+            .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "控制台主题未安装".into()))?;
+    if installed.manifest.console_frontend.is_none()
+        || !installed.has_assets
+        || validate(&installed.manifest).is_err()
+    {
+        return Err(ApiError(
+            StatusCode::NOT_FOUND,
+            "该主题没有控制台前端资源".into(),
+        ));
+    }
+    Ok(asset_dir(&s.dir, short))
+}
+
+async fn frontend_html(s: &State, short: &str) -> ApiResult<Response> {
+    let directory = frontend_directory(s, short).await?;
+    let html = tokio::fs::read_to_string(directory.join("index.html"))
+        .await
+        .map_err(|_| ApiError(StatusCode::NOT_FOUND, "控制台前端尚未构建".into()))?;
+    let position = html
+        .to_ascii_lowercase()
+        .find("<head>")
+        .ok_or_else(|| bad("控制台主题入口必须包含 head 标签"))?
+        + "<head>".len();
+    let entrance = s
+        .entrance
+        .read()
+        .map_err(|_| bad("安全入口读取失败"))?
+        .clone();
+    let mut html = html;
+    html.insert_str(
+        position,
+        &format!("<base href=\"/{entrance}/frontend/{short}/\">"),
+    );
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        html,
+    )
+        .into_response())
+}
+
+/// 全局选择在登录前生效，页面本身不放行任何受保护的 API。
+pub async fn console_index(S(s): S<State>) -> Response {
+    let frontend = match active_frontend(&s).await {
+        Ok(frontend) => frontend,
+        Err(error) => return ApiError::from(error).into_response(),
+    };
+    if let Some(frontend) = frontend {
+        if let Ok(response) = frontend_html(&s, &frontend.manifest.short).await {
+            return response;
+        }
+    }
+    match frontend_html(&s, DEFAULT).await {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
+    }
+}
+
+/// 固定入口也用于故障恢复；访问它不会修改 Hub 的全局选择。
+pub async fn console_frontend_index(S(s): S<State>, AxumPath(short): AxumPath<String>) -> Response {
+    match frontend_html(&s, &short).await {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
+    }
+}
+
+pub async fn console_frontend_asset(
+    S(s): S<State>,
+    AxumPath((short, path)): AxumPath<(String, String)>,
+) -> Response {
+    if path.contains('\\')
+        || !std::path::Path::new(&path)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return (StatusCode::NOT_FOUND, "").into_response();
+    }
+    let directory = match frontend_directory(&s, &short).await {
+        Ok(directory) => directory,
+        Err(error) => return error.into_response(),
+    };
+    let Ok(root) = tokio::fs::canonicalize(directory).await else {
+        return (StatusCode::NOT_FOUND, "").into_response();
+    };
+    let Ok(target) = tokio::fs::canonicalize(root.join(&path)).await else {
+        return (StatusCode::NOT_FOUND, "").into_response();
+    };
+    if !target.starts_with(&root) {
+        return (StatusCode::NOT_FOUND, "").into_response();
+    }
+    let Ok(bytes) = tokio::fs::read(&target).await else {
+        return (StatusCode::NOT_FOUND, "").into_response();
+    };
+    let mime = match target.extension().and_then(|ext| ext.to_str()) {
+        Some("js") | Some("mjs") => "text/javascript",
+        Some("css") => "text/css",
+        Some("html") => "text/html; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("ico") => "image/x-icon",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        Some("wasm") => "application/wasm",
+        _ => "application/octet-stream",
+    };
+    (
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
 /// 分享页主题的 CSP：默认禁止外联，只放行自身资源与内联样式。
 ///
 /// 主题不得引用控制台接口，因此 `connect-src` 只允许同源。
@@ -464,6 +753,8 @@ pub async fn list_themes(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
                 "version": installed.manifest.version,
                 "author": installed.manifest.author,
                 "surfaces": installed.manifest.surfaces,
+                "console_mode": if installed.manifest.console_frontend.is_some() { Some("frontend") }
+                    else if installed.manifest.surfaces.contains(&Surface::Console) { Some("tokens") } else { None },
                 "has_assets": installed.has_assets,
                 "installed_at": installed.installed_at,
                 "digest": installed.digest,
@@ -483,9 +774,11 @@ pub async fn list_themes(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
 pub async fn read_active(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
     let console = active(&s.db, CONSOLE_ID).await?;
     let share = active(&s.db, SHARE_ID).await?;
+    let frontend = active_frontend(&s).await?;
     Ok(Json(serde_json::json!({
         "console": describe(console),
         "share": describe(share),
+        "console_frontend": describe_frontend(frontend),
     })))
 }
 
@@ -596,6 +889,7 @@ impl From<ThemeManifestInput> for Manifest {
                     })
                     .collect(),
             }),
+            console_frontend: None,
         }
     }
 }
@@ -605,6 +899,7 @@ pub async fn install_console_theme(
     S(s): S<State>,
     Json(input): Json<ThemeManifestInput>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let _lock = s.gate.lock().await;
     let manifest: Manifest = input.into();
     let digest =
         opsd::protocol::digest(serde_json::to_vec(&manifest).map_err(anyhow::Error::from)?);
@@ -619,6 +914,7 @@ pub async fn install_share_theme(
     S(s): S<State>,
     body: Bytes,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let _lock = s.gate.lock().await;
     check(!body.is_empty(), "请求体为空")?;
     // 摘要由主控自己计算，不信任调用方提供的任何校验值
     let digest = opsd::protocol::digest(&body);
@@ -633,9 +929,10 @@ pub async fn remove_theme(
     S(s): S<State>,
     AxumPath(short): AxumPath<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let _lock = s.gate.lock().await;
     remove(&s.db, &s.dir, &short).await?;
     // 删掉的正好是启用中的主题时，回落到内置
-    for id in [CONSOLE_ID, SHARE_ID] {
+    for id in [CONSOLE_ID, CONSOLE_FRONTEND_ID, SHARE_ID] {
         if s.db.get::<String>(SETTINGS_BUCKET, id).await?.as_deref() == Some(short.as_str()) {
             s.db.delete(SETTINGS_BUCKET, id).await?;
         }
@@ -646,7 +943,7 @@ pub async fn remove_theme(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Activate {
-    /// `console` 或 `share`。
+    /// `console`、`console_frontend` 或 `share`。
     surface: String,
     /// `default` 表示回到内置主题。
     short: String,
@@ -658,11 +955,16 @@ pub async fn activate(
     S(s): S<State>,
     Json(input): Json<Activate>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let _lock = s.gate.lock().await;
     let id = match input.surface.as_str() {
         "console" => CONSOLE_ID,
+        "console_frontend" => CONSOLE_FRONTEND_ID,
         "share" => SHARE_ID,
         other => return Err(bad(&format!("未知界面：{other}"))),
     };
+    if input.surface == "console_frontend" {
+        check(input.settings.is_empty(), "完整控制台前端不接受托管配置")?;
+    }
     if input.short.eq_ignore_ascii_case(DEFAULT) {
         s.db.delete(SETTINGS_BUCKET, id).await?;
         return Ok(Json(serde_json::json!({ "short": DEFAULT })));
@@ -671,6 +973,22 @@ pub async fn activate(
         s.db.get::<Installed>(BUCKET, &input.short)
             .await?
             .ok_or_else(|| bad("主题未安装"))?;
+    if input.surface == "console_frontend" {
+        check(
+            installed.manifest.console_frontend.is_some() && installed.has_assets,
+            "该主题不是完整控制台前端",
+        )?;
+        check(
+            asset_dir(&s.dir, &input.short).join("index.html").is_file(),
+            "控制台主题入口文件不存在",
+        )?;
+        s.db.put(SETTINGS_BUCKET, id, &input.short).await?;
+        return Ok(Json(serde_json::json!({ "short": input.short })));
+    }
+    check(
+        installed.manifest.console_frontend.is_none(),
+        "完整控制台前端应通过 console_frontend 选择",
+    )?;
     // 主题必须声明覆盖该界面，否则选了也不会有任何效果
     let surface = if input.surface == "console" {
         Surface::Console
@@ -818,6 +1136,7 @@ mod tests {
                 dark: HashMap::new(),
             }),
             configuration: None,
+            console_frontend: None,
         }
     }
 

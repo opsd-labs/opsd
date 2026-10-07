@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import {mkdir,writeFile,readFile,unlink} from 'node:fs/promises';
 import path from 'node:path';
 import https from 'node:https';
 import http from 'node:http';
@@ -272,6 +272,71 @@ try{
  // 未声明控制台的主题不能被选为控制台主题
  const shareOnly=await request('/themes/console','POST',{short:'shareonly',name:'仅分享',surfaces:['share'],tokens:null});
  assert.equal(shareOnly.status,400,'仅声明分享页的主题不应能安装为控制台主题');
+
+ // 完整控制台前端：安装、启用与样式覆盖分别处理，页面在登录前可用。
+ const frontendManifest={short:'test-console',name:'测试控制台',version:'1.0.0',surfaces:['console'],console_frontend:{api_version:1}};
+ const frontendFiles={
+  'theme.json':JSON.stringify(frontendManifest),
+  'index.html':'<!doctype html><html><head><title>独立控制台</title></head><body><div id="external-console"></div><script src="./assets/app.js"></script></body></html>',
+  'assets/app.js':'document.title="独立控制台";',
+ };
+ const frontendZip=makeZip(frontendFiles);
+ const frontendInstall=await upload(`/${entrance}/api/v1/themes/console/package`,frontendZip);
+ assertHttpResponse(frontendInstall,{status:200,route:'/api/v1/themes/console/package',method:'post',kind:'json',schema:responseSchema('/api/v1/themes/console/package','post',200),contentType:'application/json'});
+ assert.equal((await request('/themes/active')).data.console_frontend.short,'default','安装不应自动启用');
+ assert.equal((await upload(`/${entrance}/api/v1/themes/console/package`,frontendZip)).status,409,'重复标识不得覆盖');
+ assert.equal((await request('/themes/active','PUT',{surface:'console_frontend',short:'indigo-soft'})).status,400,'样式覆盖不得作为完整前端');
+ assert.equal((await request('/themes/active','PUT',{surface:'console',short:'test-console'})).status,400,'完整前端不得作为样式覆盖');
+ assert.equal((await request('/themes/console','POST',frontendManifest)).status,400,'完整前端必须通过包安装');
+ assert.equal((await request('/themes/console','POST',{short:'test-console',name:'覆盖尝试',surfaces:['console'],tokens:{light:{'--accent':'#123456'}}})).status,400,'旧 JSON 安装不能覆盖完整前端');
+ assert.equal((await request('/themes/active','PUT',{surface:'console_frontend',short:'test-console',settings:{unexpected:true}})).status,400,'完整前端不能接收托管配置');
+ assert.equal((await request('/themes/active','PUT',{surface:'console_frontend',short:'test-console'})).status,200);
+ const frontendActive=await request('/themes/active');
+ assertHttpResponse(frontendActive,{status:200,route:'/api/v1/themes/active',method:'get',kind:'json',schema:responseSchema('/api/v1/themes/active','get',200),contentType:'application/json'});
+ assert.equal(frontendActive.data.console.short,'indigo-soft','完整前端切换不能重置样式覆盖');
+ assert.equal(frontendActive.data.share.short,'default','完整前端切换不能影响分享页');
+ const frontends=await request('/themes');
+ assertHttpResponse(frontends,{status:200,route:'/api/v1/themes',method:'get',kind:'json',schema:responseSchema('/api/v1/themes','get',200),contentType:'application/json'});
+ assert.equal(frontends.data.themes.find(t=>t.short==='test-console').console_mode,'frontend');
+ const guestPage=await ungated(`/${entrance}/`);
+ assert.equal(guestPage.status,200);
+ assert.ok(guestPage.data.includes('id="external-console"'),'登录前页面应使用全局选择');
+ assert.ok(guestPage.data.includes(`<base href="/${entrance}/frontend/test-console/">`),'相对资源应指向固定主题目录');
+ assert.equal(guestPage.headers['cache-control'],'no-store');
+ assert.equal((await ungated(`/${entrance}/api/v1/themes/active`)).status,401,'公开页面不应放行管理 API');
+ const recoveryPage=await ungated(`/${entrance}/frontend/default/`);
+ assert.equal(recoveryPage.status,200);
+ assert.ok(recoveryPage.data.includes('id="app"'),'固定内置入口应可用于恢复管理');
+ assert.equal((await request('/themes/active')).data.console_frontend.short,'test-console','恢复入口不应修改全局选择');
+ assert.equal((await ungated(`/${entrance}/frontend/test-console/assets/app.js`)).status,200);
+ assert.equal((await request('/themes/active','PUT',{surface:'console_frontend',short:'default'})).status,200);
+ assert.equal((await ungated(`/${entrance}/frontend/test-console/assets/app.js`)).status,200,'切换后旧页面的资源仍应可读');
+ assert.equal((await ungated(`/${entrance}/frontend/test-console/%2e%2e/%2e%2e/pki/ca-key.pem`)).status,404,'资源不得越出主题目录');
+ assert.equal((await request('/themes/active','PUT',{surface:'console_frontend',short:'test-console'})).status,200);
+ await stop(hub);
+ hub=launch('opsd-hub',serveArgs(hubDir));
+ await wait(async()=> (await health()).status===200,'主题选择持久化后的主控启动');
+ assert.equal((await request('/themes/active')).data.console_frontend.short,'test-console','正常重启应保留主题选择和资源');
+ await wait(async()=> (await request('/nodes')).data?.[0]?.connected,'主题重启场景后 Agent 重连');
+ await unlink(path.join(hubDir,'themes','test-console','index.html'));
+ assert.equal((await request('/themes/active')).data.console_frontend.short,'default','入口丢失时应明确回到内置前端');
+ assert.ok((await ungated(`/${entrance}/`)).data.includes('id="app"'));
+ assert.equal((await request('/themes/test-console','DELETE')).status,200);
+ assert.equal((await request('/themes/active')).data.console_frontend.short,'default','卸载应清理完整前端选择');
+ for(const [short,files] of [
+  ['missing-index',{'theme.json':JSON.stringify({...frontendManifest,short:'missing-index'})}],
+  ['unknown-api', {...frontendFiles,'theme.json':JSON.stringify({...frontendManifest,short:'unknown-api',console_frontend:{api_version:2}})}],
+  ['escaping-frontend', {...frontendFiles,'../escape.txt':'x','theme.json':JSON.stringify({...frontendManifest,short:'escaping-frontend'})}],
+ ]){
+  assert.equal((await upload(`/${entrance}/api/v1/themes/console/package`,makeZip(files))).status,400,`${short} 应拒绝安装`);
+ }
+ // 仓库接口的输入拒绝在访问 GitHub 前完成，测试不依赖公网。
+ for(const route of ['/themes/console/repository/resolve','/themes/console/repository/install']){
+  const input=route.endsWith('/install')?{url:'https://localhost/private',tag:'v1',asset_id:1}:{url:'https://localhost/private'};
+  const rejected=await request(route,'POST',input);
+  assertHttpResponse(rejected,{status:400,route:'/api/v1'+route,method:'post',kind:'json',schema:responseSchema('/api/v1'+route,'post',400),contentType:'application/json'});
+  assert.equal((await request(route,'POST',{...input,nope:true})).status,422,'未知字段不得进入仓库下载流程');
+ }
 
  // 分享页主题：包级，上传 zip
  const themePackage=makeZip({
