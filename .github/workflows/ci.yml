@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       reuse_passed:
-        description: Rust、官方契约及展示函数输入未变时，复用本批已有成功结果
-        type: boolean
-        default: false
+        description: 本批已成功且输入未变的步骤，逗号分隔；留空执行全部检查
+        type: string
+        default: ""
   pull_request:
   push:
     branches: [main, feat/v01-contract-fixes]
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   rust:
     name: Rust
-    if: ${{ !inputs.reuse_passed }}
+    if: ${{ !contains(inputs.reuse_passed, 'rust') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
         working-directory: tools
         run: npm ci
       - name: OpenAPI 与生成类型
-        if: ${{ !inputs.reuse_passed }}
+        if: ${{ !contains(inputs.reuse_passed, 'contract') }}
         working-directory: tools
         run: npm run api
       - name: 检出经典控制台主题
@@ -64,23 +64,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: opsd-labs/opsd-theme-web2
-          ref: eebf241892c6e70ca05b412908e83f3b37cdce42
+          ref: 1029f85aa6a6f1e4d6e760a1803c037c5898c2c3
           path: themes/web2
       - name: 经典主题契约、原有单元测试与打包
         working-directory: themes/web
         run: |
           npm ci
-          if [ "${{ inputs.reuse_passed }}" != "true" ]; then
-            npm run api
-            npm test
-          fi
-          npm run package -- --out releases/web.zip
+          if [ "${{ contains(inputs.reuse_passed, 'classic-api') }}" != "true" ]; then npm run api; fi
+          if [ "${{ contains(inputs.reuse_passed, 'classic-tests') }}" != "true" ]; then npm test; fi
+          if [ "${{ contains(inputs.reuse_passed, 'classic-package') }}" != "true" ]; then npm run package -- --out releases/web.zip; fi
       - name: 现代主题契约与打包
         working-directory: themes/web2
         run: |
           npm ci
-          npm run api
-          npm run package -- --out releases/web2.zip
+          if [ "${{ contains(inputs.reuse_passed, 'modern-api') }}" != "true" ]; then npm run api; fi
+          if [ "${{ contains(inputs.reuse_passed, 'modern-package') }}" != "true" ]; then npm run package -- --out releases/web2.zip; fi
       - name: 经典主题原有浏览器测试
         working-directory: themes/web
         run: |
@@ -106,7 +104,7 @@ jobs:
     name: HTTP 集成与负向门禁
     runs-on: ubuntu-24.04
     needs: [rust, web-contract]
-    if: ${{ always() && !cancelled() && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (inputs.reuse_passed && needs.rust.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (contains(inputs.reuse_passed, 'rust') && needs.rust.result == 'skipped')) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -140,7 +138,7 @@ jobs:
     name: Docker 构建与探针
     runs-on: ubuntu-24.04
     needs: [rust, web-contract]
-    if: ${{ always() && !cancelled() && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (inputs.reuse_passed && needs.rust.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (contains(inputs.reuse_passed, 'rust') && needs.rust.result == 'skipped')) }}
     permissions:
       contents: read
     steps:
@@ -159,6 +157,7 @@ jobs:
 
   secret-scan:
     name: 敏感文件与实验数据检查
+    if: ${{ !contains(inputs.reuse_passed, 'secrets') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
