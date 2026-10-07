@@ -98,7 +98,7 @@ https://hub.example.com:65535/{安全入口}/
 cargo build --locked --release --bin opsd-agent
 ```
 
-将 `opsd-agent` 安装到节点后，在控制台添加节点并生成一次性注册令牌。令牌只在短时间内有效，写入权限为 `0600` 的文件。准备 Hub CA 文件后运行：
+将 `opsd-agent` 安装到节点后，在控制台“节点”页点击“添加节点”，选择宿主机或 Docker 模式并下载一次性令牌文件。令牌有效期为 10 分钟，文件权限应为 `0600`。准备 Hub CA 文件后运行：
 
 ```bash
 opsd-agent --data-dir /var/lib/opsd-agent enroll \
@@ -124,7 +124,7 @@ opsd-agent --data-dir /var/lib/opsd-agent run
 
 ### Docker Agent（仅 Docker 与只读采集）
 
-控制台也可以生成 Docker Agent 命令。该模式使用宿主机 Docker socket，具备 Docker、Compose、日志、终端和防火墙只读发现能力，不开放防火墙写入、systemd 控制或存储破坏性操作。生产命令必须使用 CI 输出的固定镜像摘要：
+控制台也可以生成 Docker Agent 命令。该模式使用宿主机 Docker socket，具备 Docker、Compose、日志、终端和防火墙只读发现能力，不开放防火墙写入、systemd 控制或存储破坏性操作。在 Hub 的部署环境中设置 `OPSD_AGENT_IMAGE=ghcr.io/opsd-labs/opsd-agent@sha256:<固定摘要>`，注册响应和控制台命令会使用该镜像。生产命令必须使用 CI 输出的固定镜像摘要：
 
 ```bash
 # 令牌和 CA 只通过本地文件挂载，不放入环境变量或命令参数
