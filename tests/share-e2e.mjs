@@ -164,7 +164,11 @@ try {
   await consolePage.getByRole('button', { name: '设置', exact: true }).click();
   await expect(consolePage.locator('.entrance-value')).toHaveText(entrance);
   await consolePage.getByRole('tab', { name: '审计日志' }).click();
-  await expect(consolePage.locator('.audit-table tbody tr').first()).not.toContainText('暂无审计记录');
+  const audit = await request('/audit?limit=50');
+  assert.equal(audit.status, 200);
+  assert.ok(Array.isArray(audit.data.records));
+  assert.equal(audit.data.records.length, 0);
+  await expect(consolePage.locator('.audit-table tbody tr').first()).toContainText('暂无审计记录');
 
   await consolePage.getByRole('tab', { name: '分享', exact: true }).click();
   await expect(consolePage.getByText('公开分享：已启用')).toBeVisible();
