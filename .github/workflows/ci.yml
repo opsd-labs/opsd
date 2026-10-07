@@ -7,12 +7,17 @@ on:
         description: 本批已成功且输入未变的步骤，逗号分隔；留空执行全部检查
         type: string
         default: ""
+      reuse_static_run:
+        description: 内置静态页面已成功且输入未变时，复用该次 CI 的制品
+        type: string
+        default: ""
   pull_request:
   push:
     branches: [main, feat/v01-contract-fixes]
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -45,7 +50,7 @@ jobs:
     name: Web 与契约
     runs-on: ubuntu-24.04
     outputs:
-      static_pages_ready: ${{ steps.static-pages.outputs.ready }}
+      static_pages_ready: ${{ steps.static-pages.outputs.ready == 'true' || inputs.reuse_static_run != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -94,14 +99,17 @@ jobs:
           npx playwright install --with-deps chromium
           npm run test:browser
       - name: 安装前端依赖
+        if: ${{ inputs.reuse_static_run == '' }}
         working-directory: web
         run: npm ci
       - name: 内置控制台类型检查
+        if: ${{ inputs.reuse_static_run == '' }}
         id: builtin-types
         continue-on-error: true
         working-directory: web
         run: npx vue-tsc -b
       - name: 后端集成所需的控制台与分享页资源
+        if: ${{ inputs.reuse_static_run == '' }}
         id: static-pages
         working-directory: web
         run: |
@@ -112,12 +120,13 @@ jobs:
         if: ${{ !contains(inputs.reuse_passed, 'contract') }}
         run: git diff --exit-code -- web/src/api/generated.ts
       - name: 传递集成测试所需的内置页面
+        if: ${{ inputs.reuse_static_run == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: builtin-web
           path: web/dist
       - name: 保留内置控制台类型检查失败
-        if: ${{ steps.builtin-types.outcome == 'failure' }}
+        if: ${{ steps.builtin-types.outcome == 'failure' || contains(inputs.reuse_passed, 'builtin-types-blocked') }}
         run: exit 1
 
   integration:
@@ -141,11 +150,15 @@ jobs:
         with:
           name: builtin-web
           path: web/dist
+          run-id: ${{ inputs.reuse_static_run || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: 构建调试二进制
         run: cargo build --locked --bins
       - name: HTTP 集成测试
+        if: ${{ !contains(inputs.reuse_passed, 'http') }}
         run: node tests/integration.mjs
       - name: 负向契约门禁
+        if: ${{ !contains(inputs.reuse_passed, 'negative') }}
         run: node tests/negative-gates.mjs
       - name: 分享页原有浏览器隔离测试
         working-directory: tools

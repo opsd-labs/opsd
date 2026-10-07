@@ -151,9 +151,7 @@ try {
   const shareToken = token.data.token;
 
   const browser = await chromium.launch({
-    executablePath:
-      process.env.OPSD_BROWSER_EXECUTABLE ||
-      `${process.env.LOCALAPPDATA}\\ms-playwright\\chromium-1243\\chrome-win64\\chrome.exe`,
+    executablePath: process.env.OPSD_BROWSER_EXECUTABLE,
   });
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   // 把控制台会话 Cookie 装进浏览器，模拟"管理员已登录"
