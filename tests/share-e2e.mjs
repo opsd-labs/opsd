@@ -194,8 +194,10 @@ try {
   await consolePage.locator('input[type=file]').setInputFiles({ name: 'console.zip', mimeType: 'application/zip', buffer: zip });
   const themeItem = consolePage.locator('.theme-item').filter({ hasText: 'browser-console' });
   await expect(themeItem).toContainText('浏览器主题');
+  const conflictResponse = consolePage.waitForResponse(r => r.url().endsWith('/themes/console/package') && r.request().method() === 'POST');
   await consolePage.locator('input[type=file]').setInputFiles({ name: 'console.zip', mimeType: 'application/zip', buffer: zip });
-  await expect(consolePage.locator('.settings-error')).toContainText('已存在');
+  assert.equal((await conflictResponse).status(), 409);
+  await expect(consolePage.locator('.settings-error')).toContainText('已安装');
   await consolePage.getByPlaceholder('https://github.com/opsd-labs/opsd-theme-web').fill('https://localhost/repo');
   await consolePage.getByRole('button', { name: '解析', exact: true }).click();
   await expect(consolePage.locator('.settings-error').filter({ hasText: 'GitHub' })).toBeVisible();
