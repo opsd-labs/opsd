@@ -4,10 +4,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      resume_installation_run:
+        description: 仅验收脚本修正时，复用此运行的成功制品并只重跑未通过安装组合
+        type: string
+        default: ""
 
 permissions:
   contents: write
   packages: write
+  actions: read
 
 concurrency:
   group: publish-image-main
@@ -19,6 +25,7 @@ env:
 jobs:
   agent:
     name: 构建 Agent ${{ matrix.arch }}
+    if: ${{ inputs.resume_installation_run == '' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -91,6 +98,7 @@ jobs:
 
   release:
     name: 发布 Agent 双架构索引与固定发行包
+    if: ${{ inputs.resume_installation_run == '' }}
     needs: agent
     runs-on: ubuntu-24.04
     outputs:
@@ -139,6 +147,7 @@ jobs:
 
   hub:
     name: 发布绑定 Agent 版本的 Hub
+    if: ${{ inputs.resume_installation_run == '' }}
     needs: release
     runs-on: ubuntu-24.04
     outputs:
@@ -189,26 +198,94 @@ jobs:
           docker cp "$name:/var/lib/opsd/pki/ca.pem" "$tmp/ca.pem"
           curl --cacert "$tmp/ca.pem" -fsS "https://127.0.0.1:36535/$entrance/" | grep -Eq '<!doctype html|<html'
 
+  installation-inputs:
+    name: 取得本批安装制品与未通过范围
+    needs: [release, hub]
+    if: ${{ always() && !cancelled() && (inputs.resume_installation_run != '' || (needs.release.result == 'success' && needs.hub.result == 'success')) }}
+    runs-on: ubuntu-24.04
+    outputs:
+      release: ${{ steps.metadata.outputs.release }}
+      agent: ${{ steps.metadata.outputs.agent }}
+      hub: ${{ steps.metadata.outputs.hub }}
+      run: ${{ steps.metadata.outputs.run }}
+      matrix: ${{ steps.metadata.outputs.matrix }}
+    steps:
+      - name: 复用成功制品的来源与失败范围
+        if: ${{ inputs.resume_installation_run != '' }}
+        id: prior
+        uses: actions/github-script@v7
+        env:
+          PRIOR_RUN: ${{ inputs.resume_installation_run }}
+        with:
+          script: |
+            const runId = Number(process.env.PRIOR_RUN);
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: runId});
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {...context.repo, run_id: runId, per_page: 100});
+            const producers = ['构建 Agent amd64', '构建 Agent arm64', '发布 Agent 双架构索引与固定发行包', '发布绑定 Agent 版本的 Hub'];
+            if (run.status !== 'completed' || producers.some(name => !jobs.some(job => job.name === name && job.conclusion === 'success'))) {
+              throw new Error('原运行的双架构制品与 Hub 尚未全部成功，不能复用。');
+            }
+            const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({...context.repo, basehead: `${run.head_sha}...${context.sha}`});
+            const allowed = new Set(['tests/share-e2e.mjs', '.github/workflows/publish-image.yml']);
+            if (comparison.files.some(file => !allowed.has(file.filename))) {
+              throw new Error('业务源码、依赖或其他输入已变化，不能只复用上一批安装制品。');
+            }
+            const cases = jobs.filter(job => /^一键安装 (amd64|arm64) \/ (host|docker)$/.test(job.name));
+            if (cases.length !== 4) throw new Error('原运行不是完整的四组合安装验收。');
+            const include = cases.filter(job => job.conclusion !== 'success').map(job => {
+              const [, arch, mode] = job.name.match(/^一键安装 (amd64|arm64) \/ (host|docker)$/);
+              return {arch, mode, runner: arch === 'arm64' ? 'ubuntu-24.04-arm' : 'ubuntu-24.04'};
+            });
+            if (!include.length) throw new Error('全部安装组合已经成功，无需重复验收。');
+            core.setOutput('revision', run.head_sha);
+            core.setOutput('run', runId);
+            core.setOutput('matrix', JSON.stringify({include}));
+      - uses: docker/setup-buildx-action@v3
+        if: ${{ inputs.resume_installation_run != '' }}
+      - uses: docker/login-action@v3
+        if: ${{ inputs.resume_installation_run != '' }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 使用固定制品引用
+        id: metadata
+        env:
+          PRIOR_REVISION: ${{ steps.prior.outputs.revision }}
+          PRIOR_RUN: ${{ steps.prior.outputs.run }}
+          PRIOR_MATRIX: ${{ steps.prior.outputs.matrix }}
+          CURRENT_RELEASE: ${{ needs.release.outputs.release }}
+          CURRENT_AGENT: ${{ needs.release.outputs.image }}
+          CURRENT_HUB: ${{ needs.hub.outputs.image }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PRIOR_RUN" ]; then
+            for kind in agent hub; do
+              image=opsd
+              if [ "$kind" = agent ]; then image=opsd-agent; fi
+              digest=$(docker buildx imagetools inspect "ghcr.io/${{ env.OWNER }}/$image:sha-$PRIOR_REVISION" | awk '/^Digest:/ {print $2; exit}')
+              test -n "$digest"
+              echo "$kind=ghcr.io/${{ env.OWNER }}/$image@$digest" >> "$GITHUB_OUTPUT"
+            done
+            echo "release=agent-$PRIOR_REVISION" >> "$GITHUB_OUTPUT"
+            echo "run=$PRIOR_RUN" >> "$GITHUB_OUTPUT"
+            echo "matrix=$PRIOR_MATRIX" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=$CURRENT_RELEASE" >> "$GITHUB_OUTPUT"
+            echo "agent=$CURRENT_AGENT" >> "$GITHUB_OUTPUT"
+            echo "hub=$CURRENT_HUB" >> "$GITHUB_OUTPUT"
+            echo "run=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo 'matrix={"include":[{"arch":"amd64","runner":"ubuntu-24.04","mode":"host"},{"arch":"amd64","runner":"ubuntu-24.04","mode":"docker"},{"arch":"arm64","runner":"ubuntu-24.04-arm","mode":"host"},{"arch":"arm64","runner":"ubuntu-24.04-arm","mode":"docker"}]}' >> "$GITHUB_OUTPUT"
+          fi
+
   installation:
     name: 一键安装 ${{ matrix.arch }} / ${{ matrix.mode }}
-    needs: [release, hub]
+    needs: installation-inputs
+    if: ${{ always() && !cancelled() && needs.installation-inputs.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-            mode: host
-          - arch: amd64
-            runner: ubuntu-24.04
-            mode: docker
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            mode: host
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            mode: docker
+      matrix: ${{ fromJSON(needs.installation-inputs.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -218,9 +295,11 @@ jobs:
         with:
           name: agent-release-${{ matrix.arch }}
           path: .release
+          run-id: ${{ needs.installation-inputs.outputs.run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: 读取本次 Hub 页面与原生架构主控
         env:
-          IMAGE: ${{ needs.hub.outputs.image }}
+          IMAGE: ${{ needs.installation-inputs.outputs.hub }}
         run: |
           set -euo pipefail
           chmod +x .release/opsd-hub
@@ -237,19 +316,20 @@ jobs:
         env:
           OPSD_TEST_BIN_DIR: ${{ github.workspace }}/.release
           OPSD_INSTALL_ACCEPTANCE: ${{ matrix.mode }}
-          OPSD_AGENT_RELEASE: ${{ needs.release.outputs.release }}
-          OPSD_BUNDLED_AGENT_IMAGE: ${{ needs.release.outputs.image }}
+          OPSD_AGENT_RELEASE: ${{ needs.installation-inputs.outputs.release }}
+          OPSD_BUNDLED_AGENT_IMAGE: ${{ needs.installation-inputs.outputs.agent }}
         run: node tests/share-e2e.mjs
 
   complete:
     name: 安装验收完成后更新正式引用
-    needs: [release, hub, installation]
+    needs: [installation-inputs, installation]
+    if: ${{ always() && !cancelled() && needs.installation-inputs.result == 'success' && needs.installation.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: 记录已通过安装验收的固定制品
         run: |
-          printf '%s\n' 'Hub：${{ needs.hub.outputs.image }}' 'Agent：${{ needs.release.outputs.image }}' '发行版：${{ needs.release.outputs.release }}'
+          printf '%s\n' 'Hub：${{ needs.installation-inputs.outputs.hub }}' 'Agent：${{ needs.installation-inputs.outputs.agent }}' '发行版：${{ needs.installation-inputs.outputs.release }}' '制品来源：${{ needs.installation-inputs.outputs.run }}'
       - uses: docker/setup-buildx-action@v3
         if: github.ref == 'refs/heads/main'
       - uses: docker/login-action@v3
@@ -263,7 +343,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          docker buildx imagetools create --tag ghcr.io/${{ env.OWNER }}/opsd:main --tag ghcr.io/${{ env.OWNER }}/opsd:latest '${{ needs.hub.outputs.image }}'
-          docker buildx imagetools create --tag ghcr.io/${{ env.OWNER }}/opsd-agent:main --tag ghcr.io/${{ env.OWNER }}/opsd-agent:latest '${{ needs.release.outputs.image }}'
-          gh release edit '${{ needs.release.outputs.release }}' --prerelease=false
+          docker buildx imagetools create --tag ghcr.io/${{ env.OWNER }}/opsd:main --tag ghcr.io/${{ env.OWNER }}/opsd:latest '${{ needs.installation-inputs.outputs.hub }}'
+          docker buildx imagetools create --tag ghcr.io/${{ env.OWNER }}/opsd-agent:main --tag ghcr.io/${{ env.OWNER }}/opsd-agent:latest '${{ needs.installation-inputs.outputs.agent }}'
+          gh release edit '${{ needs.installation-inputs.outputs.release }}' --prerelease=false
 

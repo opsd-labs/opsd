@@ -161,15 +161,22 @@ async function stop(c) {
   c.kill();
   await done;
 }
+async function waitForHub() {
+  for (let i = 0; i < 60; i++) {
+    try {
+      const status = (await request('/auth/me')).status;
+      if (status === 200 || status === 401) return;
+    } catch (error) {
+      if (!['ECONNREFUSED', 'ECONNRESET'].includes(error.code)) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  throw new Error('主控启动超时');
+}
 
 try {
   hub = launch();
-  for (let i = 0; i < 60; i++) {
-    try {
-      if ((await request("/auth/me")).status === 401) break;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 200));
-  }
+  await waitForHub();
   const login = await request("/auth/login", "POST", { password });
   assert.equal(login.status, 200);
   cookie = login.cookie.split(";")[0];
@@ -417,6 +424,7 @@ try {
       const unavailable = await rootShell(generatedCommand + '\n');
       assert.ok(unavailable.code !== 0 && unavailable.output.includes('尚未确认节点在线'), 'mTLS 不可达应报告失败并保留身份');
       hub = launch();
+      await waitForHub();
     }
     await expect.poll(async () => (await request('/nodes')).data[0]?.connected, { timeout: 60000 }).toBe(true);
     await rootSuccess(installAcceptance === 'host' ? 'systemctl stop opsd-agent.service\n' : 'docker stop opsd-agent >/dev/null\n');
