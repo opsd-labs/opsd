@@ -42,7 +42,7 @@ function rootShell(input) {
       for (const value of sensitiveValues) output = output.replaceAll(value, '[凭据已隐藏]');
       resolve({ code, output });
     });
-    child.stdin.end(input);
+    child.stdin.end('set -Eeuo pipefail\n' + input);
   });
 }
 async function rootSuccess(input) {
@@ -504,7 +504,7 @@ try {
   await stop(agent);
   await stop(hub);
   if (ownsAgentPaths) {
-    await rootSuccess('systemctl disable --now opsd-agent.service >/dev/null 2>&1 || true\ndocker rm -f opsd-agent >/dev/null 2>&1 || true\nrm -f /etc/systemd/system/opsd-agent.service /usr/local/bin/opsd-agent\nrm -rf -- /var/lib/opsd-agent\nsystemctl daemon-reload\n');
+    await rootSuccess('if systemctl cat opsd-agent.service >/dev/null 2>&1; then systemctl disable --now opsd-agent.service; fi\nif docker container inspect opsd-agent >/dev/null 2>&1; then docker rm -f opsd-agent; fi\nrm -f /etc/systemd/system/opsd-agent.service /usr/local/bin/opsd-agent\nrm -rf -- /var/lib/opsd-agent\nsystemctl daemon-reload\n');
   }
   await writeFile(path.join(run, "hub.log"), logs.join(""));
   await rm(run, { recursive: true, force: true }).catch(() => {});
