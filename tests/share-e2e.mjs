@@ -390,11 +390,11 @@ try {
       const source = registration.installation.script;
       const missingRelease = source.replace(`release='${registration.installation.release}'`, `release='agent-${'0'.repeat(40)}'`);
       const missingDownload = await rootShell(missingRelease);
-      assert.ok(missingDownload.code !== 0 && !missingDownload.output.includes('安装完成：'), '下载失败不能报告安装完成');
+      assert.ok(missingDownload.code !== 0 && missingDownload.output.includes('404') && !missingDownload.output.includes('安装完成：'), '必须确实因发行包不存在而失败，不能把其他环境错误算作下载拒绝');
       const expired = await rootShell(source.replace(/^expires_at=\d+$/m, 'expires_at=0'));
       assert.ok(expired.code !== 0 && expired.output.includes('令牌已过期'), '过期安装信息必须停止');
       const badCa = await rootShell(source.replace(`fingerprint='${registration.ca_fingerprint}'`, `fingerprint='${'0'.repeat(64)}'`));
-      assert.ok(badCa.code !== 0 && !badCa.output.includes('安装完成：'), 'CA 不匹配不能继续注册');
+      assert.ok(badCa.code !== 0 && badCa.output.includes('主控 CA 指纹不匹配') && !badCa.output.includes('安装完成：'), '必须确实因 CA 指纹不匹配停止注册');
       assert.equal((await request('/nodes')).data.length, 0);
       await rootSuccess("printf '%s' '{\"node_id\":\"other\",\"hub\":\"https://other.invalid\",\"agent_url\":\"wss://other.invalid:8444/agent\"}' > /var/lib/opsd-agent/config.json\n");
       const conflict = await rootShell(source);
@@ -403,7 +403,7 @@ try {
       assert.equal(JSON.parse(saved).node_id, 'other');
       await rootSuccess('rm -f /var/lib/opsd-agent/config.json\n');
       const startFailure = await rootShell(source.replace('ExecStart=/usr/local/bin/opsd-agent --data-dir /var/lib/opsd-agent run', 'ExecStart=/bin/false'));
-      assert.ok(startFailure.code !== 0 && !startFailure.output.includes('安装完成：'), '服务启动失败不能报告安装完成');
+      assert.ok(startFailure.code !== 0 && (startFailure.output.includes('启动常驻服务') || startFailure.output.includes('尚未确认节点在线')) && !startFailure.output.includes('安装完成：'), '必须确实在服务启动或等待在线阶段失败');
       assert.equal((await request('/nodes')).data.length, 1, '启动失败应保留已注册身份');
     }
     const installResult = process.arch === 'arm64'
