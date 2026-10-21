@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 concurrency:
@@ -14,40 +14,48 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REGISTRY: ghcr.io
   OWNER: opsd-labs
 
 jobs:
-  publish:
-    name: 构建并发布 ${{ matrix.image }} 镜像
-    runs-on: ubuntu-24.04
+  agent:
+    name: 构建 Agent ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: hub
-            image: opsd
-            title: opsd Hub 管理系统
-          - target: agent
-            image: opsd-agent
-            title: opsd Agent Docker 运行镜像
+          - arch: amd64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v4
-      - name: 生成镜像元数据
-        id: meta
-        uses: docker/metadata-action@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          images: ghcr.io/${{ env.OWNER }}/${{ matrix.image }}
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,prefix=sha-,format=long
-          labels: |
-            org.opencontainers.image.title=${{ matrix.title }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=main-${{ github.sha }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.run_started_at }}
+          toolchain: 1.95.0
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: 准备 musl 工具链
+        run: |
+          if ! command -v musl-gcc >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y musl-tools
+          fi
+      - name: 构建原生架构程序与发行包
+        env:
+          CC: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: |
+          cargo build --locked --release --target ${{ matrix.target }} --bins
+          mkdir -p .release
+          cp target/${{ matrix.target }}/release/opsd-agent .release/opsd-agent
+          cp target/${{ matrix.target }}/release/opsd-hub .release/opsd-hub
+          tar -C .release -czf .release/opsd-agent-linux-${{ matrix.arch }}.tar.gz opsd-agent
       - uses: docker/setup-buildx-action@v3
       - name: 登录 GHCR
         uses: docker/login-action@v3
@@ -55,35 +63,113 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: 构建并推送
+      - name: 使用同一程序构建并发布 Agent 镜像
+        id: image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
-          target: ${{ matrix.target }}
-          platforms: linux/amd64
+          target: agent
+          platforms: linux/${{ matrix.arch }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ghcr.io/${{ env.OWNER }}/opsd-agent:sha-${{ github.sha }}-${{ matrix.arch }}
           build-args: |
+            AGENT_BINARY_STAGE=prebuilt-agent-binary
             VCS_REF=${{ github.sha }}
-            VERSION=main-${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp || github.run_started_at }}
-          cache-from: type=gha,scope=${{ matrix.target }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
-      - name: 拉取已发布镜像并记录摘要
-        id: digest
+            VERSION=agent-${{ github.sha }}
+          cache-from: type=gha,scope=agent-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=agent-${{ matrix.arch }}
+      - name: 保存本次发布引用
+        run: printf '%s\n' 'ghcr.io/${{ env.OWNER }}/opsd-agent@${{ steps.image.outputs.digest }}' > .release/agent-image.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-release-${{ matrix.arch }}
+          include-hidden-files: true
+          path: |
+            .release/opsd-agent-linux-${{ matrix.arch }}.tar.gz
+            .release/opsd-hub
+            .release/agent-image.txt
+
+  release:
+    name: 发布 Agent 双架构索引与固定发行包
+    needs: agent
+    runs-on: ubuntu-24.04
+    outputs:
+      release: ${{ steps.metadata.outputs.release }}
+      image: ${{ steps.metadata.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: agent-release-*
+          path: .release
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 发布固定镜像索引
+        id: metadata
         shell: bash
         run: |
           set -euo pipefail
-          image="ghcr.io/${{ env.OWNER }}/${{ matrix.image }}:sha-${GITHUB_SHA}"
-          docker pull "$image"
-          digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
+          image="ghcr.io/${{ env.OWNER }}/opsd-agent:sha-${GITHUB_SHA}"
+          docker buildx imagetools create --tag "$image" "$(cat .release/agent-release-amd64/agent-image.txt)" "$(cat .release/agent-release-arm64/agent-image.txt)"
+          digest=$(docker buildx imagetools inspect "$image" | awk '/^Digest:/ {print $2; exit}')
           test -n "$digest"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' | grep -Fx "$GITHUB_SHA"
-      - name: Hub smoke test
-        if: matrix.target == 'hub'
+          echo "image=ghcr.io/${{ env.OWNER }}/opsd-agent@$digest" >> "$GITHUB_OUTPUT"
+          echo "release=agent-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - name: 发布待安装验收的发行文件
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="agent-${GITHUB_SHA}"
+          if ! gh release view "$release" >/dev/null 2>&1; then
+            gh release create "$release" --prerelease --target "$GITHUB_SHA" --title "Agent ${GITHUB_SHA::12}" --notes "固定提交的 Linux x64 与 ARM64 安装包；安装验收通过后才能用于灰度更新。"
+          fi
+          assets=$(gh release view "$release" --json assets --jq '.assets[].name')
+          for arch in amd64 arm64; do
+            name="opsd-agent-linux-$arch.tar.gz"
+            if ! printf '%s\n' "$assets" | grep -Fxq "$name"; then
+              gh release upload "$release" ".release/agent-release-$arch/$name"
+            fi
+          done
+
+  hub:
+    name: 发布绑定 Agent 版本的 Hub
+    needs: release
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ghcr.io/opsd-labs/opsd@${{ steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 构建并发布 Hub
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: hub
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ env.OWNER }}/opsd:sha-${{ github.sha }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            VERSION=main-${{ github.sha }}
+            AGENT_RELEASE=${{ needs.release.outputs.release }}
+            AGENT_IMAGE=${{ needs.release.outputs.image }}
+          cache-from: type=gha,scope=hub
+          cache-to: type=gha,mode=max,scope=hub
+      - name: 已发布 Hub 的原有启动验收
+        env:
+          IMAGE: ghcr.io/opsd-labs/opsd@${{ steps.image.outputs.digest }}
         shell: bash
         run: |
           set -euo pipefail
@@ -92,19 +178,92 @@ jobs:
           trap 'docker rm -f "$name" >/dev/null 2>&1 || true; sudo rm -rf "$tmp"' EXIT
           mkdir -p "$tmp/data"
           printf 'ci-password-%s\n' "$GITHUB_RUN_ID" > "$tmp/password"
-          image="ghcr.io/${{ env.OWNER }}/${{ matrix.image }}:sha-${GITHUB_SHA}"
-          docker run --rm --read-only -v "$tmp/data:/var/lib/opsd" -v "$tmp/password:/run/password:ro" "$image" init --password-file /run/password > "$tmp/init.log"
-          docker run -d --name "$name" -v "$tmp/data:/var/lib/opsd" --tmpfs /tmp:size=32m,mode=1777 -p 127.0.0.1:36535:65535 "$image" serve --listen 0.0.0.0:65535 --agent-listen 0.0.0.0:8444 --health-listen 127.0.0.1:65534 --web /opt/opsd/web
+          docker pull "$IMAGE"
+          docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' | grep -Fx "$GITHUB_SHA"
+          docker run --rm --read-only -v "$tmp/data:/var/lib/opsd" -v "$tmp/password:/run/password:ro" "$IMAGE" init --password-file /run/password > "$tmp/init.log"
+          docker run -d --name "$name" -v "$tmp/data:/var/lib/opsd" --tmpfs /tmp:size=32m,mode=1777 -p 127.0.0.1:36535:65535 "$IMAGE" serve --listen 0.0.0.0:65535 --agent-listen 0.0.0.0:8444 --health-listen 127.0.0.1:65534 --web /opt/opsd/web
           for _ in {1..30}; do docker exec "$name" /usr/local/bin/opsd-hub probe && break; sleep 2; done
           docker exec "$name" /usr/local/bin/opsd-hub probe
           entrance=$(sed -n 's/^控制台安全入口：//p' "$tmp/init.log")
           test -n "$entrance"
-          curl -kfsS "https://127.0.0.1:36535/$entrance/" | grep -Eq '<!doctype html|<html'
-      - name: Agent smoke test
-        if: matrix.target == 'agent'
-        shell: bash
+          docker cp "$name:/var/lib/opsd/pki/ca.pem" "$tmp/ca.pem"
+          curl --cacert "$tmp/ca.pem" -fsS "https://127.0.0.1:36535/$entrance/" | grep -Eq '<!doctype html|<html'
+
+  installation:
+    name: 一键安装 ${{ matrix.arch }} / ${{ matrix.mode }}
+    needs: [release, hub]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            mode: host
+          - arch: amd64
+            runner: ubuntu-24.04
+            mode: docker
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            mode: host
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            mode: docker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-release-${{ matrix.arch }}
+          path: .release
+      - name: 读取本次 Hub 页面与原生架构主控
+        env:
+          IMAGE: ${{ needs.hub.outputs.image }}
         run: |
           set -euo pipefail
-          image="ghcr.io/${{ env.OWNER }}/${{ matrix.image }}:sha-${GITHUB_SHA}"
-          docker run --rm "$image" --help | grep -q 'Usage'
-          test -n "$(docker run --rm --entrypoint /bin/sh "$image" -c 'command -v /usr/local/bin/opsd-agent && test -x /usr/local/bin/opsd-agent && echo ok')"
+          chmod +x .release/opsd-hub
+          mkdir -p web
+          container=$(docker create --platform linux/amd64 "$IMAGE")
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container:/opt/opsd/web" web/dist
+      - name: 安装现有浏览器验收依赖
+        working-directory: tools
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: 执行页面原样命令与安装恢复验收
+        env:
+          OPSD_TEST_BIN_DIR: ${{ github.workspace }}/.release
+          OPSD_INSTALL_ACCEPTANCE: ${{ matrix.mode }}
+          OPSD_AGENT_RELEASE: ${{ needs.release.outputs.release }}
+          OPSD_BUNDLED_AGENT_IMAGE: ${{ needs.release.outputs.image }}
+        run: node tests/share-e2e.mjs
+
+  complete:
+    name: 安装验收完成后更新正式引用
+    needs: [release, hub, installation]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 记录已通过安装验收的固定制品
+        run: |
+          printf '%s\n' 'Hub：${{ needs.hub.outputs.image }}' 'Agent：${{ needs.release.outputs.image }}' '发行版：${{ needs.release.outputs.release }}'
+      - uses: docker/setup-buildx-action@v3
+        if: github.ref == 'refs/heads/main'
+      - uses: docker/login-action@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 更新 main 与 latest
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker buildx imagetools create --tag ghcr.io/${{ env.OWNER }}/opsd:main --tag ghcr.io/${{ env.OWNER }}/opsd:latest '${{ needs.hub.outputs.image }}'
+          docker buildx imagetools create --tag ghcr.io/${{ env.OWNER }}/opsd-agent:main --tag ghcr.io/${{ env.OWNER }}/opsd-agent:latest '${{ needs.release.outputs.image }}'
+          gh release edit '${{ needs.release.outputs.release }}' --prerelease=false
+

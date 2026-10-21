@@ -11,5 +11,6 @@
 /web/vite.config.d.ts
 /themes/
 /tools/node_modules/
+/.release/
 *.pem
 .env

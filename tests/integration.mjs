@@ -44,6 +44,10 @@ function launch(name,args){const c=spawn(exe(name),args,{cwd:root,windowsHide:tr
 async function wait(fn,label){for(let i=0;i<80;i++){try{if(await fn())return}catch{}await new Promise(r=>setTimeout(r,200));}throw new Error(`${label} 超时\n${logs.join('').slice(-4000)}`);}
 async function stop(c){if(!c||c.exitCode!==null)return;const done=new Promise(r=>c.on('exit',r));c.kill();await done;}
 const serveArgs=dir=>['--data-dir',dir,'serve','--listen',`127.0.0.1:${base}`,'--agent-listen','127.0.0.1:19444','--health-listen',`127.0.0.1:${healthPort}`,'--origin',`https://localhost:${base}`];
+async function ownStatus(withIdentity=true){
+ const identity=withIdentity?{cert:await readFile(path.join(agentDir,'client.pem')),key:await readFile(path.join(agentDir,'client-key.pem'))}:{};
+ return new Promise(resolve=>{const req=https.request({hostname:'localhost',port:19444,path:'/status',ca,...identity},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>resolve({status:res.statusCode,data:JSON.parse(text)}));});req.on('error',e=>resolve({error:e.code||e.message}));req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));req.end();});
+}
 try{
  hub=launch('opsd-hub',serveArgs(hubDir));
  await wait(async()=> (await health()).status===200,'主控启动');
@@ -72,6 +76,9 @@ try{
  assertHttpResponse(unknownField,{status:422,route:'/api/v1/auth/login',method:'post',kind:'plain',schema:responseSchema('/api/v1/auth/login','post',422,'text/plain'),contentType:'text/plain'});
  assert.equal((await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],ssh_port:22},{headers:{'X-CSRF-Token':'wrong'}})).status,403);
  const registration=await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],overlay_address:'127.0.0.1',ssh_port:22});assert.equal(registration.status,200);
+ assertSchema(registration.data,responseSchema('/api/v1/enrollment-tokens','post',200));
+ assert.equal(registration.headers['cache-control'],'no-store');
+ assert.equal(registration.data.installation,null,'未配置发行元数据的开发构建不生成安装信息');
  const pending=await request('/enrollment-tokens');assert.equal(pending.status,200);assert.equal(pending.data.some(e=>e.node_id===registration.data.node_id&&e.status==='pending'),true);assert.equal(JSON.stringify(pending.data).includes(registration.data.token),false);
  const tokenFile=path.join(run,'token');await writeFile(tokenFile,registration.data.token,{mode:0o600});
  await command('opsd-agent',['--data-dir',agentDir,'enroll','--hub',`https://localhost:${base}`,'--agent-url','wss://localhost:19444/agent','--ca',path.join(hubDir,'pki','ca.pem'),'--fingerprint',registration.data.ca_fingerprint,'--token-file',tokenFile]);
@@ -82,9 +89,14 @@ try{
  const oldCertificate=await readFile(path.join(agentDir,'client.pem'),'utf8');
  await command('opsd-agent',['--data-dir',agentDir,'renew-certificate']);
  assert.notEqual(await readFile(path.join(agentDir,'client.pem'),'utf8'),oldCertificate);
+ assert.ok((await ownStatus(false)).error,'没有客户端证书不能读取 Agent 在线状态');
+ assert.equal((await ungated('/status')).status,undefined,'浏览器监听不得公开 Agent 状态');
+ const disconnected=await ownStatus();assert.equal(disconnected.status,200);assert.equal(disconnected.data.connected,false);
+ assertSchema(disconnected.data,responseSchema('/status','get',200));
  agent=launch('opsd-agent',['--data-dir',agentDir,'run']);
  await wait(async()=> (await request('/nodes')).data?.[0]?.connected,'Agent mTLS 注册连接');
  const node=registration.data.node_id;
+ const connectedStatus=await ownStatus();assert.equal(connectedStatus.status,200);assert.equal(connectedStatus.data.node_id,node);assert.equal(connectedStatus.data.connected,true);
  const first=await request(`/nodes/${node}/actions`,'POST',{idempotency_key:'once',action:{type:'inspect'}});assert.equal(first.status,202);
  const duplicate=await request(`/nodes/${node}/actions`,'POST',{idempotency_key:'once',action:{type:'inspect'}});assert.equal(duplicate.data.task_id,first.data.task_id);
  assert.equal((await request(`/nodes/${node}/actions`,'POST',{idempotency_key:'once',action:{type:'pull_image',reference:'nginx:stable'}})).status,400);
@@ -550,6 +562,7 @@ try{
  assert.equal((await request(`/tasks/${first.data.task_id}`)).data.status,'succeeded');
  assert.equal((await request(`/nodes/${node}`,'DELETE')).status,200);
  await wait(async()=>!(await request('/nodes')).data?.[0]?.connected,'节点撤销');
+ assert.equal((await ownStatus()).status,400,'已撤销节点不能继续读取自身状态');
  const nodesList=await request('/nodes');
  assertHttpResponse(nodesList,{status:200,route:'/api/v1/nodes',method:'get',kind:'json',schema:responseSchema('/api/v1/nodes','get',200),contentType:'application/json'});
  const tasksList=await request('/tasks');

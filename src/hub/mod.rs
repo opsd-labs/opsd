@@ -3,6 +3,7 @@ mod audit;
 mod auth;
 mod channel;
 mod database;
+mod installation;
 mod metrics;
 mod share;
 mod storage;
@@ -527,6 +528,7 @@ pub async fn run() -> Result<()> {
             );
             let agent = Router::new()
                 .route("/agent", get(channel::connect))
+                .route("/status", get(channel::status))
                 .route("/renew", post(api::renew))
                 .route("/verify", post(api::verify))
                 .with_state(state.clone());

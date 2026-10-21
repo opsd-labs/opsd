@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   summary: 主控控制台的浏览器接口契约
   description: |
-    本文档是 opsd 主控 HTTP 接口的**契约源文件**。`web/src/generated/api.ts` 由它生成，
+    本文档是 opsd 主控 HTTP 接口的**契约源文件**。`web/src/api/generated.ts` 由它生成，
     漂移检查会阻止生成物与它不一致；因此接口变更必须先改这里。
 
     ## 路径与安全入口
@@ -290,7 +290,7 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      description: 令牌 600 秒内有效、一次性使用，绑定到新生成的 node_id。每次调用都新建令牌，不参与幂等。
+      description: 令牌 600 秒内有效、一次性使用，绑定到新生成的 node_id。每次调用都新建令牌，不参与幂等。发行元数据可用时附带完整专属安装脚本；响应禁止缓存，脚本和令牌仅本次返回。
       requestBody:
         required: true
         content:
@@ -750,6 +750,34 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+  /status:
+    get:
+      tags:
+        - agent
+      summary: 读取当前 Agent 的在线状态
+      description: 只在 Agent mTLS 监听提供，身份由客户端证书确定，只返回自身节点。在线判定与控制台一致，不接受查询其他节点的参数。
+      servers:
+        - url: https://{host}
+          description: Agent mTLS 监听地址，要求客户端证书。
+          variables:
+            host:
+              default: localhost:8444
+              description: Agent mTLS 监听地址。
+      security:
+        - agentMtls: []
+      responses:
+        "200":
+          description: 当前证书对应节点的连接状态。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentConnectionStatus"
+        "400":
+          description: 证书未登记、已过期或节点已撤销；没有客户端证书时 TLS 握手直接失败。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /verify:
     post:
       tags:
@@ -5562,6 +5590,7 @@ components:
         - install_mode
         - agent_url
         - agent_image
+        - installation
       properties:
         token:
           type: string
@@ -5586,6 +5615,33 @@ components:
         agent_image:
           type: string
           description: Agent 镜像引用；部署时应替换为固定 digest。
+        installation:
+          description: 仅本次返回的专属安装信息；开发构建缺少固定发行版本或 Docker 固定摘要时为 null。
+          oneOf:
+            - $ref: "#/components/schemas/AgentInstallation"
+            - type: "null"
+      additionalProperties: false
+    AgentInstallation:
+      type: object
+      required: [release, script]
+      properties:
+        release:
+          type: string
+          description: 固定的官方 GitHub Agent 发行标签。
+          pattern: '^agent-[a-fA-F0-9]{40}$'
+        script:
+          type: string
+          description: UTF-8 Bash 专属安装脚本，含一次性令牌和公共 CA，不含任何私钥，不应保存到普通日志或浏览器持久存储。
+      additionalProperties: false
+    AgentConnectionStatus:
+      type: object
+      required: [node_id, connected]
+      properties:
+        node_id:
+          type: string
+        connected:
+          type: boolean
+          description: 节点通道存在且最近活动未超过 45 秒。
       additionalProperties: false
     PeerAddressSet:
       type: object

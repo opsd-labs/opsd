@@ -5,6 +5,7 @@
  * MetricsOverviewNode.sample = MetricsSample | null
  */
 import { computed, ref, nextTick } from 'vue'
+import type { DeepReadonly } from 'vue'
 import { workspace } from '../state/workspace'
 import { apiPost, apiDelete } from '../api/client'
 import type { components } from '../api/generated'
@@ -21,16 +22,27 @@ const enrollmentBusy = ref(false)
 const enrollmentError = ref('')
 const enrollment = ref<EnrollmentToken | null>(null)
 const downloaded = ref(false)
+const copyMessage = ref('')
+const commandField = ref<HTMLTextAreaElement | null>(null)
 const revoking = ref('')
 const draft = ref({ name: '', addresses: '', overlay: '', sshPort: 22, mode: 'host' as Registration['install_mode'] })
 const pending = computed(() => workspace.state.enrollments)
 const registeredEntry = computed(() => workspace.state.nodeEntries.find(e => e.node.id === enrollment.value?.node_id))
+const expiredEntry = computed(() => pending.value.find(p => p.node_id === enrollment.value?.node_id && p.status === 'expired'))
+const oneClickCommand = computed(() => {
+  const script = enrollment.value?.installation?.script
+  if (!script) return ''
+  const bytes = new TextEncoder().encode(script)
+  const encoded = btoa(Array.from(bytes, b => String.fromCharCode(b)).join(''))
+  return `printf '%s' '${encoded}' | base64 --decode | bash`
+})
 
 async function openEnrollment() {
   draft.value = { name: '', addresses: '', overlay: '', sshPort: 22, mode: 'host' }
   enrollment.value = null
   enrollmentError.value = ''
   downloaded.value = false
+  copyMessage.value = ''
   enrollmentOpen.value = true
   await nextTick()
   document.getElementById('new-node-name')?.focus()
@@ -38,7 +50,7 @@ async function openEnrollment() {
 
 function closeEnrollment() {
   if (enrollmentBusy.value) return
-  if (enrollment.value && !downloaded.value && !registeredEntry.value && !confirm('令牌尚未下载，关闭后无法重新获取。确定关闭？')) return
+  if (enrollment.value && !downloaded.value && !registeredEntry.value && !expiredEntry.value && !confirm('安装信息尚未复制或下载，关闭后无法重新获取。确定关闭？')) return
   enrollmentOpen.value = false
   enrollment.value = null
 }
@@ -61,15 +73,50 @@ async function createEnrollment() {
   } finally { enrollmentBusy.value = false }
 }
 
-function downloadToken() {
-  if (!enrollment.value) return
-  const url = URL.createObjectURL(new Blob([enrollment.value.token + '\n'], { type: 'text/plain' }))
+function downloadFile(content: string, filename: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }))
   const a = document.createElement('a')
   a.href = url
-  a.download = 'opsd-token'
+  a.download = filename
   a.click()
   URL.revokeObjectURL(url)
   downloaded.value = true
+}
+
+function downloadToken() {
+  if (enrollment.value) downloadFile(enrollment.value.token + '\n', 'opsd-token', 'text/plain')
+}
+
+function downloadScript() {
+  if (enrollment.value?.installation) downloadFile(enrollment.value.installation.script, 'opsd-install.sh', 'text/x-shellscript')
+}
+
+async function copyInstallCommand() {
+  try {
+    await navigator.clipboard.writeText(oneClickCommand.value)
+    downloaded.value = true
+    copyMessage.value = '已复制，请在目标机的 root Bash 终端执行。'
+    enrollmentError.value = ''
+  } catch {
+    commandField.value?.focus()
+    commandField.value?.select()
+    enrollmentError.value = '自动复制失败，请复制下方已选中的安装命令，或下载安装脚本。'
+  }
+}
+
+async function regenerateEnrollment(p: DeepReadonly<components['schemas']['EnrollmentSummary']>) {
+  await openEnrollment()
+  draft.value = { name: p.name, addresses: p.public_addresses.join(', '), overlay: p.overlay_address || '', sshPort: p.ssh_port, mode: p.install_mode }
+  enrollmentBusy.value = true
+  try {
+    await apiDelete(`/api/v1/enrollment-tokens/${encodeURIComponent(p.node_id)}`)
+  } catch (e: unknown) {
+    enrollmentError.value = e instanceof Error ? e.message : '取消旧注册失败，请先核实节点状态'
+    await workspace.refreshEnrollments().catch(() => {})
+    enrollmentOpen.value = false
+    return
+  } finally { enrollmentBusy.value = false }
+  await createEnrollment()
 }
 
 async function revokeEnrollment(id: string) {
@@ -139,6 +186,7 @@ const diskPercent = computed(() => {
           <span>{{ p.install_mode === 'docker' ? 'Docker' : '宿主机' }} · 令牌有效期至 {{ formatUnixTime(p.expires_at) }}</span>
         </div>
         <Badge :tone="p.status === 'pending' ? 'warning' : 'default'">{{ p.status === 'pending' ? '待注册' : '已过期' }}</Badge>
+        <Button v-if="p.status === 'expired'" variant="default" size="sm" :disabled="enrollmentBusy" @click="regenerateEnrollment(p)">重新生成</Button>
         <Button variant="ghost" size="sm" :busy="revoking === p.node_id" @click="revokeEnrollment(p.node_id)">取消注册</Button>
       </div>
     </section>
@@ -209,12 +257,30 @@ const diskPercent = computed(() => {
         <Status v-if="registeredEntry?.connected" tone="success" label="节点已在线" />
         <Status v-else-if="registeredEntry" tone="warning" label="已注册，等待 Agent 连接" />
         <Status v-else tone="warning" label="注册信息已生成，等待 Agent 接入" />
-        <p>令牌有效期至 {{ formatUnixTime(enrollment.expires_at) }}，仅本次可下载；关闭后无法重新获取。</p>
-        <Button variant="primary" @click="downloadToken">下载令牌文件</Button>
-        <p>将令牌文件与管理员提供的 Hub CA 证书放到待接入机器，证书命名为 <code>opsd-ca.pem</code>，再在该机器执行下面的命令。</p>
-        <p v-if="enrollment.install_mode === 'host'">先安装 <code>opsd-agent</code>，注册后用 systemd 或进程管理器保持运行。</p>
-        <h3>{{ enrollment.install_mode === 'docker' ? 'Docker 安装命令' : '宿主机注册命令' }}</h3>
-        <pre class="enrollment-command">{{ installCommand }}</pre>
+        <p>安装命令和脚本包含一次性凭据，首次注册有效期至 {{ formatUnixTime(enrollment.expires_at) }}，关闭后无法重新获取，请勿公开分享。</p>
+        <template v-if="expiredEntry">
+          <p class="enrollment-error">注册令牌已过期，请重新生成安装信息。</p>
+          <Button variant="primary" :busy="enrollmentBusy" @click="regenerateEnrollment(expiredEntry)">重新生成安装信息</Button>
+        </template>
+        <template v-else-if="enrollment.installation">
+          <div class="enrollment-actions">
+            <Button variant="primary" @click="copyInstallCommand">复制一键安装命令</Button>
+            <Button @click="downloadScript">下载安装脚本</Button>
+          </div>
+          <p>在目标机的 root Bash 终端粘贴命令即可，程序、CA 和令牌会自动准备。目标机需要能访问 GitHub、Hub；Docker 模式还需已有可用 Docker 并能访问 GHCR。</p>
+          <p>安装器会配置常驻服务，并等待 Hub 确认在线；下载脚本后也可执行 <code>bash opsd-install.sh</code>。</p>
+          <p v-if="copyMessage" role="status">{{ copyMessage }}</p>
+          <label for="node-install-command">一键安装命令</label>
+          <textarea id="node-install-command" ref="commandField" class="enrollment-command enrollment-copy-field" :value="oneClickCommand" rows="4" readonly spellcheck="false" @copy="downloaded = true" />
+        </template>
+        <p v-else class="enrollment-error">当前 Hub 构建未提供可用的一键安装发行信息，请更新 Hub 或使用下方高级手动接入。</p>
+        <details v-if="!expiredEntry" class="enrollment-advanced">
+          <summary>高级：下载原始令牌与手动接入</summary>
+          <Button @click="downloadToken">下载令牌文件</Button>
+          <p>将令牌文件与管理员提供的 Hub CA 证书放到目标机，证书命名为 <code>opsd-ca.pem</code>。</p>
+          <p v-if="enrollment.install_mode === 'host'">手动方式需要先安装 <code>opsd-agent</code>，并自行配置常驻服务。</p>
+          <pre class="enrollment-command">{{ installCommand }}</pre>
+        </details>
       </div>
       <template #footer>
         <Button variant="ghost" :disabled="enrollmentBusy" @click="closeEnrollment">关闭</Button>
@@ -238,6 +304,11 @@ const diskPercent = computed(() => {
 .enrollment-input:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
 .enrollment-error { color: var(--color-danger); font-size: var(--text-sm); }
 .enrollment-result { font-size: var(--text-sm); color: var(--color-muted); }
+.enrollment-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.enrollment-copy-field { width: 100%; border: 1px solid var(--color-border); resize: vertical; font-size: var(--text-xs); }
+.enrollment-advanced { display: flex; flex-direction: column; }
+.enrollment-advanced summary { cursor: pointer; margin-bottom: var(--sp-3); color: var(--color-ink); }
+.enrollment-advanced p, .enrollment-advanced pre { margin-top: var(--sp-3); }
 .enrollment-command { white-space: pre-wrap; overflow-wrap: anywhere; padding: var(--sp-3); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-ink); }
 .nodes-page__empty, .nodes-page__offline {
   color: var(--color-muted); font-size: var(--text-sm);

@@ -381,7 +381,7 @@ export interface paths {
         put?: never;
         /**
          * 签发一次性注册令牌
-         * @description 令牌 600 秒内有效、一次性使用，绑定到新生成的 node_id。每次调用都新建令牌，不参与幂等。
+         * @description 令牌 600 秒内有效、一次性使用，绑定到新生成的 node_id。每次调用都新建令牌，不参与幂等。发行元数据可用时附带完整专属安装脚本；响应禁止缓存，脚本和令牌仅本次返回。
          */
         post: {
             parameters: {
@@ -4089,6 +4089,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取当前 Agent 的在线状态
+         * @description 只在 Agent mTLS 监听提供，身份由客户端证书确定，只返回自身节点。在线判定与控制台一致，不接受查询其他节点的参数。
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 当前证书对应节点的连接状态。 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentConnectionStatus"];
+                    };
+                };
+                /** @description 证书未登记、已过期或节点已撤销；没有客户端证书时 TLS 握手直接失败。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/verify": {
         parameters: {
             query?: never;
@@ -4334,6 +4382,17 @@ export interface components {
             /** @constant */
             type: "storage_user";
             user: string;
+        };
+        AgentConnectionStatus: {
+            /** @description 节点通道存在且最近活动未超过 45 秒。 */
+            connected: boolean;
+            node_id: string;
+        };
+        AgentInstallation: {
+            /** @description 固定的官方 GitHub Agent 发行标签。 */
+            release: string;
+            /** @description UTF-8 Bash 专属安装脚本，含一次性令牌和公共 CA，不含任何私钥，不应保存到普通日志或浏览器持久存储。 */
+            script: string;
         };
         /** @enum {string} */
         AgentInstallMode: "host" | "docker";
@@ -4675,6 +4734,8 @@ export interface components {
             /** @constant */
             expires_in: 600;
             install_mode: components["schemas"]["AgentInstallMode"];
+            /** @description 仅本次返回的专属安装信息；开发构建缺少固定发行版本或 Docker 固定摘要时为 null。 */
+            installation: components["schemas"]["AgentInstallation"] | null;
             node_id: string;
             /** @description 注册令牌明文，一次性使用，仅在本次响应中出现。 */
             token: string;

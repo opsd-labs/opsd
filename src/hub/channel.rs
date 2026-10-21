@@ -120,6 +120,16 @@ pub async fn connect(
         .max_message_size(1024 * 1024)
         .on_upgrade(move |socket| agent_socket(s, binding.node_id, socket)))
 }
+pub async fn status(
+    S(s): S<State>,
+    Extension(peer): Extension<transport::Peer>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let binding = identity(&s, &peer).await?;
+    let node = s.db.get::<Node>("nodes", &binding.node_id).await?;
+    let connected = s.channels.read().await.contains_key(&binding.node_id)
+        && node.is_some_and(|node| node.last_seen > now() - 45);
+    Ok(Json(json!({"node_id": binding.node_id, "connected": connected})))
+}
 async fn agent_socket(s: State, node_id: String, mut socket: WebSocket) {
     let Some(Ok(Message::Text(text))) =
         tokio::time::timeout(std::time::Duration::from_secs(10), socket.recv())

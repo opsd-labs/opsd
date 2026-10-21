@@ -241,10 +241,17 @@ fn agent_url(origin: &str) -> String {
 }
 
 fn agent_image() -> String {
-    std::env::var("OPSD_AGENT_IMAGE").unwrap_or_else(|_| "ghcr.io/opsd-labs/opsd-agent:main".into())
+    ["OPSD_AGENT_IMAGE", "OPSD_BUNDLED_AGENT_IMAGE"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+        .next()
+        .unwrap_or_else(|| "ghcr.io/opsd-labs/opsd-agent:main".into())
 }
 
-pub async fn token(S(s): S<State>, Json(r): Json<Registration>) -> ApiResult<Json<Value>> {
+pub async fn token(
+    S(s): S<State>,
+    Json(r): Json<Registration>,
+) -> ApiResult<impl axum::response::IntoResponse> {
     validate(&r)?;
     let value = format!("{}{}", id(), id());
     let node_id = id();
@@ -261,20 +268,36 @@ pub async fn token(S(s): S<State>, Json(r): Json<Registration>) -> ApiResult<Jso
         },
     )
     .await?;
-    let ca_fingerprint = pki::cert_fingerprint(
-        &std::fs::read_to_string(s.dir.join("pki/ca.pem")).map_err(anyhow::Error::from)?,
-    )?;
+    let ca_pem = std::fs::read_to_string(s.dir.join("pki/ca.pem")).map_err(anyhow::Error::from)?;
+    let ca_fingerprint = pki::cert_fingerprint(&ca_pem)?;
+    let agent_url = agent_url(&s.origin);
+    let agent_image = agent_image();
+    let installation = installation::render(installation::Input {
+        node_id: &node_id,
+        token: &value,
+        expires_at: expires,
+        ca_pem: &ca_pem,
+        fingerprint: &ca_fingerprint,
+        mode: &r.install_mode,
+        hub: &s.origin,
+        agent_url: &agent_url,
+        agent_image: &agent_image,
+    });
     let _ = s.events.send(json!({"type":"enrollment"}));
-    Ok(Json(json!({
-        "token": value,
-        "node_id": node_id,
-        "expires_in": 600,
-        "expires_at": expires,
-        "ca_fingerprint": ca_fingerprint,
-        "install_mode": r.install_mode,
-        "agent_url": agent_url(&s.origin),
-        "agent_image": agent_image(),
-    })))
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(json!({
+            "token": value,
+            "node_id": node_id,
+            "expires_in": 600,
+            "expires_at": expires,
+            "ca_fingerprint": ca_fingerprint,
+            "install_mode": r.install_mode,
+            "agent_url": agent_url,
+            "agent_image": agent_image,
+            "installation": installation,
+        })),
+    ))
 }
 
 #[derive(Serialize)]
