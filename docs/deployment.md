@@ -92,17 +92,29 @@ https://hub.example.com:65535/{安全入口}/
 
 ## 6. 接入 Agent
 
-在 Linux 上构建 Agent：
+在内置控制台“节点”页点击“添加节点”，选择宿主机或 Docker 模式，生成安装信息后：
+
+1. 点击“复制一键安装命令”，在目标机的 root Bash 终端粘贴执行；也可选择“下载安装脚本”，将这个文件放到目标机执行 `bash opsd-install.sh`。
+2. 安装器自动准备令牌和公共 CA，识别 x64／ARM64，下载固定版本程序或拉取固定摘要镜像。
+3. 注册成功后自动配置 systemd 或 Docker 常驻运行，等待 Hub 确认节点在线。
+
+首次注册的令牌有效期为 10 分钟。过期时从待接入记录重新生成；已有节点身份不会被新安装信息覆盖。宿主机模式要求 systemd，支持 Debian／Ubuntu 和 RHEL 系发行版并按需补齐基础工具；Docker 模式要求已有可用 Docker。目标机需要能访问 Hub 和 GitHub，Docker 模式还需访问 GHCR。
+
+官方 Hub 发布镜像已包含配套的 Agent 发行版本和镜像摘要。开发构建缺少这些信息时，界面会说明一键安装不可用。安装恢复、接口边界和本次验收见 [Agent 一键安装](agent-installation.md)。
+
+### 手动接入（高级）
+
+高级选项仍提供原始令牌和手动命令。自行构建 Agent 时：
 
 ```bash
 cargo build --locked --release --bin opsd-agent
 ```
 
-将 `opsd-agent` 安装到节点后，在控制台“节点”页点击“添加节点”，选择宿主机或 Docker 模式并下载一次性令牌文件。令牌有效期为 10 分钟，文件权限应为 `0600`。准备 Hub CA 文件后运行：
+将 `opsd-agent` 安装到节点后，在高级选项下载一次性令牌，文件权限应为 `0600`。准备 Hub CA 文件后运行：
 
 ```bash
 opsd-agent --data-dir /var/lib/opsd-agent enroll \
-  --hub https://hub.example.com \
+  --hub https://hub.example.com:65535 \
   --agent-url wss://hub.example.com:8444/agent \
   --ca /etc/opsd/ca.pem \
   --fingerprint '<初始化时保存的 CA 指纹>' \
@@ -124,7 +136,7 @@ opsd-agent --data-dir /var/lib/opsd-agent run
 
 ### Docker Agent（仅 Docker 与只读采集）
 
-控制台也可以生成 Docker Agent 命令。该模式使用宿主机 Docker socket，具备 Docker、Compose、日志、终端和防火墙只读发现能力，不开放防火墙写入、systemd 控制或存储破坏性操作。在 Hub 的部署环境中设置 `OPSD_AGENT_IMAGE=ghcr.io/opsd-labs/opsd-agent@sha256:<固定摘要>`，注册响应和控制台命令会使用该镜像。生产命令必须使用 CI 输出的固定镜像摘要：
+Docker 模式使用宿主机 Docker socket，具备 Docker、Compose、日志、终端和防火墙只读发现能力，不开放防火墙写入、systemd 控制或存储破坏性操作。默认使用 Hub 发布时配套的固定摘要；需要显式覆盖时可设置 `OPSD_AGENT_IMAGE=ghcr.io/opsd-labs/opsd-agent@sha256:<固定摘要>`。以下为高级手动配置示例：
 
 ```bash
 # 令牌和 CA 只通过本地文件挂载，不放入环境变量或命令参数

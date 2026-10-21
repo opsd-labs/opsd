@@ -227,7 +227,8 @@ jobs:
             }
             const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({...context.repo, basehead: `${run.head_sha}...${context.sha}`});
             const allowed = new Set(['tests/share-e2e.mjs', '.github/workflows/publish-image.yml']);
-            if (comparison.files.some(file => !allowed.has(file.filename))) {
+            const documentation = name => name === 'README.md' || (name.startsWith('docs/') && name.endsWith('.md'));
+            if (comparison.files.some(file => !allowed.has(file.filename) && !documentation(file.filename))) {
               throw new Error('业务源码、依赖或其他输入已变化，不能只复用上一批安装制品。');
             }
             const cases = jobs.filter(job => /^一键安装 (amd64|arm64) \/ (host|docker)$/.test(job.name));
