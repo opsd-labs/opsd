@@ -10,7 +10,7 @@ import {loadContract} from './lib/http-assert.mjs';
 const root=process.cwd(),run=path.join(root,'.data','integration-'+Date.now());await mkdir(run,{recursive:true});
 const bin=path.join(root,'target','debug');const exe=name=>path.join(bin,name+(process.platform==='win32'?'.exe':''));
 const hubDir=path.join(run,'hub'),agentDir=path.join(run,'agent');const password=randomBytes(24).toString('hex');const passwordFile=path.join(run,'password');await writeFile(passwordFile,password,{mode:0o600});
-async function command(name,args){return new Promise((resolve,reject)=>{const child=spawn(exe(name),args,{cwd:root,windowsHide:true});let output='';child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);child.on('error',reject);child.on('exit',code=>code===0?resolve(output):reject(new Error(output)));});}
+async function command(name,args){return new Promise((resolve,reject)=>{const child=spawn(name==='docker'?'docker':exe(name),args,{cwd:root,windowsHide:true});let output='';child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);child.on('error',reject);child.on('exit',code=>code===0?resolve(output):reject(new Error(output)));});}
 const initOutput=await command('opsd-hub',['--data-dir',hubDir,'init','--password-file',passwordFile]);
 // 安全入口由初始化生成并打印，控制台只响应带入口的地址。
 const entrance=initOutput.match(/控制台安全入口：([A-Za-z0-9\-._~]{16})/)?.[1];
@@ -39,7 +39,7 @@ function request(route,method='GET',body,options={}){return new Promise((resolve
 /** 上传主题包等原始字节；需要会话与 CSRF。 */
 function upload(route,bytes){return new Promise((resolve,reject)=>{const req=https.request({hostname:'localhost',port:base,path:route,method:'POST',ca,headers:{Origin:`https://localhost:${base}`,Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/zip','Content-Length':bytes.length}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,headers:res.headers});});});req.on('error',reject);req.setTimeout(10000,()=>req.destroy(new Error('请求超时')));req.write(bytes);req.end();});}
 
-let hub,agent,etFixture;const logs=[];
+let hub,agent,etFixture;let portainerOwned=false;let fixtureOwned=false;const logs=[];
 function launch(name,args){const c=spawn(exe(name),args,{cwd:root,windowsHide:true});c.stdout.on('data',b=>logs.push(b.toString()));c.stderr.on('data',b=>logs.push(b.toString()));return c;}
 async function wait(fn,label){for(let i=0;i<80;i++){try{if(await fn())return}catch{}await new Promise(r=>setTimeout(r,200));}throw new Error(`${label} 超时\n${logs.join('').slice(-4000)}`);}
 async function stop(c){if(!c||c.exitCode!==null)return;const done=new Promise(r=>c.on('exit',r));c.kill();await done;}
@@ -245,6 +245,40 @@ try{
  assert.equal(etConfig.hostname,'新名称');assert.equal(etConfig.mtu,1400);assert.equal(etConfig.network_secret,'upstream-private-network');
  assert.equal((await request('/plugins/et/0.1.0','DELETE')).status,200);
  const knownDirectory=(await request('/network')).data.directory;
+ if(process.env.OPSD_LAB==='1'){
+  // CI 自有 Docker Engine 上运行真实 Portainer；现有业务容器不被接管或重建。
+  const existingName='opsd-integration-existing';
+  await command('docker',['run','-d','--name',existingName,'--label','io.opsd.integration=true','alpine:3.22','sh','-c','echo opsd-existing; sleep 1200']);fixtureOwned=true;
+  const before=JSON.parse(await command('docker',['inspect',existingName]))[0];
+  assert.equal((await upload('/'+entrance+'/api/v1/plugins/package',await readFile(path.join(root,'.release/plugins/docker-0.1.0.zip')))).status,200);
+  assert.equal((await request('/plugins/docker/selection','PUT',{version:'0.1.0',enabled:true})).status,200);
+  assert.equal((await request('/plugins/docker/configuration','PUT',{config:{},secrets:{admin_password:randomBytes(18).toString('hex'),agent_secret:randomBytes(18).toString('hex')}})).status,200);
+  assert.equal((await request('/network','PUT',{node_id:node})).status,200);
+  async function dockerJob(path,input){
+   const accepted=await request('/plugins/docker/api'+path,'POST',{...input,idempotency_key:randomBytes(16).toString('hex')});assert.equal(accepted.status,202,JSON.stringify(accepted.data));
+   for(let attempt=0;attempt<600;attempt++){
+    const task=(await request('/tasks/'+accepted.data.task_id)).data;
+    if(task.status==='succeeded')return task.result;
+    if(['failed','uncertain','blocked','cancelled'].includes(task.status))throw new Error('真实 Portainer 任务未成功：'+task.error);
+    await new Promise(resolve=>setTimeout(resolve,1000));
+   }
+   throw new Error('真实 Portainer 任务超时');
+  }
+  portainerOwned=true;
+  await dockerJob('/install',{nodes:[node],allow_engine_install:false});
+  const actual=JSON.parse(await command('docker',['inspect','opsd-portainer']))[0];
+  assert.deepEqual(actual.HostConfig.PortBindings,{'9443/tcp':[{HostIp:'127.0.0.1',HostPort:'9443'}]});
+  const inventory=await request('/plugins/docker/api/inventory','POST',{node_id:node});assert.equal(inventory.status,200);assert.ok(inventory.data.containers.some(container=>container.Id===before.Id));
+  const logs=await request('/plugins/docker/api/logs','POST',{node_id:node,container:before.Id});assert.equal(logs.status,200);assert.ok(logs.data.text.includes('opsd-existing'));
+  await dockerJob('/mutate',{node_id:node,resource:'container',operation:'stop',id:before.Id});
+  await dockerJob('/mutate',{node_id:node,resource:'container',operation:'start',id:before.Id});
+  const after=JSON.parse(await command('docker',['inspect',existingName]))[0];assert.equal(after.Id,before.Id);assert.deepEqual(after.Mounts,before.Mounts);assert.equal(after.State.Running,true);
+  // 重复安装只复用自有服务；普通既有容器的身份和挂载仍然不变。
+  await dockerJob('/install',{nodes:[node],allow_engine_install:false});
+  const reused=JSON.parse(await command('docker',['inspect','opsd-portainer']))[0];assert.equal(reused.Id,actual.Id);
+  console.log('通过：真实 Portainer Server 安装、ET 地址绑定路径、原生 API 盘点和日志、原有容器启停与身份保留、重复安装复用；地址使用隔离回环夹具，不代表现网 ET 或多主机 Agent 验收。');
+ }
+
  await new Promise(resolve=>etFixture.close(resolve));etFixture=undefined;
  // 使用尚未缓存的接口验证上游不可用；已知地址不得随之清空。
  assert.equal((await request('/plugins/et/api/instances','POST',{machine_id:'33333333-3333-4333-8333-333333333333'})).status,400);
@@ -503,4 +537,7 @@ try{
  try{assertSchema(poisoned,responseSchema('/api/v1/export/keys','get',200),'注入额外字段的输出密钥列表副本');}catch{rejected=true;}
  assert.ok(rejected,'校验器必须拒绝带 schema 外字段的响应副本');
  console.log('通过：核心认证、无 IP 注册、任务幂等、网络目录、公开字段与密钥范围、主题 v2、文件与数据库既有契约、备份恢复及节点撤销。');
-}finally{etFixture?.close();await stop(agent);await stop(hub);await writeFile(path.join(run,'test.log'),logs.join(''));}
+}finally{
+ if(portainerOwned){await command('docker',['rm','-f','opsd-portainer']).catch(()=>{});await command('docker',['volume','rm','opsd-portainer-data']).catch(()=>{});}
+ if(fixtureOwned)await command('docker',['rm','-f','opsd-integration-existing']).catch(()=>{});
+ etFixture?.close();await stop(agent);await stop(hub);await writeFile(path.join(run,'test.log'),logs.join(''));}

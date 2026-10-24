@@ -270,7 +270,7 @@ async fn register(context: &Context, node: &str, address: &str, local: bool) -> 
     let url = if local {
         "unix:///var/run/docker.sock".to_owned()
     } else {
-        format!("tcp://{address}:9002")
+        format!("tcp://{}:9002", sdk::address_host(address)?)
     };
     let record = if let Some(existing) = endpoints
         .as_array()

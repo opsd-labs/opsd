@@ -56,13 +56,13 @@ fn selected(paths: &std::collections::BTreeMap<PathKind, Link>) -> Option<(PathK
         .or_else(|| public.map(|l| (PathKind::Public, l)))
 }
 pub async fn preferred(ctx: &ContextState) {
-    *ctx.outbound.write().await = selected(&ctx.paths.read().await).map(|(_, l)| l.tx.clone());
+    *ctx.outbound.write().await = selected(&*ctx.paths.read().await).map(|(_, l)| l.tx.clone());
 }
 pub async fn active(ctx: &ContextState, path: PathKind, generation: &str) -> bool {
-    selected(&ctx.paths.read().await).is_some_and(|(p, l)| p == path && l.generation == generation)
+    selected(&*ctx.paths.read().await).is_some_and(|(p, l)| p == path && l.generation == generation)
 }
 pub async fn overlay_active(ctx: &ContextState) -> bool {
-    selected(&ctx.paths.read().await).is_some_and(|(p, _)| p == PathKind::Overlay)
+    selected(&*ctx.paths.read().await).is_some_and(|(p, _)| p == PathKind::Overlay)
 }
 pub async fn dial_loop(ctx: ContextState, worker: mpsc::Sender<String>, path: PathKind) {
     let mut backoff = 1;

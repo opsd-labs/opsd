@@ -286,8 +286,9 @@ async fn validate_selections(cluster: &str, selections: &[Value]) -> Result<()> 
             let unit_path = Path::new("/etc/systemd/system").join(unit.trim());
             if unit_path.exists() {
                 ensure!(
-                    std::fs::read_to_string(unit_path)?.starts_with("# OPSD Silo\n"),
-                    "已有挂载服务不属于 Silo 插件"
+                    journal.exists()
+                        && std::fs::read_to_string(unit_path)?.starts_with("# OPSD Silo\n"),
+                    "挂载单元已有其他用途，不能覆盖"
                 );
             }
             if journal.exists() {

@@ -431,7 +431,7 @@ async fn connection(
                     if matches!(accepted.status,TaskStatus::Accepted|TaskStatus::Pending){let _=worker.try_send(accepted.id.clone());}
                     socket.send(Message::Text(serde_json::to_string(&Frame::Report{task:accepted.clone()})?.into())).await?;
                 },
-                Frame::StreamOpen{stream_id,kind,target,command}=>{
+                Frame::StreamOpen{stream_id,kind,target,command:_}=>{
                     anyhow::ensure!(streams.len()<8,"并发数据流超过上限");
                     let(input,input_rx)=mpsc::channel(16);let out=data_tx.clone();let sid=stream_id.clone();
                     let jail=file_jail(&ctx);

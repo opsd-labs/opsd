@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, bail, ensure};
+use anyhow::{Context as _, Result, ensure};
 use opsd_plugin_sdk::{self as sdk, Request};
 use serde_json::{Value, json};
 

@@ -177,6 +177,8 @@ jobs:
           path: .release/plugins
       - name: HTTP 集成测试
         if: ${{ !contains(inputs.reuse_passed, 'http') }}
+        env:
+          OPSD_LAB: '1'
         run: node tests/integration.mjs
       - name: 负向契约门禁
         if: ${{ !contains(inputs.reuse_passed, 'negative') }}

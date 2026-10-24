@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context as _;
 use opsd_plugin_sdk::{Context, Request};
 
 pub async fn execute(
@@ -14,7 +15,6 @@ pub async fn execute(
         opsd_plugin_sdk::identifier(plugin) && opsd_plugin_sdk::identifier(version),
         "插件编号或版本无效"
     );
-    let _guard = ctx.network.lock().await;
     let arch = if cfg!(target_arch = "aarch64") {
         "arm64"
     } else {
@@ -136,7 +136,8 @@ async fn hub_request(
         Ok::<_, anyhow::Error>(
             Limited::new(response.into_body(), limit)
                 .collect()
-                .await?
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?
                 .to_bytes()
                 .to_vec(),
         )

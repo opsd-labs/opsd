@@ -297,10 +297,6 @@ async fn install(request: &Request) -> Result<Value> {
     Ok(state)
 }
 
-fn docker_text(value: &Value) -> Result<String> {
-    let text = value["text"].as_str().context("Docker 没有返回命令输出")?;
-    Ok(text.to_owned())
-}
 async fn mcli(context: &Context, cluster: &Value, args: Vec<String>) -> Result<Value> {
     let node = cluster["spec"]["members"][0]["node_id"]
         .as_str()
