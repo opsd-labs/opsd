@@ -176,4 +176,4 @@ export OPSD_DATABASE_URL='mysql://用户:密码@地址/数据库'
 
 升级后检查健康状态、控制台登录、Agent 重连和历史任务。回滚时使用之前保存的镜像摘要，不要重新拉取不确定的 `latest`。
 
-本批插件部署次序为：手动接入 Hub 宿主节点 → ET 插件关联并指定控制机 → Docker 插件安装 Portainer → Silo 明确选盘。服务必须绑定 ET 地址；端口、证书、恢复契约和未完成部署验收统一见 [架构说明](architecture.md)。本批没有更新现网 C091。
+本批插件部署次序为：手动接入 Hub 宿主节点 → ET 插件关联并指定控制机 → Docker 插件安装 Portainer → Silo 明确选盘。服务必须绑定 ET 地址；端口、证书、恢复契约统一见 [架构说明](architecture.md)。C091 Hub 和三个正式插件包已更新；配套固定制品、线上证据与尚未执行的业务部署见 [本次部署记录](architecture.md#正式发行与-c091-部署)。

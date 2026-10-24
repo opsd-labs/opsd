@@ -109,4 +109,26 @@ Portainer Server 在指定 Hub 宿主节点运行，其他受管节点安装普�
 
 已有路径的非格式化与新进程恢复、缺失设备拒绝已验证；真实新盘格式化、四节点 Silo 部署／恢复、桶与用户的真实集群操作仍未验收。Portainer 多主机 Agent 接入、各发行版补装依赖、现代 firewalld 独占表和生产规模也没有被上述成功结果覆盖。
 
-本批没有部署 C091、安装其宿主机 Agent、格式化真实磁盘、发布 main/latest 或正式插件版本。现有发布工作流增加 plugins_only 与单插件选择，正式包走 musl x64／ARM64 独立构建与版本发行；该正式双架构发行链尚未执行。CI 的 GNU 调试插件 ZIP 仅作验收，不能视为生产 Hub 的通用安装包。
+上述源码验收结束时尚未部署 C091 或发布正式插件包；后续正式发行与线上更新见下节。CI 的 GNU 调试插件 ZIP 仅作验收，不能代替正式 musl 发行包。
+
+## 正式发行与 C091 部署
+
+2026-10-25，按用户授权完成固定版本发行及既有 C091 Hub 更新。业务源码和插件包来自 `e5ce7b3e69666a69db2d7c1f994ee9a4827371ce`，Hub 镜像提交为 `ae922421dd54a2ab2d246488f4f4a65de275be84`；两者之间只修改发布流程，没有改动业务源码、依赖或接口。
+
+| 制品或范围 | 本次结果 |
+| --- | --- |
+| Hub | `ghcr.io/opsd-labs/opsd@sha256:a4e84d992ff780bfe1b751caeb7c0195ccf1ea2d19487b2194919d31b5a9b691` |
+| Agent 镜像 | `ghcr.io/opsd-labs/opsd-agent@sha256:24e5474081153acbca90331e661254db86e781bb4d8d768204b5c67c6db4fe81` |
+| Agent 宿主机安装包 | [固定发行版](https://github.com/opsd-labs/opsd/releases/tag/agent-e5ce7b3e69666a69db2d7c1f994ee9a4827371ce)，Linux musl x64／ARM64；开发分支继续标记为预发行 |
+| 三个插件正式包 | [ET 0.1.0](https://github.com/opsd-labs/opsd/releases/tag/plugin-et-v0.1.0)、[Docker 0.1.0](https://github.com/opsd-labs/opsd/releases/tag/plugin-docker-v0.1.0)、[Silo 0.1.0](https://github.com/opsd-labs/opsd/releases/tag/plugin-silo-v0.1.0)；各包含 musl x64／ARM64 程序、页面和业务契约，[独立发行流程通过](https://github.com/opsd-labs/opsd/actions/runs/40108289260) |
+| Hub 及安装验收 | [正式发布流程通过](https://github.com/opsd-labs/opsd/actions/runs/40110063758)：Hub 启动、x64／ARM64 × 宿主机／Docker 四组合均成功；按现有流程验证真实安装、重复执行、服务恢复和 mTLS 在线确认 |
+
+Agent 两个架构在原运行中已构建成功，后续通过 `reuse_agent_run` 继续发行，未重复构建。该入口只允许发布流程或 Markdown 变化，沿用原 Agent 源码提交和发行标签；`resume_installation_run` 仍要求其原运行拥有完整成功制品。摘要读取改为消费完整命令输出，避免提前结束管道；自动发布令牌拒绝创建本批 Agent 发行记录后，使用现有仓库凭据上传了同一批成功制品。运行期正常、重试、回退仍为 0 次模型请求，请求、缓存与成本行为沿用“请求、延迟与成本”一节。
+
+C091 的 `/opt/opsd-test` 只更新 Hub 固定镜像及配套 Agent 引用，沿用原数据挂载、CA、服务证书、端口和安全入口，没有挂载 Docker socket。Hub 为 `healthy`、重启计数为 0；三个正式插件均通过认证安装接口按依赖顺序安装并启用，真实后端初始化成功。公网大包上传发生慢传输和中断后，先查询已安装记录，再由 C091 下载正式包并经回环连接调用同一套接口；TLS 身份、Cookie、Origin 与 CSRF 校验均保留。
+
+线上严格校验原 CA 和访问地址后，登录、会话、节点、注册摘要、任务及插件列表均为 200，控制台 JS／CSS 和三个插件的 HTML／JS 资源均为 200；ET 插件控制台查询和 Silo 集群查询经真实后端返回。当前会话没有可用浏览器，线上未执行实际页面交互；浏览器证据来自上述发布验收和既有 CI。
+
+部署时节点、待接入记录和任务均为 0，没有为验收创建生产节点、令牌或输出密钥。ET 尚未配置，Silo 集群数为 0；没有安装 C091 宿主机 Agent、创建 Portainer／Silo 实例、格式化真实磁盘、接管其他服务或更新 main/latest。后续仍需用户手动接入宿主机 Agent、关联 ET 并指定 Hub 宿主节点，之后才能部署 Portainer；真实多机 Agent 和 Silo 集群验收边界不变。
+
+发布结束时，GitHub 的两条未启动重试记录 `40108286913`、`40109470709` 仍显示 queued，取消接口返回 409；它们不计为通过，也不会自动部署 C091。本次成功证据以 `40110063758` 为准。
