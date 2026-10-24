@@ -39,6 +39,7 @@ jobs:
         if: ${{ !contains(inputs.reuse_passed, 'other-subsystems') }}
         run: rustfmt --edition 2024 --check src/hub/api.rs
       - name: 运行 Rust 测试
+        if: ${{ !contains(inputs.reuse_passed, 'rust-unit') }}
         run: |
           if [ "${{ contains(inputs.reuse_passed, 'other-subsystems') }}" = "true" ]; then
             cargo test --locked --workspace hub::theme::
@@ -51,7 +52,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nftables iptables ufw firewalld dbus iproute2
-          sudo env "PATH=$PATH" OPSD_LAB=1 cargo test --locked --bin opsd-agent isolated_tcp_network_policy -- --ignored --nocapture
+          sudo env "PATH=$PATH" "CARGO_HOME=$CARGO_HOME" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN=1.95.0 OPSD_LAB=1 cargo test --locked --bin opsd-agent isolated_tcp_network_policy -- --ignored --nocapture
 
   web-contract:
     name: Web 与契约

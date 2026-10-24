@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix="opsd-network-") as temporary:
     for backend in ["nftables","iptables","ufw","firewalld"]:
         prefix="opsd-"+uuid.uuid4().hex[:8]
         target,peer,sink=[prefix+s for s in ["t","p","s"]]
-        created=[]; processes=[]; env=dict(os.environ,LC_ALL="C",OPSD_AGENT_MODE="host")
+        created=[]; processes=[]; env=dict(os.environ,LC_ALL="C",OPSD_AGENT_MODE="host",DBUS_SYSTEM_BUS_ADDRESS="unix:path="+str(directory/"no-host-bus"))
         def inside(namespace,*args,timeout=30):
             return run("ip","netns","exec",namespace,*args,env=env,timeout=timeout)
         def verify(namespace,source,destination,expected):
@@ -82,6 +82,7 @@ with tempfile.TemporaryDirectory(prefix="opsd-network-") as temporary:
                 run("ip","netns","add",namespace);created.append(namespace)
                 run("ip","-n",namespace,"link","set","lo","up")
                 inside(namespace,"sysctl","-qw","net.ipv4.ip_forward=1","net.ipv6.conf.all.forwarding=1","net.ipv4.conf.all.rp_filter=0","net.ipv4.conf.default.rp_filter=0")
+            inside(target,"ufw","--force","disable")
             for a,b,namespace in [("opsd0","peer0",peer),("opsd-et","peer-et",peer),("dock0","sink0",sink)]:
                 run("ip","-n",target,"link","add",a,"type","veth","peer","name",b,"netns",namespace)
                 for n,interface in [(target,a),(namespace,b)]:run("ip","-n",n,"link","set",interface,"up")
