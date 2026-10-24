@@ -9,7 +9,7 @@
 //! 1. **不猜**。未采集到盘位的节点标为「待采集」，绝不判为「不适合」。
 //! 2. **每个结论都要有原因**。界面直接展示原因，而不是只给一个分数。
 //! 3. **不把信息不全当没问题**。采集缺口（`gaps`）会让结论降级为「待处理」。
-use opsd::protocol::{Action, HostInventory, Node, TaskEnvelope, TaskStatus};
+use opsd::protocol::{HostInventory, Node};
 use serde::{Deserialize, Serialize};
 
 /// 分布式对象存储要求的最小节点数。
@@ -457,65 +457,6 @@ pub fn human_bytes(value: u64) -> String {
     } else {
         format!("{size:.1} {}", UNITS[unit])
     }
-}
-
-/* ------------------------------------------------------------------ *
- * 处理函数
- * ------------------------------------------------------------------ */
-
-use super::*;
-use axum::{Json, extract::State as S};
-
-/// 各节点最近一次主机盘点结果。盘点结果不大且变化慢，因此直接留在内存里。
-pub type SharedInventories =
-    std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, HostInventory>>>;
-
-/// 存储预检报告。
-///
-/// 报告是**结论式**的：逐节点给出适合与否以及具体原因，再给一致性检查与推荐拓扑。
-/// 未采集的节点标为「待采集」，不会被当作不适合。
-pub async fn readiness(S(s): S<State>) -> ApiResult<Json<Report>> {
-    let nodes = s.db.list::<Node>("nodes").await?;
-    let online: std::collections::HashSet<String> =
-        s.channels.read().await.keys().cloned().collect();
-    let inventories = s
-        .host_inventories
-        .read()
-        .map_err(|_| {
-            ApiError(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "盘点缓存不可用".into(),
-            )
-        })?
-        .clone();
-    Ok(Json(analyze(&nodes, &online, &inventories, now())))
-}
-
-/// 触发一次主机盘点。只读操作，但走任务机制以便看到执行结果。
-pub async fn host_inspect(
-    S(s): S<State>,
-    Path(node_id): Path<String>,
-    Json(input): Json<ActionRequest>,
-) -> ApiResult<Json<serde_json::Value>> {
-    let task = TaskEnvelope::new(
-        node_id.clone(),
-        input.idempotency_key,
-        Action::HostInspect {},
-    );
-    let task = s.db.accept_task(&task).await?;
-    if task.status == TaskStatus::Pending {
-        if let Some(tx) = s.channels.read().await.get(&node_id).map(|c| c.1.clone()) {
-            let _ = tx.send(Frame::Task { task: task.clone() }).await;
-        }
-        let _ = s.events.send(serde_json::json!({"type":"tasks"}));
-    }
-    Ok(Json(serde_json::json!({ "task_id": task.id })))
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ActionRequest {
-    pub idempotency_key: String,
 }
 
 #[cfg(test)]

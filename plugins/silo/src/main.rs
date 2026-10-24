@@ -1,4 +1,5 @@
 mod node;
+mod readiness;
 use anyhow::{Context as _, Result, bail, ensure};
 use opsd_plugin_sdk::{self as sdk, Context, Request, Response};
 use serde_json::{Value, json};
@@ -389,17 +390,18 @@ async fn handle(request: Request) -> Result<Response> {
         }
         if request.path == "inventory" {
             let node = name(&request.body["node_id"])?;
-            return Ok(Response::ok(
-                sdk::node_task(
-                    c,
-                    node,
-                    "inventory",
-                    json!({}),
-                    &format!("inventory:{node}"),
-                )
-                .await?,
-            ));
+            let inventory = sdk::node_task(
+                c,
+                node,
+                "inventory",
+                json!({}),
+                &format!("inventory:{node}"),
+            )
+            .await?;
+            sdk::kv_put(&format!("inventory:{node}"), inventory.clone()).await?;
+            return Ok(Response::ok(inventory));
         }
+
         let cluster = name(&request.body["cluster"])?;
         let state = sdk::kv_get(&format!("cluster:{cluster}")).await?;
         ensure!(state["phase"] == "ready", "集群尚未就绪");
@@ -476,6 +478,29 @@ async fn handle(request: Request) -> Result<Response> {
         return Ok(Response::ok(result));
     }
     match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/readiness") => {
+            let nodes: Vec<opsd::protocol::Node> =
+                serde_json::from_value(sdk::core("nodes", json!({})).await?)?;
+            let at = opsd::protocol::now();
+            let online = nodes
+                .iter()
+                .filter(|node| node.last_seen > at - 45)
+                .map(|node| node.id.clone())
+                .collect();
+            let mut inventories = std::collections::HashMap::new();
+            for node in &nodes {
+                let inventory = sdk::kv_get(&format!("inventory:{}", node.id)).await?;
+                if !inventory.is_null() {
+                    inventories.insert(node.id.clone(), serde_json::from_value(inventory)?);
+                }
+            }
+            Ok(Response::ok(serde_json::to_value(readiness::analyze(
+                &nodes,
+                &online,
+                &inventories,
+                at,
+            ))?))
+        }
         ("GET", "/clusters") => {
             let index = sdk::kv_get("clusters")
                 .await?

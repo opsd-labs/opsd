@@ -41,7 +41,9 @@ jobs:
       - name: 运行 Rust 测试
         if: ${{ !contains(inputs.reuse_passed, 'rust-unit') }}
         run: |
-          if [ "${{ contains(inputs.reuse_passed, 'other-subsystems') }}" = "true" ]; then
+          if [ "${{ contains(inputs.reuse_passed, 'storage-only') }}" = "true" ]; then
+            cargo test --locked -p opsd-plugin-silo readiness::tests
+          elif [ "${{ contains(inputs.reuse_passed, 'other-subsystems') }}" = "true" ]; then
             cargo test --locked --workspace hub::theme::
           else
             cargo test --locked --workspace

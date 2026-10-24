@@ -4,11 +4,11 @@ mod auth;
 mod channel;
 mod database;
 mod export;
+mod host;
 mod installation;
 mod metrics;
 mod network;
 mod plugins;
-mod storage;
 mod theme;
 use anyhow::Result;
 use axum::{
@@ -106,7 +106,7 @@ pub struct State {
     /// 控制台静态资源根目录。
     pub web: PathBuf,
     /// 各节点最近一次主机盘点，供存储预检做集中分析。
-    pub host_inventories: storage::SharedInventories,
+    pub host_inventories: host::SharedInventories,
     /// 各节点最近一次数据库只读巡检结果。同样只留在内存里：
     /// 它体积不大但变化很快，落库只会得到一份过期的运维视图。
     pub db_reports: database::SharedDbReports,
@@ -427,11 +427,7 @@ pub async fn run() -> Result<()> {
                 )
                 .route("/api/v1/themes/{short}", delete(theme::remove_theme))
                 .route("/api/v1/audit", get(audit::query))
-                .route("/api/v1/storage/readiness", get(storage::readiness))
-                .route(
-                    "/api/v1/nodes/{id}/host-inspect",
-                    post(storage::host_inspect),
-                )
+                .route("/api/v1/nodes/{id}/host-inspect", post(host::host_inspect))
                 // 数据库只读运维视图：巡检下发 + 集中结论
                 .route("/api/v1/database/overview", get(database::overview))
                 .route("/api/v1/nodes/{id}/db-inspect", post(database::db_inspect))
@@ -451,21 +447,34 @@ pub async fn run() -> Result<()> {
                 .with_state(state.clone());
             // 浏览器面：静态资源与全部 API 统一挂在 /{安全入口} 之下，
             // 门禁在最外层按首段路径校验，因此这里不再单独处理路径前缀。
-            let console = Router::new()
-                .merge(public)
-                .merge(private)
-                .route("/frontend/{short}/", get(theme::console_frontend_index))
-                .route(
-                    "/frontend/{short}/{*path}",
-                    get(theme::console_frontend_asset),
-                )
-                .nest_service(
-                    "/assets",
-                    tower_http::services::ServeDir::new(web.join("assets")),
-                )
-                .fallback(theme::console_index)
-                .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
-                .with_state(state.clone());
+            let console =
+                Router::new()
+                    .merge(public)
+                    .merge(private)
+                    .route("/frontend/{short}/", get(theme::console_frontend_index))
+                    .route(
+                        "/frontend/{short}/{*path}",
+                        get(theme::console_frontend_asset),
+                    )
+                    .nest_service(
+                        "/assets",
+                        tower_http::services::ServeDir::new(web.join("assets")),
+                    )
+                    .fallback(
+                        |axum::extract::State(s): axum::extract::State<State>,
+                         uri: axum::http::Uri| async move {
+                            if uri.path().starts_with("/api/") {
+                                axum::response::IntoResponse::into_response(ApiError(
+                                    axum::http::StatusCode::NOT_FOUND,
+                                    "接口不存在或已迁入插件".into(),
+                                ))
+                            } else {
+                                theme::console_index(axum::extract::State(s)).await
+                            }
+                        },
+                    )
+                    .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
+                    .with_state(state.clone());
             // 主题包上传需要更大的体积上限。它必须在全局 1 MB 限制**之后**合并，
             // 否则会被那条限制覆盖，导致稍大的主题包直接被 413 拒绝。
             let theme_upload = Router::new()

@@ -435,6 +435,286 @@
           }
         }
       }
+    },
+    "/readiness": {
+      "get": {
+        "summary": "读取插件的存储适合度与推荐拓扑",
+        "responses": {
+          "200": {
+            "description": "只使用明确取得的主机盘点；缺失时标为待采集。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Report"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Suitability": {
+        "type": "string",
+        "description": "结论等级：可直接进入部署计划 / 有条件可用 / 硬性阻断 / 尚未采集（不算不适合）。",
+        "enum": [
+          "suitable",
+          "needs_work",
+          "unsuitable",
+          "pending"
+        ]
+      },
+      "Candidate": {
+        "type": "object",
+        "required": [
+          "device",
+          "path",
+          "size",
+          "rotational"
+        ],
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "设备名。"
+          },
+          "path": {
+            "type": "string",
+            "description": "设备路径。"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "容量字节。"
+          },
+          "rotational": {
+            "type": "boolean",
+            "description": "是否机械盘。"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "磁盘型号，可缺失或为 null。"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Rejected": {
+        "type": "object",
+        "required": [
+          "device",
+          "reason"
+        ],
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "设备名。"
+          },
+          "reason": {
+            "type": "string",
+            "description": "拒绝原因。"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StorageNodeVerdict": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "name",
+          "online",
+          "suitability",
+          "reasons",
+          "candidates",
+          "rejected",
+          "gaps"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "节点编号。"
+          },
+          "name": {
+            "type": "string",
+            "description": "节点名。"
+          },
+          "online": {
+            "type": "boolean",
+            "description": "是否在线。"
+          },
+          "suitability": {
+            "$ref": "#/components/schemas/Suitability"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "逐条结论原因，界面直接展示。"
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            },
+            "description": "候选盘。"
+          },
+          "rejected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rejected"
+            },
+            "description": "被拒盘及原因，便于运维核对。"
+          },
+          "collected_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "盘点时间（unix 秒），未采集为 null。"
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "采集缺口。"
+          },
+          "link_mbps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "该节点最快物理链路速率（Mbps），未采集为 null。"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Check": {
+        "type": "object",
+        "required": [
+          "name",
+          "passed",
+          "detail"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "检查项名。"
+          },
+          "passed": {
+            "type": "boolean",
+            "description": "是否通过。"
+          },
+          "detail": {
+            "type": "string",
+            "description": "不通过时的具体说明。"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Topology": {
+        "type": "object",
+        "required": [
+          "nodes",
+          "drives_per_node",
+          "drive_size",
+          "raw_capacity",
+          "parity",
+          "usable_capacity",
+          "parity_note"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "integer",
+            "description": "节点数。"
+          },
+          "drives_per_node": {
+            "type": "integer",
+            "description": "每节点盘数。"
+          },
+          "drive_size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "最小盘容量字节，容量按最小盘计算。"
+          },
+          "raw_capacity": {
+            "type": "integer",
+            "format": "int64",
+            "description": "原始裸容量。"
+          },
+          "parity": {
+            "type": "integer",
+            "description": "纠删码校验盘数。"
+          },
+          "usable_capacity": {
+            "type": "integer",
+            "format": "int64",
+            "description": "扣除校验后的可用容量。"
+          },
+          "parity_note": {
+            "type": "string",
+            "description": "校验说明，例如「共 N 块盘，校验 P 块；容量按最小盘 X 计算」。"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Report": {
+        "type": "object",
+        "required": [
+          "generated_at",
+          "nodes",
+          "checks",
+          "ready",
+          "summary"
+        ],
+        "properties": {
+          "generated_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "报告生成时间（unix 秒）。"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageNodeVerdict"
+            },
+            "description": "逐节点结论。"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            },
+            "description": "一致性检查项。"
+          },
+          "topology": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Topology"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "推荐拓扑；条件不满足时为 null。"
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "总体是否可直接进入部署计划。"
+          },
+          "summary": {
+            "type": "string",
+            "description": "面向运维的总结说明。"
+          }
+        },
+        "additionalProperties": false
+      }
     }
   }
 }

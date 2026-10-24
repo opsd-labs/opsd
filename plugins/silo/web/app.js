@@ -4,7 +4,7 @@ const main = page('Silo 分布式存储', '明确选择数据盘或已有目录�
 const clusters = el('div')
 const wizard = el('details', {}, el('summary', {}, '部署新集群'))
 const tools = el('div')
-main.append(el('div', { class: 'row' }, button('刷新集群', refresh)), clusters, wizard, tools)
+main.append(el('div', { class: 'row' }, button('刷新集群', refresh), button('查看部署适合度', async () => { const result=await api('/readiness');tools.replaceChildren(panel('存储适合度',el('p',{},result.summary),table(['节点','结论','原因'],result.nodes.map(node=>[node.name,({suitable:'适合',needs_work:'待处理',unsuitable:'不适合',pending:'待采集'})[node.suitability],node.reasons.join('；')])),result.topology?el('pre',{},json(result.topology)):el('p',{class:'muted'},'信息不完整时不生成推荐拓扑。'))) })), clusters, wizard, tools)
 let entries = []
 let activeCluster
 

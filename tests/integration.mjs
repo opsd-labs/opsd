@@ -470,8 +470,17 @@ try{
 
  // ---- 存储预检 ----
  // 尚未盘点时必须给出"待采集"，而不是判为不适合
- const readiness=await request('/storage/readiness');
+ assert.equal((await request('/storage/readiness')).status,404,'存储业务报告迁入插件');
+ const installedBusiness=(await request('/plugins')).data.plugins;
+ for(const id of ['docker','silo']){
+  if(installedBusiness.some(record=>record.manifest.id===id&&record.enabled))continue;
+  assert.equal((await upload('/'+entrance+'/api/v1/plugins/package',await readFile(path.join(root,'.release/plugins/'+id+'-0.1.0.zip')))).status,200);
+  assert.equal((await request('/plugins/'+id+'/selection','PUT',{version:'0.1.0',enabled:true})).status,200);
+ }
+ const readiness=await request('/plugins/silo/api/readiness');
  assert.equal(readiness.status,200);
+ const siloContract=await loadContract(path.join(root,'plugins/silo/api.json'));
+ siloContract.assertSchema(readiness.data,siloContract.responseSchema('/readiness','get',200),'Silo 插件预检报告');
  assert.equal(readiness.data.nodes.length,1,'应覆盖全部未撤销节点');
  const verdict=readiness.data.nodes[0];
  assert.equal(verdict.suitability,'pending','未盘点的节点应判为待采集');

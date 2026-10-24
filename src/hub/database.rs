@@ -623,7 +623,7 @@ pub async fn db_inspect(
     S(s): S<State>,
     Path(node_id): Path<String>,
     Extension(peer): Extension<transport::Peer>,
-    Json(input): Json<super::storage::ActionRequest>,
+    Json(input): Json<super::host::ActionRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let task = TaskEnvelope::new(node_id.clone(), input.idempotency_key, Action::DbInspect {});
     let task = s.db.accept_task(&task).await?;

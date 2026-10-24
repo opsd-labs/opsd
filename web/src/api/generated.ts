@@ -2329,57 +2329,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/storage/readiness": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * 存储预检报告
-         * @description 结论式报告：逐节点给出适合等级与原因、一致性检查、推荐拓扑，以及总体是否可直接进入部署计划。
-         *     只读：读 DB 里节点、在线通道与内存盘点缓存，不改库、不下发任务、不广播事件。
-         *     未采集的节点标为「待采集」，不会被当作不适合。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 预检报告。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Report"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                /** @description 内部盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/tasks": {
         parameters: {
             query?: never;
@@ -3674,29 +3623,6 @@ export interface components {
              */
             remove: boolean;
         };
-        Candidate: {
-            /** @description 设备名。 */
-            device: string;
-            /** @description 磁盘型号，可缺失或为 null。 */
-            model?: string | null;
-            /** @description 设备路径。 */
-            path: string;
-            /** @description 是否机械盘。 */
-            rotational: boolean;
-            /**
-             * Format: int64
-             * @description 容量字节。
-             */
-            size: number;
-        };
-        Check: {
-            /** @description 不通过时的具体说明。 */
-            detail: string;
-            /** @description 检查项名。 */
-            name: string;
-            /** @description 是否通过。 */
-            passed: boolean;
-        };
         ClusterListItem: {
             /** @description 访问键名。 */
             access_key: string;
@@ -4692,35 +4618,12 @@ export interface components {
             /** @description SSH 端口，缺省 22。 */
             ssh_port?: number;
         };
-        Rejected: {
-            /** @description 设备名。 */
-            device: string;
-            /** @description 拒绝原因。 */
-            reason: string;
-        };
         RenewRequest: {
             csr: string;
         };
         RenewResponse: {
             /** @description 续期后的客户端证书 PEM，有效期 90 天。 */
             certificate: string;
-        };
-        Report: {
-            /** @description 一致性检查项。 */
-            checks: components["schemas"]["Check"][];
-            /**
-             * Format: int64
-             * @description 报告生成时间（unix 秒）。
-             */
-            generated_at: number;
-            /** @description 逐节点结论。 */
-            nodes: components["schemas"]["StorageNodeVerdict"][];
-            /** @description 总体是否可直接进入部署计划。 */
-            ready: boolean;
-            /** @description 面向运维的总结说明。 */
-            summary: string;
-            /** @description 推荐拓扑；条件不满足时为 null。 */
-            topology?: components["schemas"]["Topology"] | null;
         };
         Session: {
             /** @description 本会话的 CSRF 令牌，后续非 GET/HEAD 请求要写回 x-csrf-token 头。 */
@@ -4752,33 +4655,6 @@ export interface components {
             /** @description 块设备路径。 */
             path: string;
         };
-        StorageNodeVerdict: {
-            /** @description 候选盘。 */
-            candidates: components["schemas"]["Candidate"][];
-            /**
-             * Format: int64
-             * @description 盘点时间（unix 秒），未采集为 null。
-             */
-            collected_at?: number | null;
-            /** @description 采集缺口。 */
-            gaps: string[];
-            /**
-             * Format: int64
-             * @description 该节点最快物理链路速率（Mbps），未采集为 null。
-             */
-            link_mbps?: number | null;
-            /** @description 节点名。 */
-            name: string;
-            /** @description 节点编号。 */
-            node_id: string;
-            /** @description 是否在线。 */
-            online: boolean;
-            /** @description 逐条结论原因，界面直接展示。 */
-            reasons: string[];
-            /** @description 被拒盘及原因，便于运维核对。 */
-            rejected: components["schemas"]["Rejected"][];
-            suitability: components["schemas"]["Suitability"];
-        };
         StoragePlanApplyRequest: {
             /**
              * @description 破坏性确认字段（名称逐字为 acknowledge_destructive）；计划为破坏性时必须显式 true 才能执行，缺省 false 即拒绝。
@@ -4809,11 +4685,6 @@ export interface components {
             /** @description 幂等键，非空且不超过 128 字符。 */
             idempotency_key: string;
         };
-        /**
-         * @description 结论等级：可直接进入部署计划 / 有条件可用 / 硬性阻断 / 尚未采集（不算不适合）。
-         * @enum {string}
-         */
-        Suitability: "suitable" | "needs_work" | "unsuitable" | "pending";
         TaskAccepted: {
             /** @description 任务 UUID。相同节点、相同幂等键、相同参数摘要的重放会返回同一个 id。 */
             task_id: string;
@@ -5074,31 +4945,6 @@ export interface components {
          * @enum {string}
          */
         Tone: "ok" | "warning" | "critical";
-        Topology: {
-            /**
-             * Format: int64
-             * @description 最小盘容量字节，容量按最小盘计算。
-             */
-            drive_size: number;
-            /** @description 每节点盘数。 */
-            drives_per_node: number;
-            /** @description 节点数。 */
-            nodes: number;
-            /** @description 纠删码校验盘数。 */
-            parity: number;
-            /** @description 校验说明，例如「共 N 块盘，校验 P 块；容量按最小盘 X 计算」。 */
-            parity_note: string;
-            /**
-             * Format: int64
-             * @description 原始裸容量。
-             */
-            raw_capacity: number;
-            /**
-             * Format: int64
-             * @description 扣除校验后的可用容量。
-             */
-            usable_capacity: number;
-        };
         UserRequest: {
             /** @description 集群定义名称。 */
             cluster: string;
