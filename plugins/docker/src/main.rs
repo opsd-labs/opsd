@@ -224,6 +224,8 @@ async fn terminal(request: Request, mut browser: sdk::WebSocket) -> Result<()> {
         ensure!(request.path=="/terminal","未知流操作");
         let node=request.body["node_id"].as_str().context("缺少节点")?;
         let container=component(request.body["container"].as_str().context("缺少容器")?)?;
+        let actual=engine(&request.context,node,reqwest::Method::GET,&format!("/containers/{container}/json"),None).await?;
+        ensure!(actual["Config"]["Labels"]["io.opsd.plugin"].is_null(),"插件基础服务含受保护凭据，请通过对应插件维护");
         let command=request.body["command"].as_array().context("终端命令必须是参数数组")?;
         ensure!(!command.is_empty()&&command.len()<=32&&command.iter().all(Value::is_string),"终端命令无效");
         let exec=engine(&request.context,node,reqwest::Method::POST,&format!("/containers/{container}/exec"),Some(json!({"AttachStdin":true,"AttachStdout":true,"AttachStderr":true,"Tty":true,"Cmd":command}))).await?;

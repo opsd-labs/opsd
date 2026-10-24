@@ -112,6 +112,8 @@ pub struct State {
     pub db_reports: database::SharedDbReports,
     pub plugin_runtimes: plugins::Runtimes,
     pub plugin_tokens: plugins::Tokens,
+    pub plugin_management: Arc<Mutex<()>>,
+    pub plugin_socket_dir: Arc<tempfile::TempDir>,
 }
 type NodeChannels = network::NodeChannels;
 #[derive(Clone, Serialize, Deserialize)]
@@ -303,6 +305,8 @@ pub async fn run() -> Result<()> {
                 db_reports: Default::default(),
                 plugin_runtimes: Default::default(),
                 plugin_tokens: Default::default(),
+                plugin_management: Default::default(),
+                plugin_socket_dir: Arc::new(tempfile::Builder::new().prefix("opsd-").tempdir()?),
             };
             for mut task in state
                 .db

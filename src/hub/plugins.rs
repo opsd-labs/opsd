@@ -88,6 +88,7 @@ fn arch() -> &'static str {
 }
 
 pub async fn install(S(s): S<State>, body: Bytes) -> ApiResult<Json<Installed>> {
+    let _management = s.plugin_management.lock().await;
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(body))?;
     let manifest: Manifest = serde_json::from_reader(zip.by_name("plugin.json")?)?;
     manifest.validate()?;
@@ -185,7 +186,7 @@ pub async fn select(
     Path(plugin): Path<String>,
     Json(input): Json<Selection>,
 ) -> ApiResult<Json<Installed>> {
-    let _guard = s.gate.lock().await;
+    let _management = s.plugin_management.lock().await;
     let mut record = installed(&s, &plugin, &input.version).await?;
     let all = s.db.list::<Installed>("plugins").await?;
     let previous: Vec<_> = all
@@ -251,6 +252,7 @@ pub async fn select(
         .await?;
         check(initialized.status < 400, "插件初始化失败，保留原启用版本")?;
     }
+    let _guard = s.gate.lock().await;
     for mut previous in all
         .into_iter()
         .filter(|p| p.manifest.id == plugin && p.enabled)
@@ -302,6 +304,7 @@ pub async fn uninstall(
     S(s): S<State>,
     Path((plugin, version)): Path<(String, String)>,
 ) -> ApiResult<Json<Value>> {
+    let _management = s.plugin_management.lock().await;
     let _guard = s.gate.lock().await;
     let record = installed(&s, &plugin, &version).await?;
     check(!record.enabled, "请先禁用插件再卸载")?;
@@ -351,6 +354,7 @@ pub async fn configure(
     Path(plugin): Path<String>,
     Json(input): Json<Configuration>,
 ) -> ApiResult<Json<Value>> {
+    let _management = s.plugin_management.lock().await;
     let record = active(&s, &plugin).await?;
     check(
         input.config.as_object().is_some_and(|config| {
@@ -398,7 +402,7 @@ async fn runtime(s: &State, record: &Installed) -> ApiResult<PathBuf> {
     {
         return Ok(runtime.socket.clone());
     }
-    let run = s.dir.join("plugins/run");
+    let run = s.plugin_socket_dir.path();
     std::fs::create_dir_all(&run)?;
     #[cfg(unix)]
     {
@@ -430,7 +434,10 @@ async fn runtime(s: &State, record: &Installed) -> ApiResult<PathBuf> {
         "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     )
     .env("OPSD_PLUGIN_SOCKET", &socket)
-    .env("OPSD_PLUGIN_CORE_SOCKET", s.dir.join("plugins/core.sock"))
+    .env(
+        "OPSD_PLUGIN_CORE_SOCKET",
+        s.plugin_socket_dir.path().join("core.sock"),
+    )
     .env("OPSD_PLUGIN_CORE_TOKEN", token)
     .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::null())
@@ -1007,7 +1014,7 @@ pub async fn start(s: State) -> Result<()> {
         std::fs::create_dir_all(&folder)?;
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700))?;
-        let socket = folder.join("core.sock");
+        let socket = s.plugin_socket_dir.path().join("core.sock");
         if socket.exists() {
             std::fs::remove_file(&socket)?;
         }

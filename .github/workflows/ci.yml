@@ -26,7 +26,7 @@ concurrency:
 jobs:
   rust:
     name: Rust
-    if: ${{ !contains(inputs.reuse_passed, 'rust') }}
+    if: ${{ !contains(format(',{0},', inputs.reuse_passed), ',rust,') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -140,12 +140,15 @@ jobs:
     name: HTTP 集成与负向门禁
     runs-on: ubuntu-24.04
     needs: [rust, web-contract]
-    if: ${{ always() && !cancelled() && needs.web-contract.outputs.static_pages_ready == 'true' && (needs.rust.result == 'success' || (contains(inputs.reuse_passed, 'rust') && needs.rust.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && needs.web-contract.outputs.static_pages_ready == 'true' && (needs.rust.result == 'success' || (contains(format(',{0},', inputs.reuse_passed), ',rust,') && needs.rust.result == 'skipped')) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: actions/setup-node@v4
         with:
           node-version: 22.x
@@ -195,7 +198,7 @@ jobs:
     name: Docker 构建与探针
     runs-on: ubuntu-24.04
     needs: [rust, web-contract]
-    if: ${{ always() && !cancelled() && !contains(inputs.reuse_passed, 'docker') && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (contains(inputs.reuse_passed, 'rust') && needs.rust.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && !contains(inputs.reuse_passed, 'docker') && needs.web-contract.result == 'success' && (needs.rust.result == 'success' || (contains(format(',{0},', inputs.reuse_passed), ',rust,') && needs.rust.result == 'skipped')) }}
     permissions:
       contents: read
     steps:

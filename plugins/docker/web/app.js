@@ -30,13 +30,15 @@ function render() {
   if (section === 'containers') {
     const rows = (inventory.containers || []).map(item => {
       const owned = item.Labels?.['io.opsd.plugin']
+      const terminalAction = button('终端', () => openTerminal(item.Id))
+      terminalAction.disabled = !!owned
       return [item.Names?.join(', ') || item.Id.slice(0, 12), item.Image, item.Status,
         el('div', { class: 'row' }, ...['start', 'stop', 'restart'].map((operation, index) => {
           const action = button(['启动', '停止', '重启'][index], () => mutate({ resource: 'container', operation, id: item.Id }))
           action.disabled = !!owned
           return action
         }), button('日志', async () => { const logs = await api('/logs', 'POST', { node_id: requireNode(), container: item.Id }); show('最近 300 行日志', el('pre', {}, logs.text)) }),
-        button('终端', () => openTerminal(item.Id)), button('详情', async () => show('容器详情', el('pre', {}, json(await api('/detail', 'POST', { node_id: requireNode(), resource: 'container', id: item.Id }))))),
+        terminalAction, button('详情', async () => show('容器详情', el('pre', {}, json(await api('/detail', 'POST', { node_id: requireNode(), resource: 'container', id: item.Id }))))),
         owned ? el('span', { class: 'tag' }, `${owned} 插件服务`) : button('删除', async () => {
           if (confirmRemove('删除已停止的容器？数据卷会保留。')) await mutate({ resource: 'container', operation: 'remove', id: item.Id, confirmed: true })
         }, 'danger'))]

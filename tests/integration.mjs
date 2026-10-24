@@ -222,7 +222,7 @@ try{
  const installedPlugin=await upload(`/${entrance}/api/v1/plugins/package`,pluginZip);
  assertHttpResponse(installedPlugin,{status:200,route:'/api/v1/plugins/package',method:'post',kind:'json',schema:responseSchema('/api/v1/plugins/package','post',200),contentType:'application/json'});
  assert.equal((await upload(`/${entrance}/api/v1/plugins/package`,pluginZip)).status,400,'不得覆盖同一版本');
- assert.equal((await request('/plugins/et/selection','PUT',{version:'0.1.0',enabled:true})).status,200);
+ const selectedEt=await request('/plugins/et/selection','PUT',{version:'0.1.0',enabled:true});assert.equal(selectedEt.status,200,JSON.stringify(selectedEt.data));
  assert.equal((await request('/plugins/et/configuration','PUT',{config:{url:etUrl,username:'fixture',password:etPassword}})).status,400,'普通配置不得存秘密');
  assert.equal((await request('/plugins/et/configuration','PUT',{config:{url:etUrl,username:'fixture'},secrets:{password:etPassword}})).status,200);
  const configuredPlugin=await request('/plugins/et/configuration');
