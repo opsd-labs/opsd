@@ -18,6 +18,10 @@ on:
         description: 仅验收脚本修正时，复用此运行的成功制品并只重跑未通过安装组合
         type: string
         default: ""
+      reuse_agent_run:
+        description: 复用此运行已成功的双架构 Agent 制品，继续发布 Hub 和安装验收
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -25,7 +29,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: publish-image-main
+  group: publish-image-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -124,7 +128,7 @@ jobs:
 
   agent:
     name: 构建 Agent ${{ matrix.arch }}
-    if: ${{ inputs.resume_installation_run == '' && !inputs.plugins_only }}
+    if: ${{ inputs.resume_installation_run == '' && inputs.reuse_agent_run == '' && !inputs.plugins_only }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -197,7 +201,7 @@ jobs:
 
   release:
     name: 发布 Agent 双架构索引与固定发行包
-    if: ${{ inputs.resume_installation_run == '' && !inputs.plugins_only }}
+    if: ${{ always() && !cancelled() && inputs.resume_installation_run == '' && !inputs.plugins_only && (needs.agent.result == 'success' || inputs.reuse_agent_run != '') }}
     needs: agent
     runs-on: ubuntu-24.04
     outputs:
@@ -205,10 +209,31 @@ jobs:
       image: ${{ steps.metadata.outputs.image }}
     steps:
       - uses: actions/checkout@v4
+      - name: 取得已有 Agent 制品来源
+        if: ${{ inputs.reuse_agent_run != '' }}
+        id: prior-agent
+        uses: actions/github-script@v7
+        env:
+          PRIOR_RUN: ${{ inputs.reuse_agent_run }}
+        with:
+          script: |
+            const runId = Number(process.env.PRIOR_RUN);
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: runId});
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {...context.repo, run_id: runId, filter: 'all', per_page: 100});
+            for (const name of ['构建 Agent amd64', '构建 Agent arm64']) {
+              if (!jobs.some(job => job.name === name && job.conclusion === 'success')) throw new Error('原运行的双架构 Agent 尚未构建成功。');
+            }
+            const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({...context.repo, basehead: `${run.head_sha}...${context.sha}`});
+            if (comparison.files.some(file => file.filename !== '.github/workflows/publish-image.yml' && file.filename !== 'README.md' && !(file.filename.startsWith('docs/') && file.filename.endsWith('.md')))) {
+              throw new Error('业务源码或依赖已变化，不能复用 Agent 制品。');
+            }
+            core.setOutput('revision', run.head_sha);
       - uses: actions/download-artifact@v4
         with:
           pattern: agent-release-*
           path: .release
+          run-id: ${{ inputs.reuse_agent_run || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -217,24 +242,27 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: 发布固定镜像索引
         id: metadata
+        env:
+          SOURCE_REVISION: ${{ steps.prior-agent.outputs.revision || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          image="ghcr.io/${{ env.OWNER }}/opsd-agent:sha-${GITHUB_SHA}"
+          image="ghcr.io/${{ env.OWNER }}/opsd-agent:sha-${SOURCE_REVISION}"
           docker buildx imagetools create --tag "$image" "$(cat .release/agent-release-amd64/agent-image.txt)" "$(cat .release/agent-release-arm64/agent-image.txt)"
-          digest=$(docker buildx imagetools inspect "$image" | awk '/^Digest:/ {print $2; exit}')
+          digest=$(docker buildx imagetools inspect "$image" | awk '/^Digest:/ {digest=$2} END {print digest}')
           test -n "$digest"
           echo "image=ghcr.io/${{ env.OWNER }}/opsd-agent@$digest" >> "$GITHUB_OUTPUT"
-          echo "release=agent-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "release=agent-${SOURCE_REVISION}" >> "$GITHUB_OUTPUT"
       - name: 发布待安装验收的发行文件
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_REVISION: ${{ steps.prior-agent.outputs.revision || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          release="agent-${GITHUB_SHA}"
+          release="agent-${SOURCE_REVISION}"
           if ! gh release view "$release" >/dev/null 2>&1; then
-            gh release create "$release" --prerelease --target "$GITHUB_SHA" --title "Agent ${GITHUB_SHA::12}" --notes "固定提交的 Linux x64 与 ARM64 安装包；安装验收通过后才能用于灰度更新。"
+            gh release create "$release" --prerelease --target "$SOURCE_REVISION" --title "Agent ${SOURCE_REVISION::12}" --notes "固定提交的 Linux x64 与 ARM64 安装包；安装验收通过后才能用于灰度更新。"
           fi
           assets=$(gh release view "$release" --json assets --jq '.assets[].name')
           for arch in amd64 arm64; do
@@ -246,7 +274,7 @@ jobs:
 
   hub:
     name: 发布绑定 Agent 版本的 Hub
-    if: ${{ inputs.resume_installation_run == '' && !inputs.plugins_only }}
+    if: ${{ always() && !cancelled() && needs.release.result == 'success' && inputs.resume_installation_run == '' && !inputs.plugins_only }}
     needs: release
     runs-on: ubuntu-24.04
     outputs:
@@ -363,7 +391,7 @@ jobs:
             for kind in agent hub; do
               image=opsd
               if [ "$kind" = agent ]; then image=opsd-agent; fi
-              digest=$(docker buildx imagetools inspect "ghcr.io/${{ env.OWNER }}/$image:sha-$PRIOR_REVISION" | awk '/^Digest:/ {print $2; exit}')
+              digest=$(docker buildx imagetools inspect "ghcr.io/${{ env.OWNER }}/$image:sha-$PRIOR_REVISION" | awk '/^Digest:/ {digest=$2} END {print digest}')
               test -n "$digest"
               echo "$kind=ghcr.io/${{ env.OWNER }}/$image@$digest" >> "$GITHUB_OUTPUT"
             done
@@ -374,7 +402,7 @@ jobs:
             echo "release=$CURRENT_RELEASE" >> "$GITHUB_OUTPUT"
             echo "agent=$CURRENT_AGENT" >> "$GITHUB_OUTPUT"
             echo "hub=$CURRENT_HUB" >> "$GITHUB_OUTPUT"
-            echo "run=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo 'run=${{ inputs.reuse_agent_run || github.run_id }}' >> "$GITHUB_OUTPUT"
             echo 'matrix={"include":[{"arch":"amd64","runner":"ubuntu-24.04","mode":"host"},{"arch":"amd64","runner":"ubuntu-24.04","mode":"docker"},{"arch":"arm64","runner":"ubuntu-24.04-arm","mode":"host"},{"arch":"arm64","runner":"ubuntu-24.04-arm","mode":"docker"}]}' >> "$GITHUB_OUTPUT"
           fi
 
