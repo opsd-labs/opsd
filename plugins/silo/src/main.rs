@@ -85,17 +85,26 @@ async fn install(request: &Request) -> Result<Value> {
         "请先配置 Silo 管理用户与密码"
     );
     // 先让所有节点完成只读预检，再开始任何磁盘准备。
+    let mut engines = std::collections::HashSet::new();
     for member in members {
         let node = name(&member["node_id"])?;
+        let overlay = overlays
+            .iter()
+            .find(|m| m["node_id"] == node)
+            .context("集群节点未关联 ET 地址")?;
+        let engine = docker(c, node, "GET", "/info", None).await?;
+        let engine_id = engine["ID"]
+            .as_str()
+            .context("没有取得 Docker Engine 身份")?;
         ensure!(
-            overlays.iter().any(|m| m["node_id"] == node),
-            "集群节点未关联 ET 地址"
+            !engine_id.is_empty() && engines.insert(engine_id.to_owned()),
+            "集群节点必须使用不同的 Docker Engine"
         );
         sdk::node_task(
             c,
             node,
             "storage.validate",
-            json!({"cluster":cluster,"selections":member["storage"]}),
+            json!({"cluster":cluster,"selections":member["storage"],"address":overlay["address"]}),
             &format!("validate:{node}"),
         )
         .await?;
@@ -108,7 +117,8 @@ async fn install(request: &Request) -> Result<Value> {
             "集群节点未关联 ET 地址"
         );
         if state["prepared"].get(node).is_none() {
-            let prepared=sdk::node_task(c,node,"storage.prepare",json!({"cluster":cluster,"selections":member["storage"],"confirmed":spec["acknowledge_destructive"]}),&format!("prepare:{node}")).await?;
+            let address = &overlays.iter().find(|m| m["node_id"] == node).unwrap()["address"];
+            let prepared=sdk::node_task(c,node,"storage.prepare",json!({"cluster":cluster,"selections":member["storage"],"confirmed":spec["acknowledge_destructive"],"address":address}),&format!("prepare:{node}")).await?;
             state["prepared"][node] = prepared;
             sdk::kv_put(&state_key, state.clone()).await?;
         } else {

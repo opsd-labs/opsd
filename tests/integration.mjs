@@ -58,11 +58,11 @@ async function siloNode(operation,body,directory){
 }
 if(process.platform==='linux'){
  const data=path.join(run,'existing-storage'),state=path.join(run,'silo-node');await mkdir(data);await mkdir(state);await writeFile(path.join(data,'existing-file'),'已有内容');
- const selection={cluster:'integration',selections:[{mode:'existing',path:data}],confirmed:false};
+ const selection={address:'127.0.0.1',cluster:'integration',selections:[{mode:'existing',path:data}],confirmed:false};
  const prepared=await siloNode('storage.prepare',selection,state);assert.equal(prepared.status,200);assert.equal(await readFile(path.join(data,'existing-file'),'utf8'),'已有内容');
  await mkdir(path.join(data,'.minio.sys'));
  const restored=await siloNode('storage.prepare',selection,state);assert.equal(restored.status,200);assert.deepEqual(restored.body,prepared.body,'新进程应复用持久目录记录');
- const invalid=await siloNode('storage.prepare',{cluster:'invalid',selections:[{mode:'new',device:'/dev/opsd-nonexistent',expected_size:123,mount:path.join(run,'missing-disk')}],confirmed:true},state);assert.equal(invalid.status,400);assert.equal(await readFile(path.join(data,'existing-file'),'utf8'),'已有内容');
+ const invalid=await siloNode('storage.prepare',{address:'127.0.0.1',cluster:'invalid',selections:[{mode:'new',device:'/dev/opsd-nonexistent',expected_size:123,mount:path.join(run,'missing-disk')}],confirmed:true},state);assert.equal(invalid.status,400);assert.equal(await readFile(path.join(data,'existing-file'),'utf8'),'已有内容');
 }
 try{
  hub=launch('opsd-hub',serveArgs(hubDir));

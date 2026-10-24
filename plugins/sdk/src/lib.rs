@@ -559,3 +559,19 @@ pub fn address_host(address: &str) -> Result<String> {
         ip.to_string()
     })
 }
+
+pub async fn require_local_address(address: &str) -> Result<()> {
+    let _: std::net::IpAddr = address.parse()?;
+    let interfaces: Value = serde_json::from_str(
+        &command("ip", &strings(&["-j", "address", "show"]), &[], None, 10).await?,
+    )?;
+    ensure!(
+        interfaces
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["addr_info"]
+                .as_array()
+                .is_some_and(|entries| entries.iter().any(|entry| entry["local"] == address)))),
+        "ET 地址不属于本机，停止部署"
+    );
+    Ok(())
+}

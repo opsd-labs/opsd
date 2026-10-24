@@ -200,25 +200,7 @@ async fn binding(request: &Request) -> Result<String> {
     let address = request.body["address"]
         .as_str()
         .context("缺少节点 ET 地址")?;
-    let _: std::net::IpAddr = address.parse()?;
-    let interfaces: Value = serde_json::from_str(
-        &sdk::command(
-            "ip",
-            &sdk::strings(&["-j", "address", "show"]),
-            &[],
-            None,
-            10,
-        )
-        .await?,
-    )?;
-    ensure!(
-        interfaces
-            .as_array()
-            .is_some_and(|rows| rows.iter().any(|r| r["addr_info"]
-                .as_array()
-                .is_some_and(|a| a.iter().any(|a| a["local"] == address)))),
-        "ET 地址不属于本机，停止部署"
-    );
+    sdk::require_local_address(address).await?;
     Ok(address.into())
 }
 

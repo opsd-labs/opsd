@@ -334,37 +334,6 @@ fn validate_backend(p: &Policy, raw: &BTreeMap<String, String>) -> Result<()> {
     }
     Ok(())
 }
-pub async fn peers(ctx: &ContextState, set: &PeerAddressSet) -> Result<Value> {
-    for ip in &set.addresses {
-        validate_public_address(ip)?;
-    }
-    ctx.db.put("firewall", "desired_peers", set).await?;
-    let before = ctx
-        .db
-        .get::<Policy>("firewall", "policy")
-        .await?
-        .unwrap_or_default();
-    anyhow::ensure!(before.adopted, "节点地址已登记，防火墙尚未接管，等待应用");
-    if set.version <= before.peers.version {
-        return Ok(json!({"version":before.peers.version}));
-    }
-    let (backend, raw) = detect().await?;
-    anyhow::ensure!(backend == before.backend, "防火墙管理器已变化");
-    let mut after = before.clone();
-    after.peers = set.clone();
-    validate_backend(&after, &raw)?;
-    let p = Plan {
-        id: id(),
-        node_id: ctx.config.node_id.clone(),
-        base: fingerprint(&raw),
-        expires: now() + 300,
-        before,
-        after,
-        operation: json!({"type":"peer_sync"}),
-    };
-    ctx.db.insert("firewall_plans", &p.id, &p).await?;
-    apply(ctx, &p.id, None).await
-}
 pub async fn apply(ctx: &ContextState, plan_id: &str, witness: Option<&str>) -> Result<Value> {
     anyhow::ensure!(
         cfg!(feature = "experimental-firewall"),

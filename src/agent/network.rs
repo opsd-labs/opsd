@@ -210,8 +210,20 @@ async fn stdin_command(executable: &str, args: &[&str], input: &str) -> Result<(
     Ok(())
 }
 
+fn nft_identifier(name: &str) -> Result<&str> {
+    anyhow::ensure!(
+        !name.is_empty()
+            && (name.as_bytes()[0].is_ascii_alphabetic() || name.starts_with('_'))
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b)),
+        "防火墙对象名称无法安全引用，停止写入"
+    );
+    Ok(name)
+}
+
 fn nft_rules(set: &Allowlist, family: &str, table: &str, direction: &str) -> Result<String> {
-    let table = serde_json::to_string(table)?;
+    let table = nft_identifier(table)?;
     let chain = format!("opsd_peers_{direction}");
     let mut text = String::new();
     let address_field = if direction == "output" {
@@ -356,8 +368,8 @@ async fn apply_nft(
         text += &format!(
             "delete rule {} {} {} handle {}\n",
             rule["family"].as_str().context("缺少规则族")?,
-            serde_json::to_string(rule["table"].as_str().context("缺少表")?)?,
-            serde_json::to_string(rule["chain"].as_str().context("缺少链")?)?,
+            nft_identifier(rule["table"].as_str().context("缺少表")?)?,
+            nft_identifier(rule["chain"].as_str().context("缺少链")?)?,
             rule["handle"].as_u64().context("缺少规则句柄")?
         );
     }
@@ -375,14 +387,14 @@ async fn apply_nft(
                 } else {
                     "add"
                 },
-                serde_json::to_string(table)?
+                nft_identifier(table)?
             );
             text += &nft_rules(set, family, table, hook)?;
         }
         text += &format!(
             "insert rule {family} {} {} jump opsd_peers_{hook} comment \"opsd:peer\"\n",
-            serde_json::to_string(table)?,
-            serde_json::to_string(base)?
+            nft_identifier(table)?,
+            nft_identifier(base)?
         );
     }
     stdin_command("nft", &["-f", "-"], &text).await?;
@@ -508,7 +520,7 @@ pub async fn apply_allowlist(ctx: &ContextState, set: &Allowlist) -> Result<Stri
         iptables |= command(save, &[], 5).await.is_ok_and(|s| {
             s.lines().any(|l| {
                 l.starts_with("-A ")
-                    || l.starts_with(":INPUT DROP")
+                    || l.starts_with(":INPUT ")
                     || l.starts_with(":OUTPUT DROP")
                     || l.starts_with(":FORWARD DROP")
             })

@@ -333,6 +333,12 @@ pub async fn execute(request: Request) -> Result<Value> {
         "identity.prepare" => sdk::identity().await,
         "inventory" => Ok(serde_json::to_value(opsd::host::inspect().await)?),
         "storage.validate" => {
+            sdk::require_local_address(
+                request.body["address"]
+                    .as_str()
+                    .context("缺少节点 ET 地址")?,
+            )
+            .await?;
             let cluster = request.body["cluster"].as_str().context("缺少集群名称")?;
             let selections = request.body["selections"].as_array().context("缺少选择")?;
             let record = sdk::node_directory()?.join(format!("storage-{cluster}.json"));
@@ -376,6 +382,12 @@ pub async fn execute(request: Request) -> Result<Value> {
             Ok(json!({"directory":tls}))
         }
         "storage.prepare" => {
+            sdk::require_local_address(
+                request.body["address"]
+                    .as_str()
+                    .context("缺少节点 ET 地址")?,
+            )
+            .await?;
             let cluster = request.body["cluster"].as_str().context("缺少集群名称")?;
             ensure!(sdk::identifier(cluster), "集群名称无效");
             let selections = request.body["selections"]
