@@ -134,9 +134,9 @@ opsd-agent --data-dir /var/lib/opsd-agent run
 - 节点能力和指标开始更新；
 - 节点侧日志中没有持续的证书或连接错误。
 
-### Docker Agent（仅 Docker 与只读采集）
+### Docker Agent（核心只读采集）
 
-Docker 模式使用宿主机 Docker socket，具备 Docker、Compose、日志、终端和防火墙只读发现能力，不开放防火墙写入、systemd 控制或存储破坏性操作。默认使用 Hub 发布时配套的固定摘要；需要显式覆盖时可设置 `OPSD_AGENT_IMAGE=ghcr.io/opsd-labs/opsd-agent@sha256:<固定摘要>`。以下为高级手动配置示例：
+Docker 模式保留核心指标及既有只读巡检，不执行宿主机自动白名单或业务插件节点动作。Docker 的日常管理已迁入 Portainer 插件，部署引导需要宿主机 Agent。默认使用 Hub 发布时配套的固定摘要；需要显式覆盖时可设置 `OPSD_AGENT_IMAGE=ghcr.io/opsd-labs/opsd-agent@sha256:<固定摘要>`。以下为高级手动配置示例：
 
 ```bash
 # 令牌和 CA 只通过本地文件挂载，不放入环境变量或命令参数
@@ -175,3 +175,5 @@ export OPSD_DATABASE_URL='mysql://用户:密码@地址/数据库'
 3. 确认 CA、数据目录和 Agent 可访问的域名/端口不变。
 
 升级后检查健康状态、控制台登录、Agent 重连和历史任务。回滚时使用之前保存的镜像摘要，不要重新拉取不确定的 `latest`。
+
+本批插件部署次序为：手动接入 Hub 宿主节点 → ET 插件关联并指定控制机 → Docker 插件安装 Portainer → Silo 明确选盘。服务必须绑定 ET 地址；端口、证书、恢复契约和未完成部署验收统一见 [架构说明](architecture.md)。本批没有更新现网 C091。

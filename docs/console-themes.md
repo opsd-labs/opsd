@@ -1,6 +1,6 @@
 # 控制台前端与独立主题
 
-`web/` 是原 `web3`，也是唯一内置控制台。2026-10-07 已审查并修正维护者的正式 API 适配，通过云端构建与真实 Hub 浏览器验证；当前仍为灰度版本，功能范围见下文。
+`web/` 是原 `web3`，也是唯一内置控制台。2026-10-07 已审查并修正维护者的正式 API 适配，通过云端构建与真实 Hub 浏览器验证；当前仍为灰度版本；2026-10-24 核心与插件迁移以 [架构说明](architecture.md) 为准，下方历史验收不代表新插件生产部署。
 
 原 `web`、`web2` 分别迁入本机的 `themes/web/`、`themes/web2/`，对应公开仓库 [opsd-theme-web](https://github.com/opsd-labs/opsd-theme-web)、[opsd-theme-web2](https://github.com/opsd-labs/opsd-theme-web2)。主仓库忽略 `themes/`，Docker 上下文排除它，正式镜像不附带外部主题。
 
@@ -14,11 +14,11 @@
   "name": "经典控制台",
   "version": "0.1.0",
   "surfaces": ["console"],
-  "console_frontend": { "api_version": 1 }
+  "console_frontend": { "api_version": 2 }
 }
 ```
 
-完整前端仅声明 `console`，不混用 `tokens` 或托管 `configuration`。没有 `console_frontend` 的旧清单继续按样式覆盖或分享页规则处理。`default` 为保留标识，不可安装、覆盖或删除。
+完整前端仅声明 `console`，不混用 `tokens` 或托管 `configuration`。没有 `console_frontend` 的清单继续按样式覆盖处理；分享专属入口与资源已退出。`default` 为保留标识，不可安装、覆盖或删除。
 
 ZIP 上限为 20 MiB，解压总量上限为 64 MiB；复用已有路径与符号链接限制。完整控制台安装遇到已存在的标识返回 `409`，不会覆盖。安装与启用是两个步骤。
 
@@ -27,7 +27,7 @@ API 的唯一定义见 [OpenAPI](api/openapi.yaml)。以下路径均相对于 `/
 | 操作 | 接口 |
 | --- | --- |
 | 列表及类型 | `GET /themes`，`console_mode` 为 `frontend`、`tokens` 或 `null` |
-| 当前选择 | `GET /themes/active`，新增 `console_frontend`，保留 `console`、`share` |
+| 当前选择 | `GET /themes/active`，新增 `console_frontend` 与 `console`，不再包含 `share` |
 | 上传完整前端 | `POST /themes/console/package`，请求体为 ZIP 原始字节 |
 | 解析发行版 | `POST /themes/console/repository/resolve`，提交 `{ "url": "公开 GitHub 链接" }` |
 | 安装发行版资产 | `POST /themes/console/repository/install`，提交解析所得的 `url`、`tag`、`asset_id` |
@@ -36,7 +36,7 @@ API 的唯一定义见 [OpenAPI](api/openapi.yaml)。以下路径均相对于 `/
 
 仓库首页或 `/releases/latest` 解析最新稳定发行版；`/releases/tag/{标签}` 解析指定发行版。只列出已上传的 ZIP 资产。安装时重新核对资产所属发行版，再下载并复用上传安装流程。无公开发行版返回 `404`，无 ZIP 或资产不属于所选版本返回 `400`，GitHub 连接、限流或响应失败返回 `502`，超大资产返回 `413`。不克隆源码、不运行构建、不自动更新。
 
-完整控制台在管理员会话的同源环境运行，应使用可信主题。分享页仍使用独立入口、主题选择、Cookie 路径和 CSP；控制台主题包不能充当分享页主题。
+完整控制台在管理员会话的同源环境运行，应使用可信主题。当前完整前端必须声明接口版本 2，版本 1 的既有包不能启用；不兼容的当前选择回到内置前端，文件不被自动删除。
 
 ## 页面、资源与恢复
 
@@ -46,7 +46,7 @@ API 的唯一定义见 [OpenAPI](api/openapi.yaml)。以下路径均相对于 `/
 
 主题文件存于 Hub 数据目录的 `themes/{short}/`，选择存于数据库。保留同一数据卷时，正常重启和更换镜像保留主题。现有备份命令没有打包主题资源；异机恢复数据库后需重新安装对应主题包，缺少资源时使用内置前端。
 
-内置分享页单独位于 `web/share/`，使用 `web/share.html` 和 `web/vite.share.config.ts` 构建。它沿用原分享页实现，不依赖内置控制台的组件与手写 API 类型。Docker 在控制台构建后补建分享入口，两者输出到 `web/dist/`。
+分享页面与独立分享构建已删除。公开展示由带只读 API Key 的 JSON／Prometheus 接口完成；插件页面由各自程序包独立分发，控制台只提供菜单和外壳。
 
 ## 当前内置前端
 
@@ -57,12 +57,12 @@ Node 类型依赖与配置已补齐，原类型检查阻断已解决。前端使
 - 会话使用 `csrf`，节点使用 `{ connected, node }`，指标从 `{ nodes: [...] }` 读取；缺失内存或磁盘比例显示未知，加载失败显示错误。
 - 构建资源使用相对地址，API 与 SSE 从安全入口首段生成路径；登出清理 SSE 重连与刷新定时器。开发代理支持入口环境变量和 WebSocket。
 - 设置页支持完整前端列表、原始 ZIP 上传、GitHub 资产选择、安装、卸载及全局切换。切换会确认页面重载及未提交表单丢失，并保留查询参数；固定恢复入口可卸载当前主题返回内置前端。
-- 分享设置使用 `/share/settings` 和 `/share/tokens`，创建时展示一次性链接，撤销后更新记录。入口轮换提交新的 16 位值；审计展示最近 50 条正式 `records`，没有虚构分页。
-- Docker 读取 `Node.inventory.docker.data`，刷新和启动／停止／重启通过 `/nodes/{id}/actions` 提交任务；受保护容器禁用操作。不把任务提交当作执行成功。
+- 输出设置创建与撤销独立只读 API Key，并限定节点范围；密钥只返回一次。入口轮换与审计沿用现有接口。
+- Docker 与 Silo 进入独立插件页面；Docker 经 Portainer 执行业务，ET 接入现有 Web。插件包、依赖、版本、普通配置和秘密引用由插件管理页处理。
 - 节点页始终显示“添加节点”，现已提供一键安装命令、专属脚本和过期重建；当前流程及证据统一见 [Agent 一键安装](agent-installation.md)。刷新后只恢复注册摘要，Agent 完成注册才进入节点列表。
-- 数据库与存储页面提供只读总览。
+- 节点页展示两条控制连接、节点间两路探测、地址来源和白名单应用状态；数据库保留现有只读总览。
 
-仍待接入：任务详情、终端、文件、防火墙流程及旧样式主题配置。数据库和存储的真实集群操作仍需专项验收；本批没有执行生产节点的容器变更、磁盘操作或防火墙写入。
+宿主机终端、文件、任务详情和通用防火墙界面仍需后续接入；Docker 插件的容器终端已通过本批实际 Portainer 验收。数据库和 Silo 的真实集群操作仍需专项验收，当前证据与限制集中见 [架构说明](architecture.md#本批云端证据与边界)。
 
 ## 独立主题开发
 
@@ -80,7 +80,7 @@ npm run package -- --out releases/theme.zip
 
 运行时演示入口、参数和操作分支已移除。原浏览器测试使用 `tests/fixtures/` 的 HTTP、SSE 与 WebSocket 夹具，不绕过运行时登录入口。夹具覆盖界面表现与请求形状，不能代替真实 Hub、Agent 的业务验收。
 
-## 验收
+## 历史验收（2026-10-07）
 
 验证渠道统一为现有云端 CI，不另建流水线或重复本地整批检查。受影响的 Rust 和 HTTP 测试覆盖类型兼容、安装、冲突、登录前分发、稳定资源地址、正常重启、入口丢失回退及卸载；GitHub 地址和发行版筛选使用确定性输入测试，不把公网不可达当作成功。
 

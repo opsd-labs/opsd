@@ -17,7 +17,7 @@ bash opsd-install.sh
 | 宿主机 | Linux x64／ARM64、root、Bash、systemd；Debian／Ubuntu 或 RHEL 系发行版 | 从官方 GitHub 固定发行版取得 musl 程序，安装至 `/usr/local/bin/opsd-agent`，启用 `opsd-agent.service` |
 | Docker | Linux x64／ARM64、root、Bash、已有可用 Docker | 拉取配套固定摘要的双架构镜像，一次性容器完成注册后启动常驻容器，设置自动重启 |
 
-缺少 `curl`、系统 CA、`tar`、`jq` 时使用 apt 或 dnf／yum 补齐，不执行系统升级或自动安装 Docker。目标机必须能访问 Hub、GitHub，Docker 模式还需访问 GHCR。Hub CA 单独交给 Agent 使用，不加入目标机全局信任库；下载、注册和状态查询均验证 TLS。
+缺少 `curl`、系统 CA、`tar`、`jq` 时使用 apt 或 dnf／yum 补齐；宿主机还补齐 OpenSSL、iproute、util-linux、nftables 与 iptables 等本机依赖。安装器不执行系统升级或自动安装 Docker，业务插件向导的 Engine／Compose 安装另行明确选择。目标机必须能访问 Hub、GitHub，Docker 模式还需访问 GHCR。Hub CA 单独交给 Agent 使用，不加入目标机全局信任库；下载、注册和状态查询均验证 TLS。
 
 节点数据目录为 `/var/lib/opsd-agent`，权限 `0700`，凭据文件 `0600`。令牌只通过文件交给 Agent，注册成功后删除令牌与临时 CA；常驻容器不挂载令牌。安装器每两秒读取自身 mTLS 状态，最多三十次、总截止六十秒，只有 Hub 确认在线才报告完成。
 
@@ -44,7 +44,7 @@ bash opsd-install.sh
 
 四组合均使用 Ubuntu 24.04 原生 x64／ARM64 runner，真实从公开 GitHub 发行文件和 GHCR 镜像安装，没有用模拟架构替代。Debian 与 RHEL 系的发行版分支已实现，本次未宣称这些系统的宿主机 Agent 完整实测；C091 是 Debian 13，本批只更新其 Hub。
 
-## C091 Hub 更新
+## C091 Hub 历史更新
 
 2026-10-21，在上述验收通过后更新既有 `/opt/opsd-test` Hub，固定使用：
 
@@ -57,3 +57,5 @@ Agent 发行版: agent-f55c9f8594d8568d339b8450fc3b73c7d9a0bc72
 容器为 `healthy`，版本标签与制品源码一致，配套发行标签、内置镜像摘要和部署环境的 Agent 摘要均已生效。沿用原数据、CA、服务证书、端口和安全入口；严格校验原 CA 与访问地址后，登录、会话、节点列表和注册摘要均为 `200`，已分发含“复制一键安装命令”“下载安装脚本”的新页面资源。
 
 部署验收没有在生产控制库创建令牌或节点，也没有安装目标机 Agent、接管其他服务。本次只发布固定提交的灰度制品，未更新 `main`／`latest`。请求次数、缓存和零模型调用约定统一记录在 [架构说明](architecture.md#首次安装)。
+
+2026-10-24 的双连接与插件迁移尚未重新发布这组安装制品，也未再次更新 C091。当前批次证据见 [架构说明](architecture.md#本批云端证据与边界)，不要把上述历史发行摘要当作本批源码对应的新版本。

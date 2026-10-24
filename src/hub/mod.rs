@@ -105,7 +105,7 @@ pub struct State {
     pub latest_metrics: Arc<RwLock<HashMap<String, metrics::NodeMetrics>>>,
     /// 控制台静态资源根目录。
     pub web: PathBuf,
-    /// 各节点最近一次主机盘点，供存储预检做集中分析。
+    /// 各节点最近一次通过核心通道上报的主机事实。
     pub host_inventories: host::SharedInventories,
     /// 各节点最近一次数据库只读巡检结果。同样只留在内存里：
     /// 它体积不大但变化很快，落库只会得到一份过期的运维视图。

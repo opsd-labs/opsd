@@ -5,7 +5,7 @@
 - Rust 工具链，版本以项目构建文件和 CI 为准。
 - Node.js 与 npm。
 - Linux 或 WSL 用于运行节点侧采集和实验脚本。
-- Docker 用于镜像构建和容器 smoke test；普通 Rust/前端测试不要求宿主机 Docker。
+- Docker 用于镜像构建和容器 smoke test；普通 Rust/前端测试不要求宿主机 Docker；启用本批真实 Portainer 集成验收的 CI 使用独立 runner 的 Docker Engine。
 
 ## 常用验证
 
@@ -81,3 +81,5 @@ node tests/shots.mjs database ../../.data/screenshots/database
 - Agent 负责节点本机事实采集和受控执行。
 - Web 通过 API 与 Hub 通信，不直接访问节点或数据目录。
 - 新功能应先明确能力边界、失败状态和审计要求，再实现跨层协议。
+
+插件位于 `plugins/`，正式包由现有 `Publish image` 工作流的 `plugins_only` 与 `plugin_id` 选择独立构建和发行，不重发 Hub／Agent。`tools/package-plugin.mjs` 组合平台程序与页面；CI 的 GNU 调试包仅供验收。正式双架构发行尚未执行，边界见 [架构说明](architecture.md#本批云端证据与边界)。

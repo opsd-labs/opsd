@@ -13,9 +13,9 @@
 
 1. Hub 在主控上保存节点目录、认证信息、任务和审计记录。
 2. Agent 在节点上主动建立 mTLS 连接，不需要 Hub 反向登录节点。
-3. Hub 通过 Agent 下发结构化任务，Agent 只在本机执行允许的操作。
+3. 核心通过 Agent 下发结构化任务；ET、Docker／Portainer、Silo 通过独立插件集成。
 4. Web 控制台通过 Hub 的 HTTP API 查询状态和提交任务。
-5. 需要公开展示的分享页使用单独的令牌和字段白名单，不直接暴露管理接口。
+5. 公开数据通过 JSON／Prometheus 与独立只读 API Key 输出，分享页面已经退出。
 
 ## 最小前置条件
 
@@ -31,7 +31,7 @@
 
 - Linux 节点。
 - 能够访问 Hub 的 Agent mTLS 端口，默认是 `8444`。
-- 节点上安装 Docker Engine、Compose 插件以及所需的本机运维工具。
+- 核心采集不要求先安装 Docker；业务插件需要宿主机 Agent，向导可明确允许补装缺少的 Engine／Compose。
 - 通过管理界面取得一次性注册令牌，并能安全保存令牌文件。
 
 ### 参与开发

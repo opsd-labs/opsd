@@ -2,7 +2,7 @@
 
 ## 契约源文件
 
-`docs/api/openapi.yaml` 是 opsd HTTP API 的唯一契约源文件，描述控制台 API、Agent 注册、分享面和相关响应结构。
+`docs/api/openapi.yaml` 是核心 HTTP API 的唯一契约源文件，描述控制台、Agent 注册、通用插件入口与只读输出。业务接口分别由 `plugins/et/api.json`、`plugins/docker/api.json` 和 `plugins/silo/api.json` 维护；这些是插件自己的契约，不是核心契约副本。
 
 前端类型文件 `web/src/api/generated.ts` 由契约生成，不应手工修改。
 
@@ -42,6 +42,8 @@ npm run api:generate --prefix tools
 契约不仅用于生成类型，也用于约束实现行为。特别注意：
 
 - WebSocket 升级端点必须保持契约定义的 `101` 响应；
-- 分享机器接口不能误设为匿名管理接口；
+- 根路径只读输出必须使用独立 Bearer API Key，不能继承管理会话或分享令牌；
 - JSON 写操作需要声明框架拒绝、媒体类型错误和反序列化错误的响应；
 - 契约中的未知字段、错误状态和内容类型约束必须与实现一致。
+
+核心完整控制台接口版本为 2，插件进程接口版本为 1。迁移、历史任务兼容和本批证据见 [架构说明](architecture.md)。
