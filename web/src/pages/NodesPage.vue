@@ -241,6 +241,10 @@ const diskPercent = computed(() => {
       <div class="nodes-toolbar"><h2>控制线路与自动互信</h2><Button size="sm" :disabled="workspace.state.network?.directory.controller_node_id === node.id" @click="setController">{{ workspace.state.network?.directory.controller_node_id === node.id ? '当前 Hub 宿主节点' : '指定为 Hub 宿主节点' }}</Button></div>
       <p>控制机 Agent 仍需手动安装。公网恢复稳定 15 秒后优先；节点间探测与 ET 直连、中继状态分别显示。</p>
       <div class="network-paths"><div v-for="path in network?.connections.paths" :key="path.path"><strong>{{ path.path === 'public' ? '公网' : 'ET' }}</strong> · {{ path.connected ? '已连接' : '未连接' }}{{ network?.connections.active_path === path.path ? '（使用中）' : '' }} · {{ path.rtt_ms == null ? '—' : path.rtt_ms + ' ms' }}<span v-if="path.error"> · {{ path.error }}</span></div></div>
+      <h3>节点间双线路探测</h3>
+      <p>以下结果来自节点实际探测。ICMP 无回应表示本次探测未成功，ET 直连或中继详情在 ET 插件中查看。</p>
+      <div v-if="m?.peers?.length" class="network-table-wrap"><table class="network-table"><thead><tr><th>对端节点</th><th>路径</th><th>探测地址</th><th>方式</th><th>结果</th><th>采集时间</th></tr></thead><tbody><tr v-for="peer in m?.peers || []" :key="`${peer.node_id}:${peer.path}:${peer.address}`"><td>{{ workspace.state.nodeEntries.find(item => item.node.id === peer.node_id)?.node.name || peer.node_id }}</td><td>{{ peer.path === 'overlay' ? 'ET' : '公网' }}</td><td>{{ peer.address }}</td><td>{{ peer.method.toUpperCase() }}</td><td>{{ peer.reachable ? (peer.latency_ms == null ? '可达，未取得延迟' : peer.latency_ms + ' ms') : peer.error || '本次探测未成功' }}</td><td>{{ peer.probed_at == null ? '未知' : formatUnixTime(peer.probed_at) }}</td></tr></tbody></table></div>
+      <p v-else>尚未取得节点间探测结果。</p>
       <p v-if="network?.applied">白名单：期望 {{ network.desired_revision ?? '未知' }} / 已应用 {{ network.applied.applied_revision }} · {{ network.applied.backend || '尚未应用' }}<span v-if="network.applied.error" class="enrollment-error"> · {{ network.applied.error }}</span></p>
       <p v-else>尚未收到白名单应用结果；旧 Agent 不支持自动互信。</p>
       <details><summary>地址观测与来源</summary><pre>{{ JSON.stringify(network?.addresses, null, 2) }}</pre></details>
@@ -299,6 +303,7 @@ const diskPercent = computed(() => {
 <style scoped>
 .network-panel { margin:24px 0;padding:20px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);font-size:13px; }
 .network-panel h2 { font-size:16px;margin:0; }.network-paths { display:grid;gap:10px; }.network-panel pre { white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px; }
+.network-table-wrap { overflow-x:auto; }.network-table { width:100%;border-collapse:collapse;font-size:12px; }.network-table th,.network-table td { padding:10px;text-align:left;border-bottom:1px solid var(--color-border);white-space:nowrap; }
 .nodes-page { display: flex; flex-direction: column; gap: var(--sp-5); }
 .nodes-toolbar { display: flex; align-items: center; justify-content: space-between; color: var(--color-muted); }
 .enrollment-pending { display: flex; flex-direction: column; gap: var(--sp-3); }

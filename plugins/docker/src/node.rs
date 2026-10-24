@@ -266,22 +266,16 @@ pub async fn execute(request: Request) -> Result<Value> {
     );
     let port = if agent { "9001/tcp" } else { "9443/tcp" };
     let host_port = if agent { "9002" } else { "9443" };
-    let binds = if agent {
-        vec![
-            "/var/run/docker.sock:/var/run/docker.sock".to_owned(),
-            format!("{}:/var/lib/docker/volumes", volumes.display()),
-        ]
+    let mut mounts = vec![
+        json!({"Type":"bind","Source":"/var/run/docker.sock","Destination":"/var/run/docker.sock","RW":true}),
+    ];
+    if agent {
+        mounts.push(json!({"Type":"bind","Source":volumes,"Destination":"/var/lib/docker/volumes","RW":true}));
     } else {
-        vec![
-            "/var/run/docker.sock:/var/run/docker.sock".to_owned(),
-            "opsd-portainer-data:/data".into(),
-            format!("{}:/certs:ro", tls.display()),
-            format!(
-                "{}:/run/admin-password:ro",
-                state.join("admin-password").display()
-            ),
-        ]
-    };
+        mounts.extend([json!({"Type":"volume","Name":"opsd-portainer-data","Destination":"/data","RW":true}),
+            json!({"Type":"bind","Source":tls,"Destination":"/certs","RW":false}),
+            json!({"Type":"bind","Source":state.join("admin-password"),"Destination":"/run/admin-password","RW":false})]);
+    }
     let server_args = sdk::strings(&[
         "--admin-password-file",
         "/run/admin-password",
@@ -307,9 +301,22 @@ pub async fn execute(request: Request) -> Result<Value> {
         );
         ensure!(
             item["Config"]["Image"] == image
-                && item["HostConfig"]["Binds"] == json!(binds)
                 && (agent || item["Config"]["Cmd"] == json!(server_args)),
-            "现有管理服务镜像、参数或挂载不同，需显式迁移"
+            "现有管理服务镜像或参数不同，需显式迁移"
+        );
+        // Docker 会规范化挂载表达并调整顺序，按实际源、目标和权限核对。
+        ensure!(
+            item["Mounts"]
+                .as_array()
+                .is_some_and(|actual| actual.len() == mounts.len()
+                    && mounts
+                        .iter()
+                        .all(|expected| actual.iter().any(|mount| expected
+                            .as_object()
+                            .unwrap()
+                            .iter()
+                            .all(|(key, value)| mount.get(key) == Some(value))))),
+            "现有管理服务挂载不同，需显式迁移"
         );
         ensure!(
             item["HostConfig"]["PortBindings"]

@@ -3,12 +3,17 @@ import {mkdir,writeFile,readFile,unlink} from 'node:fs/promises';
 import path from 'node:path';
 import https from 'node:https';
 import http from 'node:http';
+import net from 'node:net';
+import {networkInterfaces} from 'node:os';
 import {makeZip} from './lib/theme-zip.mjs';
 import {randomBytes,createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {loadContract} from './lib/http-assert.mjs';
 const root=process.cwd(),run=path.join(root,'.data','integration-'+Date.now());await mkdir(run,{recursive:true});
 const bin=path.join(root,'target','debug');const exe=name=>path.join(bin,name+(process.platform==='win32'?'.exe':''));
+const interfaceEntry=Object.entries(networkInterfaces()).flatMap(([name,rows])=>(rows||[]).map(row=>({...row,name}))).find(row=>row.family==='IPv4'&&!row.internal);
+assert.ok(interfaceEntry,'隔离双线路验收需要一个实际 IPv4 接口');
+const overlayAddress=interfaceEntry.address;
 const hubDir=path.join(run,'hub'),agentDir=path.join(run,'agent');const password=randomBytes(24).toString('hex');const passwordFile=path.join(run,'password');await writeFile(passwordFile,password,{mode:0o600});
 async function command(name,args){return new Promise((resolve,reject)=>{const child=spawn(name==='docker'?'docker':exe(name),args,{cwd:root,windowsHide:true});let output='';child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);child.on('error',reject);child.on('exit',code=>code===0?resolve(output):reject(new Error(output)));});}
 const initOutput=await command('opsd-hub',['--data-dir',hubDir,'init','--password-file',passwordFile]);
@@ -41,9 +46,9 @@ function upload(route,bytes){return new Promise((resolve,reject)=>{const req=htt
 
 let hub,agent,etFixture;let portainerOwned=false;let fixtureOwned=false;const logs=[];
 function launch(name,args){const c=spawn(exe(name),args,{cwd:root,windowsHide:true});c.stdout.on('data',b=>logs.push(b.toString()));c.stderr.on('data',b=>logs.push(b.toString()));return c;}
-async function wait(fn,label){for(let i=0;i<80;i++){try{if(await fn())return}catch{}await new Promise(r=>setTimeout(r,200));}throw new Error(`${label} 超时\n${logs.join('').slice(-4000)}`);}
+async function wait(fn,label,attempts=80){for(let i=0;i<attempts;i++){try{if(await fn())return}catch{}await new Promise(r=>setTimeout(r,200));}throw new Error(`${label} 超时\n${logs.join('').slice(-4000)}`);}
 async function stop(c){if(!c||c.exitCode!==null)return;const done=new Promise(r=>c.on('exit',r));c.kill();await done;}
-const serveArgs=dir=>['--data-dir',dir,'serve','--listen',`127.0.0.1:${base}`,'--agent-listen','127.0.0.1:19444','--health-listen',`127.0.0.1:${healthPort}`,'--origin',`https://localhost:${base}`];
+const serveArgs=dir=>['--data-dir',dir,'serve','--listen',`127.0.0.1:${base}`,'--agent-listen',overlayAddress+':19444','--health-listen',`127.0.0.1:${healthPort}`,'--origin',`https://localhost:${base}`];
 async function ownStatus(withIdentity=true){
  const identity=withIdentity?{cert:await readFile(path.join(agentDir,'client.pem')),key:await readFile(path.join(agentDir,'client-key.pem'))}:{};
  return new Promise(resolve=>{const req=https.request({hostname:'localhost',port:19444,path:'/status',ca,...identity},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>resolve({status:res.statusCode,data:JSON.parse(text)}));});req.on('error',e=>resolve({error:e.code||e.message}));req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));req.end();});
@@ -64,6 +69,17 @@ if(process.platform==='linux'){
  const restored=await siloNode('storage.prepare',selection,state);assert.equal(restored.status,200);assert.deepEqual(restored.body,prepared.body,'新进程应复用持久目录记录');
  const invalid=await siloNode('storage.prepare',{address:'127.0.0.1',cluster:'invalid',selections:[{mode:'new',device:'/dev/opsd-nonexistent',expected_size:123,mount:path.join(run,'missing-disk')}],confirmed:true},state);assert.equal(invalid.status,400);assert.equal(await readFile(path.join(data,'existing-file'),'utf8'),'已有内容');
 }
+// 公网走可断开的透明 TCP 代理；ET 直接拨实际接口，TLS 始终验证 localhost 身份。
+let publicAvailable=true;
+const publicSockets=new Set();
+const publicProxy=net.createServer(client=>{
+ if(!publicAvailable){client.destroy();return;}
+ const upstream=net.connect(19444,overlayAddress);publicSockets.add(client);publicSockets.add(upstream);
+ client.pipe(upstream);upstream.pipe(client);
+ client.on('error',()=>upstream.destroy());upstream.on('error',()=>client.destroy());
+ client.on('close',()=>{publicSockets.delete(client);upstream.destroy()});upstream.on('close',()=>{publicSockets.delete(upstream);client.destroy()});
+});
+await new Promise(resolve=>publicProxy.listen(19444,'127.0.0.1',resolve));
 try{
  hub=launch('opsd-hub',serveArgs(hubDir));
  await wait(async()=> (await health()).status===200,'主控启动');
@@ -189,7 +205,7 @@ try{
  // ---- 真实插件进程、ET 接口适配与双连接（ET 上游使用隔离夹具） ----
  const machineId='11111111-1111-4111-8111-111111111111',instanceId='22222222-2222-4222-8222-222222222222';
  const etPassword=randomBytes(18).toString('hex');
- let etConfig={instance_id:instanceId,virtual_ipv4:'127.0.0.1',network_length:8,dev_name:'lo',hostname:'原名称',mtu:1400,network_secret:'upstream-private-network'};
+ let etConfig={instance_id:instanceId,virtual_ipv4:overlayAddress,network_length:Number(interfaceEntry.cidr.split('/')[1]),dev_name:interfaceEntry.name,hostname:'原名称',mtu:1400,network_secret:'upstream-private-network'};
  let running=true,slowWrite=false,writeStarted=false,releaseWrite;
  const writeReleased=new Promise(resolve=>{releaseWrite=resolve});
  etFixture=http.createServer(async(req,res)=>{
@@ -206,7 +222,7 @@ try{
    if(req.method==='PUT'){etConfig=input.config;writeStarted=true;if(slowWrite)await writeReleased;res.end('{}');return;}
    res.end(JSON.stringify(etConfig));return;
   }
-  if(req.url===prefix+'/networks/info/'+instanceId){res.end(JSON.stringify({info:{map:{[instanceId]:{running,dev_name:'lo',my_node_info:{virtual_ipv4:{address:{addr:2130706433},network_length:8},stun_info:{public_ip:[],last_update_time:0}}}}}}));return;}
+  if(req.url===prefix+'/networks/info/'+instanceId){res.end(JSON.stringify({info:{map:{[instanceId]:{running,dev_name:interfaceEntry.name,my_node_info:{virtual_ipv4:{address:{addr:overlayAddress.split('.').reduce((value,part)=>value*256+Number(part),0)},network_length:Number(interfaceEntry.cidr.split('/')[1])},stun_info:{public_ip:[],last_update_time:0}}}}}}));return;}
   if(req.url===prefix+'/networks/'+instanceId){running=!input.disabled;res.end('{}');return;}
   if(req.url===prefix+'/networks'){res.end(JSON.stringify({running_inst_ids:running?[instanceId]:[],disabled_inst_ids:running?[]:[instanceId]}));return;}
   if(req.url==='/api/v1/machines'){res.end(JSON.stringify({machines:[{info:{machine_id:machineId,user_token:etPassword,hostname:'隔离 ET 机器',easytier_version:'2.6.4'}}]}));return;}
@@ -231,7 +247,18 @@ try{
  const binding=await request('/plugins/et/api/bind','POST',{machine_id:machineId,instance_id:instanceId,node_id:node,idempotency_key:'bind-fixture'});assert.equal(binding.status,202);
  await wait(async()=> (await request('/tasks/'+binding.data.task_id)).data.status==='succeeded','ET 实例经实际接口与节点网卡核对后关联');
  await wait(async()=> (await request('/network')).data.nodes[0].connections.paths.every(path=>path.connected),'同一节点的公网与 ET 控制连接并存');
- assert.equal((await request('/network')).data.directory.overlays[0].interface,'lo');
+ assert.equal((await request('/network')).data.directory.overlays[0].interface,interfaceEntry.name);
+ await wait(async()=> (await request('/network')).data.nodes[0].connections.active_path==='public','公网恢复稳定后优先',160);
+ publicAvailable=false;for(const socket of publicSockets)socket.destroy();
+ await wait(async()=> (await request('/network')).data.nodes[0].connections.active_path==='overlay','公网断开后切换 ET',160);
+ const switched=await request('/nodes/'+node+'/actions','POST',{idempotency_key:'path-switch',action:{type:'inspect'}});assert.equal(switched.status,202);
+ await wait(async()=> (await request('/tasks/'+switched.data.task_id)).data.status==='succeeded','经 ET 完成同一身份任务');
+ const switchedResult=(await request('/tasks/'+switched.data.task_id)).data;
+ assert.equal((await request('/nodes/'+node+'/actions','POST',{idempotency_key:'path-switch',action:{type:'inspect'}})).data.task_id,switched.data.task_id);
+ publicAvailable=true;
+ await wait(async()=> (await request('/network')).data.nodes[0].connections.active_path==='public','公网恢复稳定后切回',200);
+ const afterSwitch=(await request('/tasks/'+switched.data.task_id)).data;assert.equal(afterSwitch.sequence,switchedResult.sequence,'线路恢复不能重新执行已完成任务');
+
  slowWrite=true;
  const update=await request('/plugins/et/api/config/update','POST',{machine_id:machineId,instance_id:instanceId,patch:{hostname:'新名称'},idempotency_key:'update-fixture'});assert.equal(update.status,202);
  await wait(()=>writeStarted,'旧版本插件开始执行上游写入');
@@ -267,7 +294,7 @@ try{
   portainerOwned=true;
   await dockerJob('/install',{nodes:[node],allow_engine_install:false});
   const actual=JSON.parse(await command('docker',['inspect','opsd-portainer']))[0];
-  assert.deepEqual(actual.HostConfig.PortBindings,{'9443/tcp':[{HostIp:'127.0.0.1',HostPort:'9443'}]});
+  assert.deepEqual(actual.HostConfig.PortBindings,{'9443/tcp':[{HostIp:overlayAddress,HostPort:'9443'}]});
   const inventory=await request('/plugins/docker/api/inventory','POST',{node_id:node});assert.equal(inventory.status,200);assert.ok(inventory.data.containers.some(container=>container.Id===before.Id));
   const logs=await request('/plugins/docker/api/logs','POST',{node_id:node,container:before.Id});assert.equal(logs.status,200);assert.ok(logs.data.text.includes('opsd-existing'));
   await dockerJob('/mutate',{node_id:node,resource:'container',operation:'stop',id:before.Id});
@@ -276,7 +303,7 @@ try{
   // 重复安装只复用自有服务；普通既有容器的身份和挂载仍然不变。
   await dockerJob('/install',{nodes:[node],allow_engine_install:false});
   const reused=JSON.parse(await command('docker',['inspect','opsd-portainer']))[0];assert.equal(reused.Id,actual.Id);
-  console.log('通过：真实 Portainer Server 安装、ET 地址绑定路径、原生 API 盘点和日志、原有容器启停与身份保留、重复安装复用；地址使用隔离回环夹具，不代表现网 ET 或多主机 Agent 验收。');
+  console.log('通过：真实 Portainer Server 安装、ET 地址绑定路径、原生 API 盘点和日志、原有容器启停与身份保留、重复安装复用；地址使用 CI 本机实际接口夹具，不代表现网 ET 或多主机 Agent 验收。');
  }
 
  await new Promise(resolve=>etFixture.close(resolve));etFixture=undefined;
@@ -538,6 +565,7 @@ try{
  assert.ok(rejected,'校验器必须拒绝带 schema 外字段的响应副本');
  console.log('通过：核心认证、无 IP 注册、任务幂等、网络目录、公开字段与密钥范围、主题 v2、文件与数据库既有契约、备份恢复及节点撤销。');
 }finally{
+ publicProxy.close();for(const socket of publicSockets)socket.destroy();
  if(portainerOwned){await command('docker',['rm','-f','opsd-portainer']).catch(()=>{});await command('docker',['volume','rm','opsd-portainer-data']).catch(()=>{});}
  if(fixtureOwned)await command('docker',['rm','-f','opsd-integration-existing']).catch(()=>{});
  etFixture?.close();await stop(agent);await stop(hub);await writeFile(path.join(run,'test.log'),logs.join(''));}
