@@ -5,6 +5,16 @@ use serde_json::{Value, json};
 async fn docker(args: &[String]) -> Result<String> {
     sdk::command("docker", args, &[], None, 600).await
 }
+async fn inspect_engine() -> Result<Value> {
+    let installed = sdk::command("sh", &sdk::strings(&["-c", "command -v docker"]), &[], None, 10).await.is_ok();
+    let info = if installed { docker(&sdk::strings(&["info", "--format", "{{json .}}"])).await } else { Err(anyhow::anyhow!("Docker 尚未安装")) };
+    let compose = installed && (docker(&sdk::strings(&["compose", "version"])).await.is_ok()
+        || sdk::command("docker-compose", &sdk::strings(&["version"]), &[], None, 10).await.is_ok());
+    let error = info.as_ref().err().map(ToString::to_string);
+    let version = info.as_ref().ok().and_then(|text| serde_json::from_str::<Value>(text).ok()).and_then(|value| value["ServerVersion"].as_str().map(str::to_owned));
+    Ok(json!({"installed":installed,"running":info.is_ok(),"compose":compose,"version":version,"error":error,
+        "checked_at":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()}))
+}
 async fn prepare(allow_install: bool) -> Result<()> {
     let exists = sdk::command(
         "sh",
@@ -242,6 +252,13 @@ async fn binding(request: &Request) -> Result<String> {
 pub async fn execute(request: Request) -> Result<Value> {
     if request.path == "identity.prepare" {
         return sdk::identity().await;
+    }
+    if request.path == "engine.inspect" || request.path == "engine.install" {
+        if request.path == "engine.install" {
+            ensure!(request.body["confirmed"] == true, "安装 Docker 基础环境需要明确确认");
+            prepare(true).await?;
+        }
+        return inspect_engine().await;
     }
     ensure!(
         ["server.install", "agent.install"].contains(&request.path.as_str()),

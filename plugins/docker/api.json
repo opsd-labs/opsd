@@ -2,10 +2,119 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Docker / Portainer 业务接口",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "挂在 /{安全入口}/api/v1/plugins/docker/api 下。Cookie、Origin 与 CSRF 由核心校验；秘密通过受保护存储引用。"
   },
   "paths": {
+    "/setup": {
+      "get": {
+        "summary": "读取业务就绪状态与已保存的初始化进度",
+        "responses": {
+          "200": {
+            "description": "实际状态；读取不会创建节点检测任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "needs_configuration",
+                        "needs_network",
+                        "needs_docker",
+                        "needs_installation",
+                        "unavailable",
+                        "ready"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "engines": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "installed": {
+                            "type": "boolean"
+                          },
+                          "running": {
+                            "type": "boolean"
+                          },
+                          "compose": {
+                            "type": "boolean"
+                          },
+                          "version": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "error": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "checked_at": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "installed",
+                          "running",
+                          "compose",
+                          "version",
+                          "error",
+                          "checked_at"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "bindings": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "node_id": {
+                            "type": "string"
+                          },
+                          "endpoint_id": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "node_id",
+                          "endpoint_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "message",
+                    "engines",
+                    "bindings"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
     "/environments": {
       "get": {
         "summary": "读取或操作插件会话/environments",
@@ -394,6 +503,128 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/engine/inspect": {
+      "post": {
+        "summary": "通过宿主机 Agent 检测 Docker Engine 和 Compose",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "node_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "idempotency_key",
+                  "node_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理，实际结果通过核心任务接口读取",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/engine/install": {
+      "post": {
+        "summary": "明确确认后只安装缺失的 Docker 基础环境",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "node_id": {
+                    "type": "string"
+                  },
+                  "confirmed": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "idempotency_key",
+                  "node_id",
+                  "confirmed"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理，实际结果通过核心任务接口读取",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
               }
             }
           },

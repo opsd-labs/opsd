@@ -2,10 +2,321 @@
   "openapi": "3.1.0",
   "info": {
     "title": "EasyTier 网络 业务接口",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "挂在 /{安全入口}/api/v1/plugins/et/api 下。Cookie、Origin 与 CSRF 由核心校验；秘密通过受保护存储引用。"
   },
   "paths": {
+    "/setup": {
+      "get": {
+        "summary": "读取业务就绪状态与已保存的初始化进度",
+        "responses": {
+          "200": {
+            "description": "实际状态；读取不会创建节点检测任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "needs_configuration",
+                        "needs_network",
+                        "needs_docker",
+                        "needs_installation",
+                        "unavailable",
+                        "ready"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "web": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "spec": {
+                              "type": "object",
+                              "properties": {
+                                "node_id": {
+                                  "type": "string"
+                                },
+                                "bind_address": {
+                                  "type": "string"
+                                },
+                                "api_port": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 65535
+                                },
+                                "config_port": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 65535
+                                },
+                                "protocol": {
+                                  "enum": [
+                                    "tcp",
+                                    "udp"
+                                  ]
+                                },
+                                "data_dir": {
+                                  "type": "string"
+                                },
+                                "api_url": {
+                                  "type": "string",
+                                  "format": "uri"
+                                }
+                              },
+                              "required": [
+                                "node_id",
+                                "bind_address",
+                                "api_port",
+                                "config_port",
+                                "protocol",
+                                "data_dir",
+                                "api_url"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "phase": {
+                              "enum": [
+                                "preparing",
+                                "deploying",
+                                "awaiting_account",
+                                "interrupted",
+                                "ready"
+                              ]
+                            },
+                            "task_id": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "last_error": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "container": {
+                              "type": "object",
+                              "properties": {
+                                "container_id": {
+                                  "type": "string"
+                                },
+                                "running": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "container_id",
+                                "running"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "members": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "node_id": {
+                                    "type": "string"
+                                  },
+                                  "machine_id": {
+                                    "type": "string"
+                                  },
+                                  "instance_id": {
+                                    "type": "string"
+                                  },
+                                  "address": {
+                                    "type": "string"
+                                  },
+                                  "phase": {
+                                    "enum": [
+                                      "pending",
+                                      "client_ready",
+                                      "network_created",
+                                      "ready"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "node_id",
+                                  "machine_id",
+                                  "instance_id",
+                                  "address",
+                                  "phase"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "spec",
+                            "phase"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "network": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "spec": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "cidr": {
+                                  "type": "string"
+                                },
+                                "nodes": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "config_endpoint": {
+                                  "type": "string"
+                                },
+                                "peer_urls": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "listener_urls": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "cidr",
+                                "nodes",
+                                "config_endpoint",
+                                "peer_urls",
+                                "listener_urls"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "phase": {
+                              "enum": [
+                                "preparing",
+                                "deploying",
+                                "awaiting_account",
+                                "interrupted",
+                                "ready"
+                              ]
+                            },
+                            "task_id": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "last_error": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "container": {
+                              "type": "object",
+                              "properties": {
+                                "container_id": {
+                                  "type": "string"
+                                },
+                                "running": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "container_id",
+                                "running"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "members": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "node_id": {
+                                    "type": "string"
+                                  },
+                                  "machine_id": {
+                                    "type": "string"
+                                  },
+                                  "instance_id": {
+                                    "type": "string"
+                                  },
+                                  "address": {
+                                    "type": "string"
+                                  },
+                                  "phase": {
+                                    "enum": [
+                                      "pending",
+                                      "client_ready",
+                                      "network_created",
+                                      "ready"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "node_id",
+                                  "machine_id",
+                                  "instance_id",
+                                  "address",
+                                  "phase"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "spec",
+                            "phase"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "message",
+                    "web",
+                    "network"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
     "/machines": {
       "get": {
         "summary": "读取或操作插件会话/machines",
@@ -366,6 +677,225 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/web/install": {
+      "post": {
+        "summary": "部署固定版本 ET Web，或核实后继续原部署",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "idempotency_key": {
+                        "type": "string"
+                      },
+                      "node_id": {
+                        "type": "string"
+                      },
+                      "bind_address": {
+                        "type": "string"
+                      },
+                      "api_port": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535
+                      },
+                      "config_port": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535
+                      },
+                      "protocol": {
+                        "enum": [
+                          "tcp",
+                          "udp"
+                        ]
+                      },
+                      "data_dir": {
+                        "type": "string"
+                      },
+                      "api_url": {
+                        "type": "string",
+                        "format": "uri"
+                      }
+                    },
+                    "required": [
+                      "idempotency_key",
+                      "node_id",
+                      "bind_address",
+                      "api_port",
+                      "config_port",
+                      "protocol",
+                      "data_dir",
+                      "api_url"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "idempotency_key": {
+                        "type": "string"
+                      },
+                      "resume": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "idempotency_key",
+                      "resume"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理，实际结果通过核心任务接口读取",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/network/create": {
+      "post": {
+        "summary": "安装客户端并创建首次组网，或核实后继续原组网",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "idempotency_key": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "cidr": {
+                        "type": "string"
+                      },
+                      "nodes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "config_endpoint": {
+                        "type": "string"
+                      },
+                      "peer_urls": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "listener_urls": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "idempotency_key",
+                      "name",
+                      "cidr",
+                      "nodes",
+                      "config_endpoint",
+                      "peer_urls",
+                      "listener_urls"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "idempotency_key": {
+                        "type": "string"
+                      },
+                      "resume": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "idempotency_key",
+                      "resume"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理，实际结果通过核心任务接口读取",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
               }
             }
           },

@@ -31,15 +31,19 @@ export type PageName =
   | 'nodes'
   | 'firewall'
   | 'database'
-  | 'plugins'
+  | 'docker'
+  | 'network'
+  | 'storage'
   | 'settings'
 
 export const PAGES: { name: PageName; label: string }[] = [
   { name: 'console',  label: '控制台' },
   { name: 'nodes',    label: '节点' },
+  { name: 'docker',   label: 'Docker' },
+  { name: 'network',  label: '网络' },
   { name: 'firewall', label: '防火墙' },
   { name: 'database', label: '数据库' },
-  { name: 'plugins',  label: '插件' },
+  { name: 'storage',  label: '存储' },
   { name: 'settings', label: '设置' },
 ]
 
@@ -47,6 +51,19 @@ export const PAGES: { name: PageName; label: string }[] = [
 
 function getUrlParam(key: string): string | null {
   return new URLSearchParams(window.location.search).get(key)
+}
+
+function routePage(): PageName {
+  const params = new URLSearchParams(window.location.search)
+  let page = params.get('page')
+  if (page === 'plugins') {
+    page = ({ docker: 'docker', et: 'network', silo: 'storage' } as Record<string, string>)[params.get('plugin') ?? ''] ?? 'console'
+    params.set('page', page)
+    params.delete('plugin')
+    if (page === 'console') params.set('notice', 'modules-moved')
+    history.replaceState(null, '', `?${params}`)
+  }
+  return PAGES.find(item => item.name === page)?.name ?? 'console'
 }
 
 function pushRoute(params: Record<string, string | null>): void {
@@ -85,12 +102,12 @@ interface WorkspaceState {
 
   // 当前页
   page: PageName
-  selectedPluginId: string | null
   plugins: PluginRecord[]
   network: NetworkState | null
   selectedNodeId: string | null
 
   // UI 状态
+  mobileNavOpen: boolean
   sidebarCollapsed: boolean
   activeTaskCount: number
   activeStreams: number   // 打开的终端会话数
@@ -106,12 +123,12 @@ const state = reactive<WorkspaceState>({
   enrollments: [],
   metrics: {},
 
-  page: (getUrlParam('page') as PageName) ?? 'console',
+  page: routePage(),
   selectedNodeId: getUrlParam('node'),
-  selectedPluginId: getUrlParam('plugin'),
   plugins: [],
   network: null,
 
+  mobileNavOpen: false,
   sidebarCollapsed: localStorage.getItem('opsd3.sidebar') === 'collapsed',
   activeTaskCount: 0,
   activeStreams: 0,
@@ -297,13 +314,12 @@ async function logout(): Promise<void> {
 function navigate(page: PageName, nodeId?: string): void {
   state.page = page
   if (nodeId !== undefined) state.selectedNodeId = nodeId
-  if (page !== 'plugins') state.selectedPluginId = null
-  pushRoute({ page, node: state.selectedNodeId, plugin: state.selectedPluginId })
+  state.mobileNavOpen = false
+  pushRoute({ page, node: state.selectedNodeId, plugin: null, notice: null })
 }
 
-function openPlugin(id: string | null): void {
-  state.selectedPluginId = id
-  navigate('plugins')
+function setMobileNav(open: boolean): void {
+  state.mobileNavOpen = open
 }
 function selectNode(nodeId: string | null): void {
   state.selectedNodeId = nodeId
@@ -312,11 +328,11 @@ function selectNode(nodeId: string | null): void {
 
 // 监听浏览器前进后退
 window.addEventListener('popstate', () => {
-  const page = (getUrlParam('page') as PageName) ?? 'console'
+  const page = routePage()
   const node = getUrlParam('node')
   state.page = page
   state.selectedNodeId = node
-  state.selectedPluginId = getUrlParam('plugin')
+  state.mobileNavOpen = false
 })
 
 // ---- 侧栏 ----
@@ -361,7 +377,7 @@ export const workspace = {
 
   // 路由
   navigate,
-  openPlugin,
+  setMobileNav,
   selectNode,
 
   // UI
@@ -371,6 +387,7 @@ export const workspace = {
   loadAll,
   refreshEnrollments: loadEnrollments,
   refreshPlugins: loadPlugins,
+  refreshTasks: loadTasks,
   refreshNetwork: loadNetwork,
   submitAction,
 }

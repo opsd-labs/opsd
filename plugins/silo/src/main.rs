@@ -478,6 +478,22 @@ async fn handle(request: Request) -> Result<Response> {
         return Ok(Response::ok(result));
     }
     match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/setup") => {
+            let configured = c.secrets.contains_key("root_user") && c.secrets.contains_key("root_password");
+            let directory = sdk::core("network.get", json!({})).await?;
+            let (state, message) = if !configured {
+                ("needs_configuration", "请先配置存储管理凭据".to_owned())
+            } else if directory["overlays"].as_array().is_none_or(|items| items.is_empty()) {
+                ("needs_network", "请先在网络页完成节点组网与关联".to_owned())
+            } else {
+                match sdk::core("plugin.call",json!({"plugin":"docker","method":"GET","path":"/setup","body":{}})).await {
+                    Ok(value) if value["state"] == "ready" => ("ready", "可选择成员部署或管理现有集群".to_owned()),
+                    Ok(value) => ("needs_docker", value["message"].as_str().unwrap_or("请先接入 Docker 管理环境").to_owned()),
+                    Err(error) => ("unavailable", error.to_string()),
+                }
+            };
+            Ok(Response::ok(json!({"state":state,"message":message})))
+        }
         ("GET", "/readiness") => {
             let nodes: Vec<opsd::protocol::Node> =
                 serde_json::from_value(sdk::core("nodes", json!({})).await?)?;

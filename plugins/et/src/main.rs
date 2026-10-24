@@ -1,3 +1,5 @@
+mod bootstrap;
+mod node;
 use anyhow::{Context as _, Result, bail, ensure};
 use opsd_plugin_sdk::{self as sdk, Context, Request, Response};
 use serde_json::{Value, json};
@@ -229,6 +231,9 @@ async fn handle(request: Request) -> Result<Response> {
         return Ok(Response::ok(json!({})));
     }
     if request.method == "EXECUTE" {
+        if ["web.install", "network.create"].contains(&request.path.as_str()) {
+            return Ok(Response::ok(bootstrap::execute(&request).await?));
+        }
         let (machine, instance) = ids(&request.body)?;
         let base = format!("/machines/{machine}/networks");
         match request.path.as_str() {
@@ -328,6 +333,9 @@ async fn handle(request: Request) -> Result<Response> {
         }
     } else {
         match (request.method.as_str(), request.path.as_str()) {
+            ("GET", "/setup") => Ok(Response::ok(bootstrap::setup(context).await?)),
+            ("POST", "/web/install") => sdk::job(&request, "web.install").await,
+            ("POST", "/network/create") => sdk::job(&request, "network.create").await,
             ("GET", "/machines") => {
                 let mut data = api(context, reqwest::Method::GET, "/machines", None).await?;
                 if let Some(machines) = data["machines"].as_array_mut() {
@@ -380,6 +388,15 @@ async fn handle(request: Request) -> Result<Response> {
 #[tokio::main]
 async fn main() -> Result<()> {
     sdk::initialize();
+    if std::env::args().nth(1).as_deref() == Some("node") {
+        let request = sdk::node_input().await?;
+        let response = match node::execute(request).await {
+            Ok(body) => Response::ok(body),
+            Err(error) => sdk::failure(error),
+        };
+        println!("{}", serde_json::to_string(&response)?);
+        return Ok(());
+    }
     tokio::spawn(async {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {

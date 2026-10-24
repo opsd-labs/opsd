@@ -45,7 +45,7 @@ function request(route,method='GET',body,options={}){return new Promise((resolve
 /** 上传主题包等原始字节；需要会话与 CSRF。 */
 function upload(route,bytes){return new Promise((resolve,reject)=>{const req=https.request({hostname:'localhost',port:base,path:route,method:'POST',ca,headers:{Origin:`https://localhost:${base}`,Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/zip','Content-Length':bytes.length}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,headers:res.headers});});});req.on('error',reject);req.setTimeout(10000,()=>req.destroy(new Error('请求超时')));req.write(bytes);req.end();});}
 
-let hub,agent,etFixture;let portainerOwned=false;let fixtureOwned=false;const logs=[];
+let hub,agent,etFixture;let portainerOwned=false;let fixtureOwned=false;let etWebOwned=false;const logs=[];
 function launch(name,args){const c=spawn(exe(name),args,{cwd:root,windowsHide:true});c.stdout.on('data',b=>logs.push(b.toString()));c.stderr.on('data',b=>logs.push(b.toString()));return c;}
 async function wait(fn,label,attempts=80){for(let i=0;i<attempts;i++){try{if(await fn())return}catch{}await new Promise(r=>setTimeout(r,200));}throw new Error(`${label} 超时\n${logs.join('').slice(-4000)}`);}
 async function stop(c){if(!c||c.exitCode!==null)return;const done=new Promise(r=>c.on('exit',r));c.kill();await done;}
@@ -235,6 +235,20 @@ try{
   const manifest=JSON.parse(await readFile(path.join(root,'plugins/et/plugin.json'),'utf8'));manifest.version=version;
   return makeZip({'plugin.json':JSON.stringify(manifest),'api.json':await readFile(path.join(root,'plugins/et/api.json')),['linux-'+(process.arch==='arm64'?'arm64':'amd64')+'/plugin']:await readFile(exe('opsd-plugin-et')),'web/index.html':'<!doctype html><html lang="zh-CN"><body>插件夹具页面</body></html>'});
  }
+ const catalog=await request('/plugins/catalog');assert.equal(catalog.status,200);assertSchema(catalog.data,responseSchema('/api/v1/plugins/catalog','get',200));
+ assert.deepEqual(catalog.data.modules.find(item=>item.id==='docker').dependencies,[],'Docker 基础环境不依赖 ET 包');
+ assert.ok(catalog.data.modules.every(item=>item.version==='0.2.0'&&item.page===null),'新包只提供后端能力');
+ assert.equal((await upload('/'+entrance+'/api/v1/plugins/et/package',await pluginArchive('0.1.0'))).status,400,'业务页拒绝旧版不兼容包');
+ assert.equal((await upload('/'+entrance+'/api/v1/plugins/docker/package',await pluginArchive('0.2.0'))).status,400,'业务页拒绝其他模块的包');
+ const dockerPackage=await readFile(path.join(root,'.release/plugins/docker-0.2.0.zip'));
+ const targeted=await upload('/'+entrance+'/api/v1/plugins/docker/package',dockerPackage);assert.equal(targeted.status,200);assertSchema(targeted.data,responseSchema('/api/v1/plugins/{plugin}/package','post',200));
+ assert.equal((await request('/plugins/docker/selection','PUT',{version:'0.2.0',enabled:true})).status,200);
+ assert.equal((await request('/plugins/docker/install','POST')).data.installed_at,targeted.data.installed_at,'已安装的官方配套包不得重新下载或覆盖');
+ const engineCheck=await request('/plugins/docker/api/engine/inspect','POST',{node_id:node,idempotency_key:'engine-before-et'});assert.equal(engineCheck.status,202);
+ await wait(async()=> (await request('/tasks/'+engineCheck.data.task_id)).data.status==='succeeded','未安装 ET 前通过实际 Agent 检测 Docker');
+ const engineResult=(await request('/tasks/'+engineCheck.data.task_id)).data.result;
+ const dockerSetup=await request('/plugins/docker/api/setup');assert.equal(dockerSetup.data.state,'needs_configuration');assert.deepEqual(dockerSetup.data.engines[node],engineResult);
+ const dockerContract=await loadContract(path.join(root,'plugins/docker/api.json'));dockerContract.assertSchema(dockerSetup.data,dockerContract.responseSchema('/setup','get',200));
  const pluginZip=await pluginArchive('0.1.0');
  const installedPlugin=await upload(`/${entrance}/api/v1/plugins/package`,pluginZip);
  assertHttpResponse(installedPlugin,{status:200,route:'/api/v1/plugins/package',method:'post',kind:'json',schema:responseSchema('/api/v1/plugins/package','post',200),contentType:'application/json'});
@@ -278,8 +292,8 @@ try{
   const existingName='opsd-integration-existing';
   await command('docker',['run','-d','--name',existingName,'--label','io.opsd.integration=true','alpine:3.22','sh','-c','echo opsd-existing; sleep 1200']);fixtureOwned=true;
   const before=JSON.parse(await command('docker',['inspect',existingName]))[0];
-  assert.equal((await upload('/'+entrance+'/api/v1/plugins/package',await readFile(path.join(root,'.release/plugins/docker-0.1.0.zip')))).status,200);
-  assert.equal((await request('/plugins/docker/selection','PUT',{version:'0.1.0',enabled:true})).status,200);
+  assert.equal((await upload('/'+entrance+'/api/v1/plugins/package',await readFile(path.join(root,'.release/plugins/docker-0.2.0.zip')))).status,200);
+  assert.equal((await request('/plugins/docker/selection','PUT',{version:'0.2.0',enabled:true})).status,200);
   assert.equal((await request('/plugins/docker/configuration','PUT',{config:{},secrets:{admin_password:randomBytes(18).toString('hex'),agent_secret:randomBytes(18).toString('hex')}})).status,200);
   assert.equal((await request('/network','PUT',{node_id:node})).status,200);
   async function dockerJob(path,input){
@@ -333,6 +347,27 @@ try{
   await dockerJob('/mutate',{node_id:node,resource:'container',operation:'stop',id:before.Id});
   await dockerJob('/mutate',{node_id:node,resource:'container',operation:'start',id:before.Id});
   const after=JSON.parse(await command('docker',['inspect',existingName]))[0];assert.equal(after.Id,before.Id);assert.deepEqual(after.Mounts,before.Mounts);assert.equal(after.State.Running,true);
+  // 真实 ET Web 容器只验证部署、API 可达和恢复；注册验证码保留上游交互，不用数据库伪造账号。
+  assert.equal((await upload('/'+entrance+'/api/v1/plugins/et/package',await readFile(path.join(root,'.release/plugins/et-0.2.0.zip')))).status,200);
+  assert.equal((await request('/plugins/et/selection','PUT',{version:'0.2.0',enabled:true})).status,200);
+  const webInput={node_id:node,bind_address:overlayAddress,api_port:11211,config_port:22020,protocol:'udp',data_dir:path.join(run,'et-web'),api_url:'http://'+overlayAddress+':11211'};
+  const installWeb=async body=>{
+   const response=await request('/plugins/et/api/web/install','POST',{...body,idempotency_key:randomBytes(16).toString('hex')});assert.equal(response.status,202,JSON.stringify(response.data));
+   for(let attempt=0;attempt<300;attempt++){
+    const task=(await request('/tasks/'+response.data.task_id)).data;
+    if(task.status==='succeeded')return task.result;
+    if(['failed','uncertain','blocked','cancelled'].includes(task.status))throw new Error('ET Web 部署未成功：'+task.error);
+    await new Promise(resolve=>setTimeout(resolve,1000));
+   }
+   throw new Error('ET Web 部署超时');
+  };
+  etWebOwned=true;
+  const deployedWeb=await installWeb(webInput);assert.equal(deployedWeb.phase,'awaiting_account');
+  const containerBefore=JSON.parse(await command('docker',['inspect','opsd-et-web']))[0];
+  assert.equal(containerBefore.HostConfig.PortBindings['11211/tcp'][0].HostIp,overlayAddress);
+  const resumedWeb=await installWeb({resume:true});assert.equal(resumedWeb.container.container_id,deployedWeb.container.container_id,'恢复不得重新创建网络服务容器');
+  const etSetup=await request('/plugins/et/api/setup');const etContract=await loadContract(path.join(root,'plugins/et/api.json'));etContract.assertSchema(etSetup.data,etContract.responseSchema('/setup','get',200));
+  console.log('通过：真实 ET Web 固定版容器部署、绑定地址、Hub API 可达及原容器恢复；账户注册、首次真实组网与跨主机路径仍需独立现场条件。');
   // 重复安装只复用自有服务；普通既有容器的身份和挂载仍然不变。
   await dockerJob('/install',{nodes:[node],allow_engine_install:false});
   const reused=JSON.parse(await command('docker',['inspect','opsd-portainer']))[0];assert.equal(reused.Id,actual.Id);
@@ -507,8 +542,8 @@ try{
  const installedBusiness=(await request('/plugins')).data.plugins;
  for(const id of ['docker','silo']){
   if(installedBusiness.some(record=>record.manifest.id===id&&record.enabled))continue;
-  assert.equal((await upload('/'+entrance+'/api/v1/plugins/package',await readFile(path.join(root,'.release/plugins/'+id+'-0.1.0.zip')))).status,200);
-  assert.equal((await request('/plugins/'+id+'/selection','PUT',{version:'0.1.0',enabled:true})).status,200);
+  assert.equal((await upload('/'+entrance+'/api/v1/plugins/package',await readFile(path.join(root,'.release/plugins/'+id+'-0.2.0.zip')))).status,200);
+  assert.equal((await request('/plugins/'+id+'/selection','PUT',{version:'0.2.0',enabled:true})).status,200);
  }
  const readiness=await request('/plugins/silo/api/readiness');
  assert.equal(readiness.status,200);
@@ -609,5 +644,6 @@ try{
 }finally{
  publicProxy.close();for(const socket of publicSockets)socket.destroy();
  if(portainerOwned){await command('docker',['rm','-f','opsd-portainer']).catch(()=>{});await command('docker',['volume','rm','opsd-portainer-data']).catch(()=>{});}
+ if(etWebOwned)await command('docker',['rm','-f','opsd-et-web']).catch(()=>{});
  if(fixtureOwned)await command('docker',['rm','-f','opsd-integration-existing']).catch(()=>{});
  etFixture?.close();await stop(agent);await stop(hub);await writeFile(path.join(run,'test.log'),logs.join(''));}

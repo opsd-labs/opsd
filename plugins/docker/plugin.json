@@ -1,11 +1,9 @@
 {
   "api_version": 1,
   "id": "docker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "Docker / Portainer",
-  "dependencies": [
-    "et"
-  ],
+  "dependencies": [],
   "node": true,
   "permissions": [
     "pki.server"
@@ -20,5 +18,5 @@
     "agent_image"
   ],
   "configuration_help": "普通配置：username 可省略，默认 admin；server_image、agent_image 可指定官方固定版本。秘密：admin_password（至少 12 位）、agent_secret（至少 16 位）；接入已有 Server 也可配置 api_key。",
-  "page": "index.html"
+  "page": null
 }

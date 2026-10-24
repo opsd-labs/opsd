@@ -1,10 +1,10 @@
 {
   "api_version": 1,
   "id": "et",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "EasyTier 网络",
   "dependencies": [],
-  "node": false,
+  "node": true,
   "permissions": [
     "network.write"
   ],
@@ -12,6 +12,6 @@
     "url",
     "username"
   ],
-  "configuration_help": "普通配置：url 为现有 ET Web 同源地址，username 为登录账户。秘密：password。",
-  "page": "index.html"
+  "configuration_help": "普通配置：url 为 ET Web 同源地址，username 为登录账户。秘密：password；首次组网还需至少 16 位的 network_secret。可接入已有服务，也可从网络页部署后完成上游账户注册。",
+  "page": null
 }

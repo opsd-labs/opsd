@@ -1,4 +1,4 @@
-/** 内置控制台、插件页面与真实 Agent 的浏览器验收。 */
+/** 内置控制台、业务页面与真实 Agent 的浏览器验收。 */
 import { spawn } from "node:child_process";
 import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -10,7 +10,7 @@ import { makeZip } from './lib/theme-zip.mjs';
 const require = createRequire(new URL("../tools/package.json", import.meta.url));
 const { chromium, expect } = require("@playwright/test");
 
-// 浏览器依赖由 tools 提供，插件页面随独立插件包分发。
+// 浏览器依赖由 tools 提供，业务页面随内置控制台统一发布。
 const root = path.resolve(import.meta.dirname, "..");
 const installAcceptance = process.env.OPSD_INSTALL_ACCEPTANCE || '';
 const installFailures = installAcceptance === 'host' && process.arch === 'x64';
@@ -414,62 +414,103 @@ try {
   if (installAcceptance) {
     console.log(JSON.stringify({ 一键安装: '页面原样命令、下载脚本、重复执行、权限、服务重启恢复与真实上线通过', 模式: installAcceptance, 架构: process.arch, 定点失败: installFailures ? '下载、过期、CA、已有身份、启动失败与 mTLS 不可达通过' : '复用 x64 宿主机的失败分支证据' }));
   } else {
-  await consolePage.getByRole('button', { name: '插件', exact: true }).click();
-  await expect(consolePage.getByText('暂无插件。安装独立发行的插件 ZIP 后，按依赖顺序启用。')).toBeVisible();
-  for (const id of ['et', 'docker', 'silo']) {
-    const zipPath = path.join(root, '.release/plugins', id + '-0.1.0.zip');
-    const installed = consolePage.waitForResponse(response => response.url().endsWith('/plugins/package') && response.request().method() === 'POST');
-    await consolePage.locator('.upload input[type=file]').setInputFiles(zipPath);
-    assert.equal((await installed).status(), 200);
-    const card = consolePage.locator('.plugin-card').filter({ hasText: id === 'et' ? 'EasyTier 网络' : id === 'docker' ? 'Docker / Portainer' : 'Silo 分布式存储' });
-    await card.getByRole('button', { name: '启用此版本', exact: true }).click();
-    await expect(card).toContainText('已启用');
-  }
-  // 页面只读数据使用接口夹具；上游 ET 写入与双控制连接已由 HTTP 集成验收。
-  await consolePage.route('**/api/v1/plugins/et/api/**', route => {
-    const path = new URL(route.request().url()).pathname.split('/api/').at(-1);
-    const value = path === 'machines' ? { machines: [{ machine_id: '11111111-1111-4111-8111-111111111111', info: { hostname: '浏览器 ET 机器', easytier_version: '2.6.4', report_time: '当前夹具时间' } }] }
-      : path === 'console' ? { url: 'http://100.100.201.101:61018/' }
-      : path === 'instances' ? { running_inst_ids: ['22222222-2222-4222-8222-222222222222'], disabled_inst_ids: [] }
-      : path === 'config' ? { hostname: '浏览器 ET 机器', virtual_ipv4: '100.100.201.91', network_length: 10, dev_name: 'jkfujr-easytier' }
-      : { info: { map: {} } };
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
-  });
-  await consolePage.getByRole('button', { name: 'EasyTier 网络', exact: true }).click();
-  const etFrame = consolePage.frameLocator('iframe');
-  await expect(etFrame.getByRole('heading', { name: 'EasyTier 网络', exact: true })).toBeVisible();
-  await etFrame.getByRole('button', { name: '查看实例', exact: true }).click();
-  await etFrame.getByRole('button', { name: '配置与链路', exact: true }).click();
-  await expect(etFrame.getByText('实例配置与关联', { exact: true })).toBeVisible();
-  assert.equal(await etFrame.getByRole('link', { name: '打开 ET 管理台 ↗' }).getAttribute('target'), '_blank');
-  await consolePage.getByRole('button', { name: '插件管理', exact: true }).click();
+  const pageErrors = [];
+  consolePage.on('pageerror', error => pageErrors.push(error.message));
+  const modules = { docker: 'Docker', et: '网络', silo: '存储' };
+  const packages = Object.fromEntries(await Promise.all(Object.keys(modules).map(async id => [id, await readFile(path.join(root, '.release/plugins', id + '-0.2.0.zip'))])));
+  let dockerUnavailable = false;
   await consolePage.route('**/api/v1/plugins/docker/api/**', route => {
-    const path = new URL(route.request().url()).pathname.split('/api/').at(-1);
-    const value = path === 'environments' ? { bindings: [{ node_id: registration.node_id, endpoint_id: 1 }], environments: [] }
-      : path === 'console' ? { url: 'https://100.100.201.91:9443/' }
-      : path === 'logs' ? { text: '浏览器日志夹具' }
+    const suffix = new URL(route.request().url()).pathname.split('/api/').at(-1);
+    const value = suffix === 'setup' ? { state: dockerUnavailable ? 'unavailable' : 'ready', message: dockerUnavailable ? '已接入的管理服务暂不可用：认证失败' : 'Docker 管理服务已连接', bindings: [{ node_id: registration.node_id, endpoint_id: 1 }], engines: { [registration.node_id]: { installed: true, running: true, compose: true, version: '28.0', error: null, checked_at: Math.floor(Date.now() / 1000) } } }
+      : suffix === 'console' ? { url: 'https://100.100.201.91:9443/' }
+      : suffix === 'logs' ? { text: '浏览器日志夹具' }
       : { containers: [{ Id: 'abc123', Names: ['/existing-app'], Image: 'nginx:stable', Status: '运行中', Labels: {} }], stacks: [], images: [], networks: [], volumes: { Volumes: [] } };
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
   });
-  await consolePage.getByRole('button', { name: 'Docker / Portainer', exact: true }).click();
-  const dockerFrame = consolePage.frameLocator('iframe');
-  await expect(dockerFrame.getByText('/existing-app', { exact: true })).toBeVisible();
-  await dockerFrame.getByRole('button', { name: '日志', exact: true }).click();
-  await expect(dockerFrame.getByText('浏览器日志夹具', { exact: true })).toBeVisible();
-  await dockerFrame.getByRole('button', { name: 'Stack', exact: true }).click();
-  await expect(dockerFrame.getByRole('button', { name: '新建 Stack', exact: true })).toBeVisible();
-  await consolePage.getByRole('button', { name: '插件管理', exact: true }).click();
-  await consolePage.getByRole('button', { name: 'Silo 分布式存储', exact: true }).click();
-  const siloFrame = consolePage.frameLocator('iframe');
-  await expect(siloFrame.getByRole('heading', { name: 'Silo 分布式存储', exact: true })).toBeVisible();
-  await siloFrame.getByText('部署新集群', { exact: true }).click();
-  await expect(siloFrame.getByText('我已核对下列新盘设备与容量，确认允许清空所选新盘。已有路径不格式化。', { exact: true })).toBeVisible();
-  await consolePage.setViewportSize({ width: 390, height: 844 });
-  for (const frame of [siloFrame]) {
-    const dimensions = await frame.locator('main').evaluate(element => ({ width: element.scrollWidth, viewport: innerWidth }));
-    assert.ok(dimensions.width <= dimensions.viewport + 1, '插件页面不应出现横向溢出');
+  let networkInterrupted = false;
+  await consolePage.route('**/api/v1/plugins/et/api/**', route => {
+    const suffix = new URL(route.request().url()).pathname.split('/api/').at(-1);
+    const value = suffix === 'setup' ? { state: 'ready', message: '网络管理服务已连接', web: networkInterrupted ? { phase: 'interrupted', spec: { node_id: registration.node_id, api_url: 'http://et.example:11211' }, task_id: 'original-web-task', last_error: '服务地址不可达，等待核实' } : null, network: null }
+      : suffix === 'machines' ? { machines: [{ machine_id: '11111111-1111-4111-8111-111111111111', info: { hostname: '浏览器 ET 机器', easytier_version: '2.6.4', report_time: '当前夹具时间' } }] }
+      : suffix === 'console' ? { url: 'http://100.100.201.101:61018/' }
+      : suffix === 'instances' ? { running_inst_ids: ['22222222-2222-4222-8222-222222222222'], disabled_inst_ids: [] }
+      : suffix === 'config' ? { hostname: '浏览器 ET 机器', virtual_ipv4: '100.100.201.91', network_length: 10, dev_name: 'opsd-et' }
+      : { info: { map: {} } };
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+  });
+  for (const label of Object.values(modules)) {
+    await consolePage.getByRole('button', { name: label, exact: true }).click();
+    await expect(consolePage.getByRole('heading', { name: '安装功能模块', exact: true })).toBeVisible();
+    await expect(consolePage.locator('.sidebar [aria-current="page"]')).toHaveCount(1);
+    await expect(consolePage.locator('iframe')).toHaveCount(0);
   }
-  console.log('通过：真实登录、输出密钥、主题 v2、无 IP 安装、真实 Agent 上线、插件包管理和三个独立页面；业务页只读上游使用夹具，未声明真实 Portainer 或 Silo 部署通过。');
+  // 存储包可以先上传，依赖未就绪时明确引导到对应业务页。
+  await consolePage.locator('input[type=file]').setInputFiles({ name: 'silo.zip', mimeType: 'application/zip', buffer: packages.silo });
+  await expect(consolePage.getByRole('button', { name: '启用配套版本', exact: true })).toBeDisabled();
+  await expect(consolePage.getByRole('button', { name: '前往Docker', exact: true })).toBeVisible();
+  await consolePage.getByRole('button', { name: 'Docker', exact: true }).click();
+  // 资产响应使用现有 ZIP；仍经真实安装接口。模拟响应丢失，重试先查已安装记录。
+  let downloads = 0;
+  await consolePage.route('**/api/v1/plugins/docker/install', async route => {
+    downloads++;
+    const headers = { ...route.request().headers(), 'content-type': 'application/zip' }; delete headers['content-length'];
+    const response = await route.fetch({ url: route.request().url().replace('/install', '/package'), method: 'POST', headers, postData: packages.docker });
+    assert.equal(response.status(), 200);
+    await route.abort('failed');
+  });
+  await consolePage.getByRole('button', { name: '在线安装配套版本', exact: true }).click();
+  await expect(consolePage.locator('.module-error[role=alert]')).toBeVisible();
+  const installAgain = consolePage.getByRole('button', { name: '在线安装配套版本', exact: true });
+  if (await installAgain.isVisible()) await installAgain.click();
+  else await consolePage.getByRole('button', { name: '启用配套版本', exact: true }).click();
+  await expect(consolePage.getByText('/existing-app', { exact: true })).toBeVisible();
+  assert.equal(downloads, 1, '下载响应中断后的恢复不得重复下载已安装版本');
+  await consolePage.getByRole('button', { name: '网络', exact: true }).click();
+  await consolePage.locator('input[type=file]').setInputFiles({ name: 'et.zip', mimeType: 'application/zip', buffer: packages.et });
+  await expect(consolePage.getByText('浏览器 ET 机器', { exact: true })).toBeVisible();
+  await consolePage.getByRole('button', { name: '查看实例', exact: true }).click();
+  await consolePage.getByRole('button', { name: '配置与链路', exact: true }).click();
+  await expect(consolePage.getByRole('dialog', { name: '实例配置与关联', exact: true })).toBeVisible();
+  await consolePage.getByRole('button', { name: '关闭', exact: true }).click();
+  assert.equal(await consolePage.getByRole('link', { name: '打开原生管理台 ↗' }).getAttribute('target'), '_blank');
+  await consolePage.getByRole('button', { name: 'Docker', exact: true }).click();
+  await consolePage.getByRole('button', { name: '日志', exact: true }).click();
+  await expect(consolePage.getByText('浏览器日志夹具', { exact: true })).toBeVisible();
+  await consolePage.getByRole('button', { name: '关闭', exact: true }).click();
+  await consolePage.getByRole('tab', { name: 'Stack', exact: true }).click();
+  await expect(consolePage.getByRole('button', { name: '新建 Stack', exact: true })).toBeVisible();
+  for (let index = 0; index < 2; index++) {
+    await consolePage.getByRole('button', { name: /切换为.*主题/ }).click();
+    const colors = await consolePage.evaluate(() => ({ panel: getComputedStyle(document.querySelector('.module-panel')).backgroundColor, topbar: getComputedStyle(document.querySelector('.topbar')).backgroundColor, font: getComputedStyle(document.querySelector('.module-page')).fontFamily, bodyFont: getComputedStyle(document.body).fontFamily }));
+    assert.equal(colors.panel, colors.topbar); assert.equal(colors.font, colors.bodyFont);
+  }
+  dockerUnavailable = true;
+  await consolePage.reload();
+  await expect(consolePage.getByRole('heading', { name: 'Docker', exact: true })).toBeVisible();
+  await expect(consolePage.getByText('已接入的管理服务暂不可用：认证失败', { exact: true })).toBeVisible();
+  await expect(consolePage.getByRole('button', { name: '在线安装配套版本', exact: true })).toHaveCount(0);
+  await consolePage.getByRole('button', { name: '存储', exact: true }).click();
+  await consolePage.getByRole('button', { name: '启用配套版本', exact: true }).click();
+  await expect(consolePage.getByText('请先配置存储管理凭据', { exact: true })).toBeVisible();
+  await consolePage.getByText('部署新集群', { exact: true }).click();
+  await expect(consolePage.getByText('我已核对下列新盘设备与容量，确认允许清空所选新盘。已有路径不格式化。', { exact: true })).toBeVisible();
+  networkInterrupted = true;
+  await consolePage.goto('https://localhost:' + base + '/' + entrance + '/?page=plugins&plugin=et');
+  await expect(consolePage.getByRole('heading', { name: '网络', exact: true })).toBeVisible();
+  await expect(consolePage.getByText('服务地址不可达，等待核实', { exact: true })).toBeVisible();
+  await expect(consolePage.getByRole('button', { name: '核实并继续原部署', exact: true })).toBeVisible();
+  assert.equal(new URL(consolePage.url()).searchParams.get('page'), 'network');
+  await consolePage.setViewportSize({ width: 390, height: 844 });
+  for (const label of Object.values(modules)) {
+    await consolePage.getByRole('button', { name: '打开导航', exact: true }).click();
+    await consolePage.locator('.sidebar').getByRole('button', { name: label, exact: true }).click();
+    await expect(consolePage.getByRole('heading', { name: label, exact: true })).toBeVisible();
+    await expect(consolePage.locator('.sidebar [aria-current="page"]')).toHaveCount(1);
+    const dimensions = await consolePage.evaluate(() => ({ width: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(dimensions.width <= dimensions.viewport + 1, '业务页面不应出现横向溢出');
+  }
+  assert.deepEqual(pageErrors, [], '业务页面不得产生未处理脚本异常');
+  console.log('通过：真实登录与 Agent 上线、业务页 ZIP 安装及依赖引导、在线响应中断恢复、统一主题、唯一导航选中、旧链接、刷新与窄屏；上游业务读取为夹具，真实初始化另由 HTTP 集成验收。');
   }
   await browser.close();
 } finally {

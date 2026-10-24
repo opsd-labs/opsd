@@ -1939,6 +1939,137 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/plugins/{plugin}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin: "docker" | "et" | "silo";
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从官方固定发行版安装配套模块，已安装时直接复用 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    plugin: "docker" | "et" | "silo";
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PluginInstalled"];
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                /** @description 模块包超过 256 MiB */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 发行版或资产不可用、下载中断 */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugins/{plugin}/package": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin: "docker" | "et" | "silo";
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 安装当前功能的配套 ZIP，校验目标、版本和依赖，不覆盖已有版本 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    plugin: "docker" | "et" | "silo";
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/zip": string;
+                };
+            };
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PluginInstalled"];
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                /** @description 模块包超过 256 MiB */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/{plugin}/selection": {
         parameters: {
             query?: never;
@@ -2042,6 +2173,45 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["Error"];
                         "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugins/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出与当前内置控制台配套的官方模块 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 配套模块清单 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            modules: components["schemas"]["PluginManifest"][];
+                        };
                     };
                 };
                 401: components["responses"]["Unauthorized"];

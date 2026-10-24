@@ -595,12 +595,45 @@ async fn handle(request: Request) -> Result<Response> {
     }
     if request.method == "EXECUTE" {
         return Ok(Response::ok(match request.path.as_str() {
+            "engine.inspect" | "engine.install" => {
+                let node = request.body["node_id"].as_str().context("缺少节点")?;
+                let value = sdk::node_task(&request.context, node, &request.path, request.body.clone(), &request.path).await?;
+                sdk::kv_put(&format!("engine:{node}"), value.clone()).await?;
+                value
+            }
             "install" => install(&request).await?,
             "mutate" => mutate(&request).await?,
             _ => bail!("未知 Docker 任务"),
         }));
     }
     match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/setup") => {
+            let mut engines = serde_json::Map::new();
+            let nodes = sdk::core("nodes", json!({})).await?;
+            for node in nodes.as_array().context("节点列表无效")? {
+                if let Some(id) = node["id"].as_str() {
+                    let value = sdk::kv_get(&format!("engine:{id}")).await?;
+                    if !value.is_null() { engines.insert(id.into(), value); }
+                }
+            }
+            let bindings = sdk::kv_get("environments").await?;
+            let configured = request.context.secrets.contains_key("api_key") || request.context.secrets.contains_key("admin_password");
+            let (state, message) = if !configured {
+                ("needs_configuration", "请配置 Docker 管理服务的凭据".to_owned())
+            } else if let Err(error) = base(&request.context).await {
+                ("needs_network", error.to_string())
+            } else if bindings.as_array().is_none_or(|items| items.is_empty()) {
+                ("needs_installation", "基础环境可单独安装；网络就绪后接入管理服务".to_owned())
+            } else {
+                match api(&request.context, reqwest::Method::GET, "/endpoints", None).await {
+                    Ok(_) => ("ready", "Docker 管理服务已连接".to_owned()),
+                    Err(error) => ("unavailable", format!("已接入的管理服务暂不可用：{error}")),
+                }
+            };
+            Ok(Response::ok(json!({"state":state,"message":message,"engines":engines,"bindings":bindings})))
+        }
+        ("POST", "/engine/inspect") => sdk::job(&request, "engine.inspect").await,
+        ("POST", "/engine/install") => sdk::job(&request, "engine.install").await,
         ("POST", "/install") => sdk::job(&request, "install").await,
         ("POST", "/mutate") => sdk::job(&request, "mutate").await,
         ("GET", "/console") => Ok(Response::ok(json!({"url":base(&request.context).await?}))),

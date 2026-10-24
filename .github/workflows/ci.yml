@@ -43,6 +43,8 @@ jobs:
         run: |
           if [ "${{ contains(inputs.reuse_passed, 'storage-only') }}" = "true" ]; then
             cargo test --locked -p opsd-plugin-silo readiness::tests
+          elif [ "${{ contains(inputs.reuse_passed, 'business-modules') }}" = "true" ]; then
+            cargo test --locked --workspace hub::repository::
           elif [ "${{ contains(inputs.reuse_passed, 'other-subsystems') }}" = "true" ]; then
             cargo test --locked --workspace hub::theme::
           else
@@ -170,9 +172,8 @@ jobs:
         run: |
           cargo build --locked --workspace --bins
           strip --strip-debug target/debug/opsd-plugin-et target/debug/opsd-plugin-docker target/debug/opsd-plugin-silo
-      - name: 准备独立插件页面与验收包
+      - name: 准备独立模块验收包
         run: |
-          npm ci --prefix web
           mkdir -p .release/plugin-binaries/linux-amd64
           for plugin in et docker silo; do
             cp "target/debug/opsd-plugin-$plugin" .release/plugin-binaries/linux-amd64/
@@ -194,7 +195,7 @@ jobs:
       - name: 负向契约门禁
         if: ${{ !contains(inputs.reuse_passed, 'negative') }}
         run: node tests/negative-gates.mjs
-      - name: 控制台与插件页面浏览器验收
+      - name: 控制台与业务页面浏览器验收
         run: node tests/console-e2e.mjs
 
   docker-smoke:

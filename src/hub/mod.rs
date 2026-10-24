@@ -9,6 +9,7 @@ mod installation;
 mod metrics;
 mod network;
 mod plugins;
+mod repository;
 mod theme;
 use anyhow::Result;
 use axum::{
@@ -366,6 +367,8 @@ pub async fn run() -> Result<()> {
                     get(network::read).put(network::controller),
                 )
                 .route("/api/v1/plugins", get(plugins::list))
+                .route("/api/v1/plugins/catalog", get(plugins::catalog))
+                .route("/api/v1/plugins/{plugin}/install", post(plugins::install_official))
                 .route(
                     "/api/v1/plugins/{plugin}/{version}",
                     delete(plugins::uninstall),
@@ -492,7 +495,12 @@ pub async fn run() -> Result<()> {
                 .route_layer(middleware::from_fn_with_state(state.clone(), auth::require))
                 .layer(axum::extract::DefaultBodyLimit::max(128 * 1024 * 1024))
                 .with_state(state.clone());
-            let console = console.merge(theme_upload).merge(plugin_upload);
+            let module_upload = Router::new()
+                .route("/api/v1/plugins/{plugin}/package", post(plugins::install_target))
+                .route_layer(middleware::from_fn_with_state(state.clone(), auth::require))
+                .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024))
+                .with_state(state.clone());
+            let console = console.merge(theme_upload).merge(plugin_upload).merge(module_upload);
             let prefix = format!("/{entrance_value}");
             let trimmed = prefix.clone();
             // nest 不会匹配裸的 `/{入口}/`，因此显式补一条根路由；

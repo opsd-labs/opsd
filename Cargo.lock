@@ -1482,6 +1482,7 @@ name = "opsd-plugin-et"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ipnet",
  "md5",
  "opsd-plugin-sdk",
  "reqwest",

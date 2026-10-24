@@ -87,6 +87,58 @@ fn arch() -> &'static str {
     }
 }
 
+fn official(plugin: &str) -> ApiResult<Manifest> {
+    let source = match plugin {
+        "docker" => include_str!("../../plugins/docker/plugin.json"),
+        "et" => include_str!("../../plugins/et/plugin.json"),
+        "silo" => include_str!("../../plugins/silo/plugin.json"),
+        _ => return Err(bad("没有该模块的官方发行版")),
+    };
+    Ok(serde_json::from_str(source)?)
+}
+
+pub async fn catalog() -> ApiResult<Json<Value>> {
+    let modules = ["docker", "et", "silo"]
+        .into_iter()
+        .map(official)
+        .collect::<ApiResult<Vec<_>>>()?;
+    Ok(Json(json!({"modules": modules})))
+}
+
+pub async fn install_target(
+    S(s): S<State>,
+    Path(plugin): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Installed>> {
+    let expected = official(&plugin)?;
+    {
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&body))?;
+        let manifest: Manifest = serde_json::from_reader(zip.by_name("plugin.json")?)?;
+        manifest.validate()?;
+        check(manifest.id == plugin, "所选 ZIP 不属于当前功能模块")?;
+        check(manifest.version == expected.version, "模块版本与当前控制台不兼容，请使用配套版本")?;
+        check(manifest.dependencies == expected.dependencies, "模块依赖与配套版本不一致")?;
+    }
+    install(S(s), body).await
+}
+
+pub async fn install_official(
+    S(s): S<State>,
+    Path(plugin): Path<String>,
+) -> ApiResult<Json<Installed>> {
+    let expected = official(&plugin)?;
+    if let Some(record) = s.db.get::<Installed>("plugins", &key(&plugin, &expected.version)?).await? {
+        return Ok(Json(record));
+    }
+    let url = format!("https://github.com/opsd-labs/opsd/releases/tag/plugin-{plugin}-v{}", expected.version);
+    let bytes = super::repository::download_named(&url, &format!("{plugin}-{}.zip", expected.version), 256 * 1024 * 1024).await?;
+    // 下载可能较慢；另一会话已安装时直接复用，不覆盖其程序。
+    if let Some(record) = s.db.get::<Installed>("plugins", &key(&plugin, &expected.version)?).await? {
+        return Ok(Json(record));
+    }
+    install_target(S(s), Path(plugin), bytes).await
+}
+
 pub async fn install(S(s): S<State>, body: Bytes) -> ApiResult<Json<Installed>> {
     let _management = s.plugin_management.lock().await;
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(body))?;

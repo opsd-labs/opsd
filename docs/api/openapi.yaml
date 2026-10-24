@@ -1862,6 +1862,115 @@ paths:
                 type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/v1/plugins/catalog:
+    get:
+      tags:
+        - plugins
+      summary: 列出与当前内置控制台配套的官方模块
+      responses:
+        '200':
+          description: 配套模块清单
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  modules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PluginManifest'
+                required:
+                  - modules
+                additionalProperties: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/plugins/{plugin}/package:
+    parameters:
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+            - docker
+            - et
+            - silo
+    post:
+      tags:
+        - plugins
+      summary: 安装当前功能的配套 ZIP，校验目标、版本和依赖，不覆盖已有版本
+      requestBody:
+        required: true
+        content:
+          application/zip:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginInstalled'
+        '400':
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginOrCsrfRejected'
+        '413':
+          description: 模块包超过 256 MiB
+  /api/v1/plugins/{plugin}/install:
+    parameters:
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+            - docker
+            - et
+            - silo
+    post:
+      tags:
+        - plugins
+      summary: 从官方固定发行版安装配套模块，已安装时直接复用
+      responses:
+        '200':
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginInstalled'
+        '400':
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginOrCsrfRejected'
+        '413':
+          description: 模块包超过 256 MiB
+        '502':
+          description: 发行版或资产不可用、下载中断
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/plugins/package:
     post:
       tags:

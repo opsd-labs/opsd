@@ -1,4 +1,4 @@
-import { readFile, copyFile, mkdir, mkdtemp, readdir, stat, chmod, rm } from 'node:fs/promises'
+import { readFile, copyFile, mkdir, mkdtemp, stat, chmod, rm } from 'node:fs/promises'
 import { resolve, join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -11,27 +11,8 @@ const manifest = JSON.parse(await readFile(join(source, 'plugin.json'), 'utf8'))
 const target = resolve(output, `${manifest.id}-${manifest.version}.zip`)
 await mkdir(dirname(target), { recursive: true })
 const staging = await mkdtemp(join(tmpdir(), `opsd-plugin-${id}-`))
-async function copyDirectory(from, to) {
-  await mkdir(to, { recursive: true })
-  for (const entry of await readdir(from, { withFileTypes: true })) {
-    if (entry.isDirectory()) await copyDirectory(join(from, entry.name), join(to, entry.name))
-    else if (entry.isFile()) await copyFile(join(from, entry.name), join(to, entry.name))
-  }
-}
 try {
   for (const file of ['plugin.json', 'api.json']) await copyFile(join(source, file), join(staging, file))
-  if (manifest.page) {
-    await copyDirectory(join(source, 'web'), join(staging, 'web'))
-    for (const file of ['ui.js', 'ui.css']) await copyFile(join(root, 'plugins/ui', file), join(staging, 'web', file))
-  }
-  if (id === 'docker') {
-    await mkdir(join(staging, 'web/vendor'), { recursive: true })
-    for (const [from, to] of [
-      ['@xterm/xterm/lib/xterm.js', 'xterm.js'],
-      ['@xterm/xterm/css/xterm.css', 'xterm.css'],
-      ['@xterm/addon-fit/lib/addon-fit.js', 'addon-fit.js'],
-    ]) await copyFile(join(root, 'web/node_modules', from), join(staging, 'web/vendor', to))
-  }
   let count = 0
   for (const arch of ['amd64', 'arm64']) {
     const binary = resolve(binaries, `linux-${arch}`, `opsd-plugin-${id}`)

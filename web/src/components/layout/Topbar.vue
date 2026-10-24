@@ -15,11 +15,11 @@ const selectedNodeId = computed(() => workspace.state.selectedNodeId)
 const taskCount = computed(() => workspace.state.activeTaskCount)
 
 const pageLabel = computed(
-  () => workspace.state.plugins.find(record => record.enabled && record.manifest.id === workspace.state.selectedPluginId)?.manifest.name ?? PAGES.find(p => p.name === page.value)?.label ?? '控制台'
+  () => PAGES.find(p => p.name === page.value)?.label ?? '控制台'
 )
 
 // 需要节点选择器的页面
-const nodePages = new Set(['nodes', 'docker', 'firewall', 'database', 'storage'])
+const nodePages = new Set(['nodes', 'docker', 'firewall', 'database'])
 const showNodeSelect = computed(() => nodePages.has(page.value))
 
 function onNodeChange(e: Event) {
@@ -31,6 +31,7 @@ function onNodeChange(e: Event) {
 <template>
   <header class="topbar">
     <div class="topbar__left">
+      <button class="icon-btn mobile-menu" aria-label="打开导航" :aria-expanded="workspace.state.mobileNavOpen" @click="workspace.setMobileNav(true)">☰</button>
       <h1 class="topbar__title">{{ pageLabel }}</h1>
     </div>
 
@@ -222,4 +223,6 @@ function onNodeChange(e: Event) {
   outline: none;
   box-shadow: var(--shadow-focus);
 }
+.mobile-menu { display: none; }
+@media (width < 900px) { .mobile-menu { display: flex; } }
 </style>

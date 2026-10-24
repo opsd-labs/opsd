@@ -3,7 +3,7 @@
  * AppShell — 主布局骨架
  * grid: sidebar + main(topbar + content)
  */
-import { computed } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import { workspace } from '../../state/workspace'
 import Sidebar from './Sidebar.vue'
 import Topbar from './Topbar.vue'
@@ -11,27 +11,38 @@ import ConsolePage from '../../pages/ConsolePage.vue'
 import NodesPage from '../../pages/NodesPage.vue'
 import FirewallPage from '../../pages/FirewallPage.vue'
 import DatabasePage from '../../pages/DatabasePage.vue'
-import PluginsPage from '../../pages/PluginsPage.vue'
+import DockerPage from '../../modules/docker/DockerPage.vue'
+import NetworkPage from '../../modules/network/NetworkPage.vue'
+import StoragePage from '../../modules/storage/StoragePage.vue'
 import SettingsPage from '../../pages/SettingsPage.vue'
 
 const page = computed(() => workspace.state.page)
 const collapsed = computed(() => workspace.state.sidebarCollapsed)
+const moved = new URLSearchParams(location.search).get('notice') === 'modules-moved'
+watch(() => workspace.state.mobileNavOpen, async open => {
+  await nextTick()
+  document.querySelector<HTMLButtonElement>(open ? '.sidebar .nav-item' : '.mobile-menu')?.focus()
+})
 </script>
 
 <template>
-  <div class="shell" :class="{ 'shell--collapsed': collapsed }">
+  <div class="shell" :class="{ 'shell--collapsed': collapsed }" @keydown.esc="workspace.setMobileNav(false)">
+    <button v-if="workspace.state.mobileNavOpen" class="navigation-overlay" aria-label="关闭导航" @click="workspace.setMobileNav(false)" />
     <Sidebar />
 
     <div class="shell__main">
       <Topbar />
 
       <main class="shell__content">
+        <p v-if="moved && page === 'console'" class="route-notice">模块管理已归入对应业务页面，请从 Docker、网络或存储菜单进入。</p>
         <p v-if="workspace.state.error" role="alert" class="shell__error">{{ workspace.state.error }}</p>
         <ConsolePage  v-if="page === 'console'" />
         <NodesPage    v-else-if="page === 'nodes'" />
         <FirewallPage v-else-if="page === 'firewall'" />
         <DatabasePage v-else-if="page === 'database'" />
-        <PluginsPage  v-else-if="page === 'plugins'" />
+        <DockerPage v-else-if="page === 'docker'" />
+        <NetworkPage v-else-if="page === 'network'" />
+        <StoragePage v-else-if="page === 'storage'" />
         <SettingsPage v-else-if="page === 'settings'" />
       </main>
     </div>
@@ -39,6 +50,14 @@ const collapsed = computed(() => workspace.state.sidebarCollapsed)
 </template>
 
 <style scoped>
+.navigation-overlay { display: none; }
+.route-notice { color: var(--color-secondary); margin-bottom: var(--sp-3); }
+@media (width < 900px) {
+  .navigation-overlay { display: block; position: fixed; inset: 0; z-index: 49; border: 0; background: var(--color-overlay); }
+  :deep(.sidebar) { visibility: hidden; }
+  :deep(.sidebar--mobile-open) { visibility: visible; position: fixed; width: var(--sidebar-w); z-index: 50; left: 0; top: 0; }
+}
+@media (900px <= width < 1200px) { :deep(.sidebar) { width: var(--sidebar-w-collapsed); } :deep(.sidebar .nav-item__label), :deep(.sidebar .brand-name) { display: none; } }
 .shell__error { color: var(--color-danger); margin-bottom: var(--sp-3); }
 .shell {
   display: grid;
