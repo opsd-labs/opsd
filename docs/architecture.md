@@ -109,7 +109,7 @@ Hub 生成带版本的完整期望状态，Agent 只持久化和追赶最新版�
 | 后端、真实服务与负向门禁 | [最终 CI 通过](https://github.com/opsd-labs/opsd/actions/runs/40122453738)：当前工作区二进制和模块包、目标 ZIP 校验、已有包在线安装复用、独立 Docker 检测、凭据修改后清理 ET 缓存、真实 ET Web 部署／地址绑定／Hub 可达／原容器恢复、真实 Portainer 与终端，以及 14 项负向门禁 |
 | 内置业务页面 | 同次 CI 的 Chromium 验收通过真实登录、Agent 上线、三页 ZIP 与依赖引导、在线安装响应中断恢复、统一深浅主题、唯一选中项、旧链接、刷新和 390px 导航；业务列表采用接口夹具，在线下载响应采用正式安装接口与现有 ZIP |
 
-真实 ET Web 与 Portainer 在 CI 同机环境运行，不能代替 ET Web／Hub 分处两机、客户端首次组网或多主机 Agent 验收。CI 已有 Docker，尚未覆盖“缺少 Docker → 安装 → ET Web 与客户端 → 首次组网 → Portainer”的完整链路。初始化执行中重启后的真实多机恢复、新盘及四节点 Silo、桶用户的真实集群操作仍未验收。0.2.0 公开发行资产下载与 C091 更新尚未计为完成；此前线上版本见下方历史部署记录。
+真实 ET Web 与 Portainer 在 CI 同机环境运行，不能代替 ET Web／Hub 分处两机、客户端首次组网或多主机 Agent 验收。CI 已有 Docker，尚未覆盖“缺少 Docker → 安装 → ET Web 与客户端 → 首次组网 → Portainer”的完整链路。初始化执行中重启后的真实多机恢复、新盘及四节点 Silo、桶用户的真实集群操作仍未验收。0.2.0 正式发行及 C091 灰度更新已完成，线上证据见下一节。
 
 本阶段正常、重试和回退仍为 **0 次模型请求**，确定性步骤没有转移给模型。配套目录在页面会话中复用，每个业务页读取自身就绪状态；任务进度复用主站事件流和刷新，不新增永久轮询。缺失包在线安装通常为一次发行查询加一次资产下载，响应中断先读已安装记录；原重定向限制与 60 秒请求超时不变。ET 配置变更立即清空 10 秒 GET 缓存，认证重试与后台刷新沿用下文。ET 初始化每节点执行依赖、网段、客户端、运行状态和连通检查及必要的上游配置请求；Web 可达最多等待 60 秒，客户端和 Agent 事实各最多等待 90 秒，成员连通逐对端最多等待 60 秒，轮间隔 2 秒。持久化身份与进度减少失败后的资源重复创建；实际部署与恢复、页面及错误状态收益由上表对应检查证明。镜像拉取与缺软件安装耗时取决于网络及包管理器，不承诺固定时延。
 
@@ -156,3 +156,20 @@ C091 的 `/opt/opsd-test` 只更新 Hub 固定镜像及配套 Agent 引用，沿
 部署时节点、待接入记录和任务均为 0，没有为验收创建生产节点、令牌或输出密钥。ET 尚未配置，Silo 集群数为 0；没有安装 C091 宿主机 Agent、创建 Portainer／Silo 实例、格式化真实磁盘、接管其他服务或更新 main/latest。后续仍需用户手动接入宿主机 Agent、关联 ET 并指定 Hub 宿主节点，之后才能部署 Portainer；真实多机 Agent 和 Silo 集群验收边界不变。
 
 发布结束时，GitHub 的两条未启动重试记录 `40108286913`、`40109470709` 仍显示 queued，取消接口返回 409；它们不计为通过，也不会自动部署 C091。本次成功证据以 `40110063758` 为准。
+
+## 2026-10-25 C091 灰度更新
+
+统一业务页面源码提交 `c00e4e2dc5cf00aa49a44305646a96e3af6ead7c` 的 [既有 CI](https://github.com/opsd-labs/opsd/actions/runs/40122453738) 全部通过。随后提交 `f5b84dd7d93c3385483a0565e9089be7a93b709e` 完成配套发行；与已验收业务源码相比只增加本专题及入口状态文档。三个独立模块的 [正式发行流程](https://github.com/opsd-labs/opsd/actions/runs/40123034770) 和 Hub／Agent 的 [发布及安装验收](https://github.com/opsd-labs/opsd/actions/runs/40123040419) 均成功；后者的 amd64／arm64 × 宿主机／Docker 四组合安装全部通过。
+
+| 制品 | 灰度版本 |
+| --- | --- |
+| Hub | `ghcr.io/opsd-labs/opsd@sha256:f0de01d5ea8fd7dbaa02d54f05a0a83e1dd49064299ba8a18f81dd4bf4c819d0` |
+| Agent 镜像 | `ghcr.io/opsd-labs/opsd-agent@sha256:64b4f80fbd34ad9f0faad7fc52e071813e40392816ddc7e16b675a0a166be471` |
+| Agent 安装发行 | [`agent-f5b84dd7d93c3385483a0565e9089be7a93b709e`](https://github.com/opsd-labs/opsd/releases/tag/agent-f5b84dd7d93c3385483a0565e9089be7a93b709e) |
+| 后端模块 | [ET 0.2.0](https://github.com/opsd-labs/opsd/releases/tag/plugin-et-v0.2.0)、[Docker 0.2.0](https://github.com/opsd-labs/opsd/releases/tag/plugin-docker-v0.2.0)、[Silo 0.2.0](https://github.com/opsd-labs/opsd/releases/tag/plugin-silo-v0.2.0) |
+
+C091 的 `/opt/opsd-test/deployment.env` 仅更新 Hub 与 Agent 镜像摘要。Compose 按固定 Hub 摘要重建后健康检查为 `healthy`、重启计数为 0；原 `/opt/opsd-test/data` 到 `/var/lib/opsd` 的读写卷、CA、服务证书、端口、安全入口均保留。Agent 安装发行版本和内置／覆盖镜像摘要均为本次 f5 固定版本。没有安装宿主机 Agent 或改接其他服务。
+
+三个 0.2.0 后端包均经 Hub 官方发行安装接口安装并启用；对应 0.1.0 包仍保留但已禁用。严格 CA HTTPS 会话下，登录后的 Hub 首页、内置 JS、xterm JS 与 CSS、节点、注册令牌、任务和模块列表均成功读取。Hub 当时仍为 0 个节点、0 个注册令牌、0 个任务。Docker、网络、存储的就绪接口分别返回 `needs_configuration`，提示仍需配置管理凭据、接入／部署 ET 与配置存储凭据；模块启用不代表已部署这些业务服务。当前会话没有可用浏览器，线上检查不声称完成浏览器交互；页面与窄屏的浏览器证据来自上述 CI。
+
+因此本次线上更新范围为 Hub、内置业务页面及三个后端模块包。用户仍需手动接入宿主机 Agent，再按 Docker → 网络／ET → Portainer → 存储的顺序完成现场配置；缺少 Docker 的实际安装、ET Web 与 Hub 跨主机、客户端首次多机组网、多主机 Portainer Agent、新盘与四节点 Silo 仍未验收。正常、重试和回退为 0 次模型请求；请求、缓存与等待成本沿用上一节。
