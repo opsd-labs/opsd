@@ -134,7 +134,13 @@ pub async fn execute(request: Request) -> Result<Value> {
             sdk::require_local_address(address).await?;
             for peer in body["peers"].as_array().context("缺少网络成员地址")? {
                 let peer: std::net::Ipv4Addr = peer.as_str().context("成员地址无效")?.parse()?;
-                sdk::command("ping", &sdk::strings(&["-I", address, "-c", "1", "-W", "3", &peer.to_string()]), &[], None, 10).await.with_context(|| format!("到 {peer} 的组网连通尚未确认"))?;
+                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+                loop {
+                    match sdk::command("ping", &sdk::strings(&["-I", address, "-c", "1", "-W", "3", &peer.to_string()]), &[], None, 10).await {
+                        Ok(_) => break,
+                        Err(error) => { ensure!(tokio::time::Instant::now() < deadline, "到 {peer} 的组网连通尚未确认：{error}"); tokio::time::sleep(std::time::Duration::from_secs(2)).await; }
+                    }
+                }
             }
             Ok(json!({"verified":true}))
         }

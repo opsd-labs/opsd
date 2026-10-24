@@ -172,22 +172,28 @@ async fn run_network(c: &Context, key: &str, state: &mut Value, secret: &str) ->
         let item = state["members"][index].clone();
         let node = item["node_id"].as_str().context("缺少节点")?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(90);
-        loop {
-            let result: Result<()> = async {
+        let overlay = loop {
+            let result: Result<Value> = async {
                 let (overlay, _) = member(c, item["machine_id"].as_str().unwrap(), item["instance_id"].as_str().unwrap(), node).await?;
                 ensure!(overlay["address"] == item["address"], "实际地址与部署计划不同");
-                let mut directory = sdk::core("network.get", json!({})).await?;
-                let overlays = directory["overlays"].as_array_mut().context("网络目录无效")?;
-                ensure!(!overlays.iter().any(|old| old["node_id"] == node && old["instance_id"] != item["instance_id"]), "节点已关联其他网络实例，不能覆盖");
-                overlays.retain(|old| old["node_id"] != node);
-                overlays.push(overlay);
-                sdk::core("network.put", directory).await?;
-                Ok(())
+                Ok(overlay)
             }.await;
-            match result { Ok(()) => break, Err(error) => { ensure!(tokio::time::Instant::now() < deadline, "网络接口尚未完成实际关联：{error}"); tokio::time::sleep(std::time::Duration::from_secs(2)).await; } }
-        }
+            match result { Ok(overlay) => break overlay, Err(error) => { ensure!(tokio::time::Instant::now() < deadline, "网络接口尚未就绪：{error}"); tokio::time::sleep(std::time::Duration::from_secs(2)).await; } }
+        };
         let peers: Vec<Value> = state["members"].as_array().unwrap().iter().filter(|peer| peer["node_id"] != node).map(|peer| peer["address"].clone()).collect();
         sdk::node_task(c, node, "network.verify", json!({"address":item["address"],"peers":peers}), &format!("verify:{node}")).await?;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(90);
+        loop {
+            let mut directory = sdk::core("network.get", json!({})).await?;
+            let overlays = directory["overlays"].as_array_mut().context("网络目录无效")?;
+            ensure!(!overlays.iter().any(|old| old["node_id"] == node && old["instance_id"] != item["instance_id"]), "节点已关联其他网络实例，不能覆盖");
+            overlays.retain(|old| old["node_id"] != node);
+            overlays.push(overlay.clone());
+            match sdk::core("network.put", directory).await {
+                Ok(_) => break,
+                Err(error) => { ensure!(tokio::time::Instant::now() < deadline, "节点事实尚未完成实际关联：{error}"); tokio::time::sleep(std::time::Duration::from_secs(2)).await; }
+            }
+        }
         state["members"][index]["phase"] = json!("ready");
         save(key, state).await?;
     }
