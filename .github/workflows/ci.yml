@@ -183,6 +183,9 @@ jobs:
           name: plugin-packages-linux-amd64
           include-hidden-files: true
           path: .release/plugins
+      - name: 准备现有浏览器验收依赖
+        working-directory: tools
+        run: npx playwright install --with-deps chromium
       - name: HTTP 集成测试
         if: ${{ !contains(inputs.reuse_passed, 'http') }}
         env:
@@ -192,11 +195,7 @@ jobs:
         if: ${{ !contains(inputs.reuse_passed, 'negative') }}
         run: node tests/negative-gates.mjs
       - name: 控制台与插件页面浏览器验收
-        working-directory: tools
-        run: |
-          npx playwright install --with-deps chromium
-          cd ..
-          node tests/console-e2e.mjs
+        run: node tests/console-e2e.mjs
 
   docker-smoke:
     name: Docker 构建与探针

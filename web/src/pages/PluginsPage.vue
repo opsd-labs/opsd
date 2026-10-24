@@ -12,7 +12,7 @@ const secretNames = ref<string[]>([])
 const secretName = ref('')
 const secretValue = ref('')
 const selected = computed(() => workspace.state.plugins.find(record => record.enabled && record.manifest.page && record.manifest.id === workspace.state.selectedPluginId))
-const source = computed(() => selected.value ? `${entrancePath()}/plugins/${encodeURIComponent(selected.value.manifest.id)}/${selected.value.manifest.page}` : '')
+const source = computed(() => selected.value ? `${entrancePath()}/plugins/${encodeURIComponent(selected.value.manifest.id)}/${selected.value.manifest.page}?version=${encodeURIComponent(selected.value.manifest.version)}` : '')
 
 async function run(action: () => Promise<unknown>) {
   busy.value = true

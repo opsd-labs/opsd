@@ -5,6 +5,7 @@ import https from 'node:https';
 import http from 'node:http';
 import net from 'node:net';
 import {networkInterfaces} from 'node:os';
+import {createRequire} from 'node:module';
 import {makeZip} from './lib/theme-zip.mjs';
 import {randomBytes,createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -297,6 +298,38 @@ try{
   assert.deepEqual(actual.HostConfig.PortBindings,{'9443/tcp':[{HostIp:overlayAddress,HostPort:'9443'}]});
   const inventory=await request('/plugins/docker/api/inventory','POST',{node_id:node});assert.equal(inventory.status,200);assert.ok(inventory.data.containers.some(container=>container.Id===before.Id));
   const logs=await request('/plugins/docker/api/logs','POST',{node_id:node,container:before.Id});assert.equal(logs.status,200);assert.ok(logs.data.text.includes('opsd-existing'));
+  // 使用现有 Playwright 驱动浏览器 WebSocket，经过核心与插件桥接真实 Portainer 终端。
+  const {chromium}=createRequire(new URL('../tools/package.json',import.meta.url))('@playwright/test');
+  const terminalBrowser=await chromium.launch({headless:true});
+  try{
+   const context=await terminalBrowser.newContext({ignoreHTTPSErrors:true});
+   const [name,...parts]=cookie.split('=');
+   await context.addCookies([{name,value:parts.join('='),domain:'localhost',path:'/'+entrance+'/',secure:true,httpOnly:true,sameSite:'Lax'}]);
+   const page=await context.newPage();await page.goto('https://localhost:'+base+'/'+entrance+'/');
+   const result=await page.evaluate(({base,entrance,csrf,node,container})=>new Promise((resolve,reject)=>{
+    let output='',settled=false;
+    const socket=new WebSocket('wss://localhost:'+base+'/'+entrance+'/api/v1/plugins/docker/stream/terminal?csrf='+encodeURIComponent(csrf));socket.binaryType='arraybuffer';
+    const finish=error=>{if(settled)return;settled=true;clearTimeout(timer);socket.close();if(error)reject(new Error(error));else resolve(true)};
+    const timer=setTimeout(()=>finish('真实终端没有返回命令执行结果'),20000);
+    socket.onopen=()=>socket.send(JSON.stringify({node_id:node,container,command:['/bin/sh']}));
+    socket.onmessage=async event=>{
+     const text=typeof event.data==='string'?event.data:new TextDecoder().decode(event.data);
+     try{
+      const message=JSON.parse(text);
+      if(message.error){finish(message.error);return;}
+      if(message.type==='ready'){
+       const resized=await fetch('/'+entrance+'/api/v1/plugins/docker/api/terminal/resize',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({node_id:node,exec_id:message.exec_id,rows:24,cols:80})});
+       if(!resized.ok){finish('真实终端尺寸调整未成功');return;}
+       // 输入不包含目标数值，禁止把终端输入回显误认为命令输出。
+       socket.send("stty -echo; printf '%s' $((2100+37))"+String.fromCharCode(10));return;
+      }
+     }catch{}
+     output+=text;if(output.includes('2137'))finish();
+    };
+    socket.onerror=()=>finish('真实终端连接失败');socket.onclose=()=>finish('真实终端提前关闭');
+   }),{base,entrance,csrf,node,container:before.Id});
+   assert.equal(result,true);
+  }finally{await terminalBrowser.close();}
   await dockerJob('/mutate',{node_id:node,resource:'container',operation:'stop',id:before.Id});
   await dockerJob('/mutate',{node_id:node,resource:'container',operation:'start',id:before.Id});
   const after=JSON.parse(await command('docker',['inspect',existingName]))[0];assert.equal(after.Id,before.Id);assert.deepEqual(after.Mounts,before.Mounts);assert.equal(after.State.Running,true);

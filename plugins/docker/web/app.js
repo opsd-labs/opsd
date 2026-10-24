@@ -122,7 +122,7 @@ async function initialize() {
 async function loadEnvironments() {
   const response = await api('/environments')
   const bindings = response.bindings || []
-  node.replaceChildren(el('option', { value: '' }, '选择节点环境'), bindings.map(binding => el('option', { value: binding.node_id }, entries.find(entry => entry.node.id === binding.node_id)?.node.name || binding.node_id)))
+  node.replaceChildren(el('option', { value: '' }, '选择节点环境'), ...bindings.map(binding => el('option', { value: binding.node_id }, entries.find(entry => entry.node.id === binding.node_id)?.node.name || binding.node_id)))
   if (bindings.length) { node.value = bindings[0].node_id; await refresh() }
 }
 window.addEventListener('pagehide', () => closeTerminal())
