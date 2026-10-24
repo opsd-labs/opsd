@@ -5,6 +5,15 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      plugins_only:
+        description: 只发布独立插件，不重发 Hub 或 Agent
+        type: boolean
+        default: false
+      plugin_id:
+        description: 要发布的插件
+        type: choice
+        options: [all, et, docker, silo]
+        default: all
       resume_installation_run:
         description: 仅验收脚本修正时，复用此运行的成功制品并只重跑未通过安装组合
         type: string
@@ -23,9 +32,99 @@ env:
   OWNER: opsd-labs
 
 jobs:
+  plugin-build:
+    name: 构建独立插件 ${{ matrix.arch }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.plugins_only && inputs.resume_installation_run == '' }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: plugins-${{ matrix.target }}
+      - name: 准备 musl 工具链
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: 构建所选插件
+        env:
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          CC: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: |
+          packages=()
+          for plugin in et docker silo; do
+            if [ "$PLUGIN_ID" = all ] || [ "$PLUGIN_ID" = "$plugin" ]; then packages+=(-p "opsd-plugin-$plugin"); fi
+          done
+          test "${#packages[@]}" -gt 0
+          cargo build --locked --release --target ${{ matrix.target }} "${packages[@]}"
+          mkdir -p .release/plugin-binaries/linux-${{ matrix.arch }}
+          for plugin in et docker silo; do
+            if [ "$PLUGIN_ID" = all ] || [ "$PLUGIN_ID" = "$plugin" ]; then
+              cp "target/${{ matrix.target }}/release/opsd-plugin-$plugin" .release/plugin-binaries/linux-${{ matrix.arch }}/
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-binaries-${{ matrix.arch }}
+          include-hidden-files: true
+          path: .release/plugin-binaries
+
+  plugin-release:
+    name: 发布插件独立版本包
+    needs: plugin-build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-binaries-*
+          path: .release/plugin-binaries
+          merge-multiple: true
+      - name: 准备页面依赖与独立发行包
+        env:
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+        run: |
+          npm ci --prefix web
+          for plugin in et docker silo; do
+            if [ "$PLUGIN_ID" = all ] || [ "$PLUGIN_ID" = "$plugin" ]; then node tools/package-plugin.mjs "$plugin"; fi
+          done
+      - name: 发布不可覆盖的插件版本
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+        run: |
+          for plugin in et docker silo; do
+            if [ "$PLUGIN_ID" != all ] && [ "$PLUGIN_ID" != "$plugin" ]; then continue; fi
+            version=$(node -p "require('./plugins/$plugin/plugin.json').version")
+            tag="plugin-$plugin-v$version"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "插件 $plugin $version 已发行，请提升版本后发布。" >&2
+              exit 1
+            fi
+            gh release create "$tag" ".release/plugins/$plugin-$version.zip" --target "$GITHUB_SHA" --title "$plugin $version" --notes "独立插件包，包含 Linux x64、ARM64 程序、业务契约和页面资源。"
+          done
+
   agent:
     name: 构建 Agent ${{ matrix.arch }}
-    if: ${{ inputs.resume_installation_run == '' }}
+    if: ${{ inputs.resume_installation_run == '' && !inputs.plugins_only }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -98,7 +197,7 @@ jobs:
 
   release:
     name: 发布 Agent 双架构索引与固定发行包
-    if: ${{ inputs.resume_installation_run == '' }}
+    if: ${{ inputs.resume_installation_run == '' && !inputs.plugins_only }}
     needs: agent
     runs-on: ubuntu-24.04
     outputs:
@@ -147,7 +246,7 @@ jobs:
 
   hub:
     name: 发布绑定 Agent 版本的 Hub
-    if: ${{ inputs.resume_installation_run == '' }}
+    if: ${{ inputs.resume_installation_run == '' && !inputs.plugins_only }}
     needs: release
     runs-on: ubuntu-24.04
     outputs:
@@ -226,7 +325,7 @@ jobs:
               throw new Error('原运行的双架构制品与 Hub 尚未全部成功，不能复用。');
             }
             const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({...context.repo, basehead: `${run.head_sha}...${context.sha}`});
-            const allowed = new Set(['tests/share-e2e.mjs', '.github/workflows/publish-image.yml']);
+            const allowed = new Set(['tests/console-e2e.mjs', '.github/workflows/publish-image.yml']);
             const documentation = name => name === 'README.md' || (name.startsWith('docs/') && name.endsWith('.md'));
             if (comparison.files.some(file => !allowed.has(file.filename) && !documentation(file.filename))) {
               throw new Error('业务源码、依赖或其他输入已变化，不能只复用上一批安装制品。');
@@ -319,7 +418,7 @@ jobs:
           OPSD_INSTALL_ACCEPTANCE: ${{ matrix.mode }}
           OPSD_AGENT_RELEASE: ${{ needs.installation-inputs.outputs.release }}
           OPSD_BUNDLED_AGENT_IMAGE: ${{ needs.installation-inputs.outputs.agent }}
-        run: node tests/share-e2e.mjs
+        run: node tests/console-e2e.mjs
 
   complete:
     name: 安装验收完成后更新正式引用

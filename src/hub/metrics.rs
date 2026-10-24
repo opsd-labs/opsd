@@ -101,7 +101,11 @@ pub fn merge_peers(
     let total = previous_count + 1.0;
     let mut merged: Vec<PeerLatency> = Vec::with_capacity(incoming.len().max(previous.len()));
     for fresh in incoming {
-        let old = previous.iter().find(|peer| peer.node_id == fresh.node_id);
+        let old = previous.iter().find(|peer| {
+            peer.node_id == fresh.node_id
+                && peer.path == fresh.path
+                && peer.address == fresh.address
+        });
         let mut result = fresh.clone();
         result.latency_ms = match (old.and_then(|old| old.latency_ms), fresh.latency_ms) {
             (Some(old), Some(new)) => Some((old * previous_count + new) / total),
@@ -111,7 +115,9 @@ pub fn merge_peers(
         merged.push(result);
     }
     for old in previous {
-        if !incoming.iter().any(|peer| peer.node_id == old.node_id) {
+        if !incoming.iter().any(|peer| {
+            peer.node_id == old.node_id && peer.path == old.path && peer.address == old.address
+        }) {
             merged.push(old.clone());
         }
     }
@@ -340,6 +346,7 @@ mod tests {
 
     fn peer(node_id: &str, latency: Option<f64>, reachable: bool) -> PeerLatency {
         PeerLatency {
+            path: Default::default(),
             node_id: node_id.into(),
             address: format!("100.100.201.{node_id}"),
             method: "icmp".into(),

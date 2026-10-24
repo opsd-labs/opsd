@@ -3,11 +3,12 @@ mod audit;
 mod auth;
 mod channel;
 mod database;
+mod export;
 mod installation;
 mod metrics;
-mod share;
+mod network;
+mod plugins;
 mod storage;
-mod storage_cluster;
 mod theme;
 use anyhow::Result;
 use axum::{
@@ -96,24 +97,23 @@ pub struct State {
     pub events: broadcast::Sender<serde_json::Value>,
     pub streams: broadcast::Sender<(String, Frame)>,
     pub gate: Arc<Mutex<()>>,
+    pub network_gate: Arc<Mutex<()>>,
     pub login_limits: Arc<Mutex<HashMap<String, (i64, u32)>>>,
     /// 运行期可改的安全入口，由门禁直接读取。
     pub entrance: entrance::Shared,
     /// 各节点最新一次指标，属于有界内存缓存；历史在控制库中分层保存。
     pub latest_metrics: Arc<RwLock<HashMap<String, metrics::NodeMetrics>>>,
-    /// 分享面的活跃令牌索引，由门禁直接读取。
-    pub share_index: share::SharedIndex,
-    /// 分享面开关与站点信息。
-    pub share_settings: share::SharedSettings,
-    /// 构建产物根目录，用于提供分享页与其静态资源。
+    /// 控制台静态资源根目录。
     pub web: PathBuf,
     /// 各节点最近一次主机盘点，供存储预检做集中分析。
     pub host_inventories: storage::SharedInventories,
     /// 各节点最近一次数据库只读巡检结果。同样只留在内存里：
     /// 它体积不大但变化很快，落库只会得到一份过期的运维视图。
     pub db_reports: database::SharedDbReports,
+    pub plugin_runtimes: plugins::Runtimes,
+    pub plugin_tokens: plugins::Tokens,
 }
-type NodeChannels = HashMap<String, (String, mpsc::Sender<Frame>)>;
+type NodeChannels = network::NodeChannels;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CertificateBinding {
     pub node_id: String,
@@ -194,6 +194,7 @@ pub async fn run() -> Result<()> {
                     std::fs::read(e.path())?,
                 )?;
             }
+            plugins::copy_state(&args.data_dir.join("plugins"), &destination.join("plugins"))?;
             println!(
                 "一致性备份已保存：{}；备份包含节点身份密钥，请存放在受保护的异机位置",
                 destination.display()
@@ -257,6 +258,7 @@ pub async fn run() -> Result<()> {
                     std::fs::read(source.join("pki").join(name))?,
                 )?;
             }
+            plugins::copy_state(&source.join("plugins"), &args.data_dir.join("plugins"))?;
             tx.commit().await?;
             println!(
                 "主控恢复完成；请保持原主控停用，并将原管理地址指向恢复设备。管理员需重新登录。"
@@ -282,22 +284,6 @@ pub async fn run() -> Result<()> {
             entrance::validate(&entrance_value)?;
             let entrance: entrance::Shared =
                 Arc::new(std::sync::RwLock::new(entrance_value.clone()));
-            // 分享面配置随主控启动加载一次，之后由管理接口刷新。
-            let share_index: share::SharedIndex =
-                Arc::new(std::sync::RwLock::new(share::Index::load(&db).await?));
-            let share_enabled = db
-                .get::<bool>(share::SETTINGS_BUCKET, share::ENABLED_ID)
-                .await?
-                .unwrap_or(false);
-            let share_site = db
-                .get::<share::SitePublic>(share::SITE_BUCKET, share::SITE_ID)
-                .await?
-                .unwrap_or_default();
-            let share_settings: share::SharedSettings =
-                Arc::new(std::sync::RwLock::new(share::Settings {
-                    enabled: share_enabled,
-                    site: share_site,
-                }));
             let (events, _) = broadcast::channel(512);
             let (streams, _) = broadcast::channel(256);
             let state = State {
@@ -308,21 +294,42 @@ pub async fn run() -> Result<()> {
                 events,
                 streams,
                 gate: Default::default(),
+                network_gate: Default::default(),
                 login_limits: Default::default(),
                 entrance: entrance.clone(),
                 latest_metrics: Default::default(),
-                share_index: share_index.clone(),
-                share_settings: share_settings.clone(),
                 web: web.clone(),
                 host_inventories: Default::default(),
                 db_reports: Default::default(),
+                plugin_runtimes: Default::default(),
+                plugin_tokens: Default::default(),
             };
+            for mut task in state
+                .db
+                .tasks()
+                .await?
+                .into_iter()
+                .filter(|t| !t.status.terminal() && t.action.legacy_business())
+            {
+                task.status = TaskStatus::Blocked;
+                task.sequence += 1;
+                task.updated_at = now();
+                task.error = Some("业务已迁入插件，旧任务停止自动重放，请核实实际状态".into());
+                state.db.save_task(&task).await?;
+            }
+            plugins::start(state.clone()).await?;
             let directory = state.clone();
             tokio::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     tick.tick().await;
+                    if let Err(error) = network::settle(&directory).await {
+                        tracing::warn!(%error,"旧来源白名单收敛暂未完成");
+                    }
                     let _lock = directory.gate.lock().await;
+                    if let Err(error) = network::synchronize(&directory).await {
+                        tracing::error!(%error,"网络状态同步失败");
+                    }
                     if let Err(error) = api::synchronize_peers(&directory).await {
                         tracing::error!(%error, "节点地址任务对账失败，将重试");
                     }
@@ -351,6 +358,29 @@ pub async fn run() -> Result<()> {
                 .route("/api/v1/auth/logout", post(auth::logout))
                 .route("/api/v1/nodes", get(api::nodes))
                 .route(
+                    "/api/v1/network",
+                    get(network::read).put(network::controller),
+                )
+                .route("/api/v1/plugins", get(plugins::list))
+                .route(
+                    "/api/v1/plugins/{plugin}/{version}",
+                    delete(plugins::uninstall),
+                )
+                .route(
+                    "/api/v1/plugins/{plugin}/stream/{*path}",
+                    get(plugins::stream),
+                )
+                .route("/api/v1/plugins/{plugin}/selection", put(plugins::select))
+                .route(
+                    "/api/v1/plugins/{plugin}/configuration",
+                    get(plugins::configuration).put(plugins::configure),
+                )
+                .route(
+                    "/api/v1/plugins/{plugin}/api/{*path}",
+                    axum::routing::any(plugins::gateway),
+                )
+                .route("/plugins/{plugin}/{*path}", get(plugins::asset))
+                .route(
                     "/api/v1/nodes/{id}",
                     put(api::update_node).delete(api::revoke),
                 )
@@ -373,19 +403,10 @@ pub async fn run() -> Result<()> {
                 .route("/api/v1/metrics/status", get(channel::metrics_status))
                 .route("/api/v1/nodes/{id}/metrics", get(channel::metrics_history))
                 .route(
-                    "/api/v1/share/settings",
-                    get(share::read_settings).put(share::update_settings),
+                    "/api/v1/export/keys",
+                    get(export::keys).post(export::create),
                 )
-                .route(
-                    "/api/v1/share/tokens",
-                    get(share::list_tokens).post(share::create_token),
-                )
-                .route("/api/v1/share/tokens/{id}", delete(share::revoke_token))
-                .route(
-                    "/api/v1/share/keys",
-                    get(share::list_keys).post(share::create_key),
-                )
-                .route("/api/v1/share/keys/{id}", delete(share::revoke_key))
+                .route("/api/v1/export/keys/{id}", delete(export::revoke))
                 .route("/api/v1/themes", get(theme::list_themes))
                 .route(
                     "/api/v1/themes/active",
@@ -407,20 +428,6 @@ pub async fn run() -> Result<()> {
                     "/api/v1/nodes/{id}/host-inspect",
                     post(storage::host_inspect),
                 )
-                // 存储集群：定义 → 计划 → 执行。执行含不可逆步骤，因此单独确认。
-                .route(
-                    "/api/v1/storage/clusters",
-                    get(storage_cluster::clusters).put(storage_cluster::put_cluster),
-                )
-                .route("/api/v1/storage/plans", post(storage_cluster::plan))
-                .route(
-                    "/api/v1/storage/plans/{id}",
-                    get(storage_cluster::read_plan),
-                )
-                .route("/api/v1/storage/plans/apply", post(storage_cluster::apply))
-                .route("/api/v1/storage/status", post(storage_cluster::status))
-                .route("/api/v1/storage/buckets", post(storage_cluster::bucket))
-                .route("/api/v1/storage/users", post(storage_cluster::user))
                 // 数据库只读运维视图：巡检下发 + 集中结论
                 .route("/api/v1/database/overview", get(database::overview))
                 .route("/api/v1/nodes/{id}/db-inspect", post(database::db_inspect))
@@ -444,73 +451,50 @@ pub async fn run() -> Result<()> {
                 .merge(public)
                 .merge(private)
                 .route("/frontend/{short}/", get(theme::console_frontend_index))
-                .route("/frontend/{short}/{*path}", get(theme::console_frontend_asset))
-                .nest_service("/assets", tower_http::services::ServeDir::new(web.join("assets")))
+                .route(
+                    "/frontend/{short}/{*path}",
+                    get(theme::console_frontend_asset),
+                )
+                .nest_service(
+                    "/assets",
+                    tower_http::services::ServeDir::new(web.join("assets")),
+                )
                 .fallback(theme::console_index)
                 .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
                 .with_state(state.clone());
             // 主题包上传需要更大的体积上限。它必须在全局 1 MB 限制**之后**合并，
             // 否则会被那条限制覆盖，导致稍大的主题包直接被 413 拒绝。
             let theme_upload = Router::new()
-                .route("/api/v1/themes/share", post(theme::install_share_theme))
-                .route("/api/v1/themes/console/package", post(theme::install_console_package))
+                .route(
+                    "/api/v1/themes/console/package",
+                    post(theme::install_console_package),
+                )
                 .route_layer(middleware::from_fn_with_state(state.clone(), auth::require))
                 .layer(axum::extract::DefaultBodyLimit::max(
                     theme::MAX_PACKAGE_BYTES,
                 ))
                 .with_state(state.clone());
-            let console = console.merge(theme_upload);
+            let plugin_upload = Router::new()
+                .route("/api/v1/plugins/package", post(plugins::install))
+                .route_layer(middleware::from_fn_with_state(state.clone(), auth::require))
+                .layer(axum::extract::DefaultBodyLimit::max(128 * 1024 * 1024))
+                .with_state(state.clone());
+            let console = console.merge(theme_upload).merge(plugin_upload);
             let prefix = format!("/{entrance_value}");
             let trimmed = prefix.clone();
             // nest 不会匹配裸的 `/{入口}/`，因此显式补一条根路由；
             // 单页应用使用查询串路由，未知路径回退到 index.html。
             let index_state = state.clone();
-            // 分享面：页面、页面数据与机器接口。全部位于 /share/{令牌}/ 之下。
-            let share_routes = Router::new()
-                // 缺结尾斜杠时补上，否则页面里的相对资源路径会丢掉令牌那一层
-                .route(
-                    "/share/{token}",
-                    get(|Path(token): Path<String>| async move {
-                        axum::response::Redirect::permanent(&format!("/share/{token}/"))
-                    }),
-                )
-                .route("/share/{token}/", get(share::share_index_page))
-                .route("/share/{token}/assets/{*path}", get(share::share_asset))
-                // 包级主题的资源与公开设置
-                .route(
-                    "/share/{token}/theme/{*path}",
-                    get(theme::share_theme_asset),
-                )
-                .route("/share/{token}/data/theme", get(theme::share_theme))
-                .route("/share/{token}/data/summary", get(share::data_summary))
-                .route("/share/{token}/data/nodes", get(share::data_nodes))
-                .route("/share/{token}/data/records", get(share::data_records))
-                .route(
-                    "/share/{token}/api/v1/public/summary",
-                    get(share::public_summary),
-                )
-                .route(
-                    "/share/{token}/api/v1/public/nodes",
-                    get(share::public_nodes),
-                )
-                .route(
-                    "/share/{token}/api/v1/public/recent/{id}",
-                    get(share::public_recent),
-                )
-                .route(
-                    "/share/{token}/api/v1/public/records",
-                    get(share::public_records),
-                )
-                .route(
-                    "/share/{token}/api/v1/public/metrics",
-                    get(share::public_metrics),
-                )
+            let export_routes = Router::new()
+                .route("/api/v1/public/nodes", get(export::nodes))
+                .route("/api/v1/public/summary", get(export::summary))
+                .route("/api/v1/public/metrics", get(export::metrics))
                 .with_state(state.clone());
             let app = Router::new()
                 .merge(agent_public)
                 .nest(&prefix, console)
                 // 分享面挂在入口之外，凭自己的令牌放行；门禁按令牌是否有效决定是否响应。
-                .merge(share_routes)
+                .merge(export_routes)
                 .route(
                     &prefix,
                     get(move || {
@@ -518,9 +502,10 @@ pub async fn run() -> Result<()> {
                         async move { axum::response::Redirect::permanent(&target) }
                     }),
                 )
-                .route(&format!("{prefix}/"), get(move || {
-                    theme::console_index(axum::extract::State(index_state.clone()))
-                }));
+                .route(
+                    &format!("{prefix}/"),
+                    get(move || theme::console_index(axum::extract::State(index_state.clone()))),
+                );
             // 健康检查独立监听，只绑定回环地址，不经入口门禁。
             let health = Router::new().route(
                 "/api/v1/health",
@@ -529,6 +514,11 @@ pub async fn run() -> Result<()> {
             let agent = Router::new()
                 .route("/agent", get(channel::connect))
                 .route("/status", get(channel::status))
+                .route(
+                    "/plugin-packages/{plugin}/{version}/{arch}",
+                    get(plugins::node_binary),
+                )
+                .route("/plugin-context/{task_id}", post(plugins::node_context))
                 .route("/renew", post(api::renew))
                 .route("/verify", post(api::verify))
                 .with_state(state.clone());
@@ -539,18 +529,9 @@ pub async fn run() -> Result<()> {
                 limits: Default::default(),
                 allow: entrance::AGENT_PATHS
                     .iter()
+                    .chain(entrance::EXPORT_PATHS.iter())
                     .map(|p| (*p).to_owned())
                     .collect(),
-                // 分享面按令牌放行；令牌无效时门禁直接丢弃，不产生响应。
-                share: Some({
-                    let index = share_index.clone();
-                    std::sync::Arc::new(move |token: &str| {
-                        index
-                            .read()
-                            .map(|index| index.find(token).is_some())
-                            .unwrap_or(false)
-                    })
-                }),
             };
             tracing::info!(entrance=%entrance_value,"控制台已启用安全入口");
             tokio::try_join!(
@@ -592,4 +573,20 @@ pub fn bad(s: &str) -> ApiError {
 }
 pub fn check(condition: bool, message: &str) -> ApiResult<()> {
     if condition { Ok(()) } else { Err(bad(message)) }
+}
+
+impl From<std::io::Error> for ApiError {
+    fn from(error: std::io::Error) -> Self {
+        bad(&error.to_string())
+    }
+}
+impl From<serde_json::Error> for ApiError {
+    fn from(error: serde_json::Error) -> Self {
+        bad(&error.to_string())
+    }
+}
+impl From<zip::result::ZipError> for ApiError {
+    fn from(error: zip::result::ZipError) -> Self {
+        bad(&error.to_string())
+    }
 }

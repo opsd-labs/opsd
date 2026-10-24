@@ -21,8 +21,6 @@ pub struct Gate {
     pub limits: entrance::Limits,
     /// 精确匹配的豁免路径，见 [`entrance::AGENT_PATHS`]。
     pub allow: Vec<String>,
-    /// 分享令牌校验回调；返回 false 即与错误入口一样丢弃连接。
-    pub share: Option<std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync>>,
 }
 
 pub async fn serve(
@@ -76,17 +74,10 @@ pub async fn serve(
             let service = match gate {
                 Some(gate) => {
                     let allow: Vec<&str> = gate.allow.iter().map(String::as_str).collect();
-                    let service = entrance::Gate::new(
-                        router,
-                        Some(gate.entrance),
-                        gate.limits,
-                        address,
-                    )
-                    .allow(&allow);
-                    match gate.share {
-                        Some(check) => service.share(check),
-                        None => service,
-                    }
+                    let service =
+                        entrance::Gate::new(router, Some(gate.entrance), gate.limits, address)
+                            .allow(&allow);
+                    service
                 }
                 None => entrance::Gate::new(router, None, Default::default(), address),
             };

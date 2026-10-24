@@ -1,5 +1,5 @@
 [workspace]
-members = ["."]
+members = [".", "plugins/sdk", "plugins/et", "plugins/docker", "plugins/silo"]
 resolver = "3"
 
 [package]
@@ -12,6 +12,7 @@ edition = "2024"
 experimental-firewall = []
 
 [dependencies]
+opsd-plugin-sdk = { path = "plugins/sdk" }
 anyhow = "1"
 argon2 = "0.5"
 axum = { version = "0.8", features = ["ws"] }

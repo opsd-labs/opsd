@@ -2,8 +2,8 @@
  * OpenAPI 契约的结构性门禁。
  *
  * 检查项：
- * 1. 唯一 WebSocket 端点必须 101，禁止 2xx/403；
- * 2. 分享机器接口必须 Bearer，禁止 security: []；
+ * 1. 核心与插件 WebSocket 端点必须 101，禁止 2xx/403；
+ * 2. 只读输出接口必须 Bearer，禁止 security: []；
  * 3. 全部 JSON 写操作必须声明 400（业务 JSON + 框架纯文本）、415、422。
  *
  * 运行：node tools/api-contract.mjs
@@ -80,7 +80,7 @@ function checkRefs(value, label = 'OpenAPI') {
 
 checkRefs(doc)
 
-/** 唯一声明 101 的操作视为 WebSocket 升级端点。 */
+/** 声明 101 的操作视为 WebSocket 升级端点。 */
 const wsOps = []
 for (const [path, item] of Object.entries(doc.paths ?? {})) {
   for (const [method, op] of Object.entries(item ?? {})) {
@@ -91,10 +91,10 @@ for (const [path, item] of Object.entries(doc.paths ?? {})) {
   }
 }
 
-if (wsOps.length !== 1) {
-  fail(`应恰好有一个 WebSocket 101 端点，实际 ${wsOps.length} 个：${wsOps.map((x) => `${x.method.toUpperCase()} ${x.path}`).join(', ') || '（无）'}`)
-} else {
-  const { path, method, op } = wsOps[0]
+if (wsOps.length !== 2) {
+  fail(`应恰好有两个 WebSocket 101 端点，实际 ${wsOps.length} 个：${wsOps.map((x) => `${x.method.toUpperCase()} ${x.path}`).join(', ') || '（无）'}`)
+}
+for (const { path, method, op } of wsOps) {
   const codes = Object.keys(op.responses)
   if (method !== 'get') {
     fail(`WS 端点应是 GET，实际 ${method.toUpperCase()} ${path}`)
@@ -114,12 +114,12 @@ if (wsOps.length !== 1) {
 
 // 分享**机器接口**不得写 security: []。
 for (const [path, item] of Object.entries(doc.paths ?? {})) {
-  if (!path.includes('/share/{token}/api/v1/public/')) continue
+  if (!path.startsWith('/api/v1/public/')) continue
   for (const [method, op] of Object.entries(item ?? {})) {
     if (!op || typeof op !== 'object') continue
     const sec = op.security ?? doc.security
     if (Array.isArray(sec) && sec.length === 0) {
-      fail(`分享机器接口 ${method.toUpperCase()} ${path} 不得使用 security: []`)
+      fail(`只读输出接口 ${method.toUpperCase()} ${path} 不得使用 security: []`)
     }
   }
 }
@@ -179,5 +179,5 @@ if (failures.length) {
   process.exit(1)
 }
 console.log(
-  `契约结构检查通过：WS 101×1；分享机器接口无匿名 security；JSON 写操作 ${jsonWriteOps.length} 个均声明 400 双 content / 415 / 422`,
+  `契约结构检查通过：WS 101×2；只读输出接口无匿名 security；JSON 写操作 ${jsonWriteOps.length} 个均声明 400 双 content / 415 / 422`,
 )

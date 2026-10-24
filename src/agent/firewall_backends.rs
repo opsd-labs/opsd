@@ -120,27 +120,51 @@ async fn isolated_tcp_network_policy() -> Result<()> {
         std::env::var("OPSD_LAB").as_deref() == Ok("1"),
         "必须指定实验室"
     );
-    let dir = tempfile::tempdir()?;
-    let policy = Policy {
-        adopted: true,
-        input_policy: "drop".into(),
-        output_policy: "drop".into(),
-        peers: PeerAddressSet {
-            version: 1,
-            addresses: vec!["11.0.0.2".into(), "2001:4860::2".into()],
-        },
-        ..Default::default()
-    };
-    for (file, v4) in [("4.rules", true), ("6.rules", false)] {
-        std::fs::write(dir.path().join(file), render_iptables(&policy, "", v4)?)?;
+    if let Ok(input) = std::env::var("OPSD_NETWORK_APPLY") {
+        let dir = std::path::PathBuf::from(std::env::var("OPSD_NETWORK_STATE")?);
+        std::fs::create_dir_all(&dir)?;
+        let ctx = ContextState {
+            db: Store::open(&format!(
+                "sqlite://{}?mode=rwc",
+                dir.join("node.db").display()
+            ))
+            .await?,
+            dir: dir.clone(),
+            config: super::Config {
+                node_id: "lab".into(),
+                hub: "https://localhost".into(),
+                agent_url: "wss://localhost/agent".into(),
+            },
+            outbound: Default::default(),
+            paths: Default::default(),
+            probe_results: Default::default(),
+            network: Default::default(),
+            desired_gate: Default::default(),
+            network_changed: Default::default(),
+        };
+        let desired: opsd::network::DesiredNetwork =
+            serde_json::from_slice(&std::fs::read(input)?)?;
+        super::network::receive(&ctx, desired).await?;
+        super::network::reconcile(&ctx).await?;
+        std::fs::write(
+            dir.join("applied.json"),
+            serde_json::to_vec(
+                &ctx.db
+                    .get::<opsd::network::AppliedNetwork>("network", "applied")
+                    .await?,
+            )?,
+        )?;
+        return Ok(());
     }
     command(
         "/usr/bin/python3",
         &[
             "tests/firewall-netns.py",
-            dir.path().to_str().context("测试路径编码错误")?,
+            std::env::current_exe()?
+                .to_str()
+                .context("测试程序路径无效")?,
         ],
-        60,
+        600,
     )
     .await?;
     Ok(())
@@ -246,7 +270,7 @@ pub async fn ufw_policy(ctx: &ContextState, p: &Policy) -> Result<()> {
             + "\n";
         let result = replace_block(&original, if p.adopted { Some(&content) } else { None })?;
         if original != result {
-            super::stack::atomic_replace(path, result.as_bytes())?;
+            super::atomic_replace(path, result.as_bytes())?;
         }
     }
     iptables_policy(ctx, p).await

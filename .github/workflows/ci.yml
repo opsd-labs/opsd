@@ -41,10 +41,17 @@ jobs:
       - name: 运行 Rust 测试
         run: |
           if [ "${{ contains(inputs.reuse_passed, 'other-subsystems') }}" = "true" ]; then
-            cargo test --locked hub::theme::
+            cargo test --locked --workspace hub::theme::
           else
-            cargo test --locked
+            cargo test --locked --workspace
           fi
+
+      - name: 自动白名单隔离后端验收
+        if: ${{ !contains(inputs.reuse_passed, 'network') && !contains(inputs.reuse_passed, 'other-subsystems') }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables iptables ufw firewalld dbus iproute2
+          sudo env "PATH=$PATH" OPSD_LAB=1 cargo test --locked --bin opsd-agent isolated_tcp_network_policy -- --ignored --nocapture
 
   web-contract:
     name: Web 与契约
@@ -108,13 +115,12 @@ jobs:
         continue-on-error: true
         working-directory: web
         run: npx vue-tsc -b
-      - name: 后端集成所需的控制台与分享页资源
+      - name: 后端集成所需的控制台资源
         if: ${{ inputs.reuse_static_run == '' }}
         id: static-pages
         working-directory: web
         run: |
           npx vite build
-          npx vite build --config vite.share.config.ts
           echo "ready=true" >> "$GITHUB_OUTPUT"
       - name: 检查生成物漂移
         if: ${{ !contains(inputs.reuse_passed, 'contract') }}
@@ -153,19 +159,34 @@ jobs:
           run-id: ${{ inputs.reuse_static_run || github.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: 构建调试二进制
-        run: cargo build --locked --bins
+        run: |
+          cargo build --locked --workspace --bins
+          strip --strip-debug target/debug/opsd-plugin-et target/debug/opsd-plugin-docker target/debug/opsd-plugin-silo
+      - name: 准备独立插件页面与验收包
+        run: |
+          npm ci --prefix web
+          mkdir -p .release/plugin-binaries/linux-amd64
+          for plugin in et docker silo; do
+            cp "target/debug/opsd-plugin-$plugin" .release/plugin-binaries/linux-amd64/
+            node tools/package-plugin.mjs "$plugin"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-packages-linux-amd64
+          include-hidden-files: true
+          path: .release/plugins
       - name: HTTP 集成测试
         if: ${{ !contains(inputs.reuse_passed, 'http') }}
         run: node tests/integration.mjs
       - name: 负向契约门禁
         if: ${{ !contains(inputs.reuse_passed, 'negative') }}
         run: node tests/negative-gates.mjs
-      - name: 分享页原有浏览器隔离测试
+      - name: 控制台与插件页面浏览器验收
         working-directory: tools
         run: |
           npx playwright install --with-deps chromium
           cd ..
-          node tests/share-e2e.mjs
+          node tests/console-e2e.mjs
 
   docker-smoke:
     name: Docker 构建与探针

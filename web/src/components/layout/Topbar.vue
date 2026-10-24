@@ -15,7 +15,7 @@ const selectedNodeId = computed(() => workspace.state.selectedNodeId)
 const taskCount = computed(() => workspace.state.activeTaskCount)
 
 const pageLabel = computed(
-  () => PAGES.find(p => p.name === page.value)?.label ?? '控制台'
+  () => workspace.state.plugins.find(record => record.enabled && record.manifest.id === workspace.state.selectedPluginId)?.manifest.name ?? PAGES.find(p => p.name === page.value)?.label ?? '控制台'
 )
 
 // 需要节点选择器的页面

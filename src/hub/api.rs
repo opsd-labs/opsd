@@ -253,6 +253,10 @@ pub async fn token(
     Json(r): Json<Registration>,
 ) -> ApiResult<impl axum::response::IntoResponse> {
     validate(&r)?;
+    check(
+        r.public_addresses.is_empty() && r.overlay_address.is_none(),
+        "地址由节点与 ET 插件发现，注册无需填写 IP",
+    )?;
     let value = format!("{}{}", id(), id());
     let node_id = id();
     let created_at = now();
@@ -469,7 +473,7 @@ pub async fn nodes(S(s): S<State>) -> ApiResult<Json<Value>> {
         nodes
             .into_iter()
             .map(
-                |n| json!({"connected":channels.contains_key(&n.id)&&n.last_seen>now()-45,"node":n})
+                |n| json!({"connected":channels.contains_key(&n.id)&&n.last_seen>now()-45,"connections":channels.status(&n.id),"node":n})
             )
             .collect::<Vec<_>>()
     )))
@@ -480,6 +484,10 @@ pub async fn update_node(
     Json(r): Json<Registration>,
 ) -> ApiResult<Json<Node>> {
     validate(&r)?;
+    check(
+        r.public_addresses.is_empty() && r.overlay_address.is_none(),
+        "地址由 Agent 与 ET 插件发现",
+    )?;
     let _lock = s.gate.lock().await;
     let mut n =
         s.db.get::<Node>("nodes", &node_id)
@@ -487,12 +495,11 @@ pub async fn update_node(
             .ok_or_else(|| bad("节点不存在"))?;
     check(!n.revoked, "节点已撤销，请重新注册")?;
     n.name = r.name;
-    n.public_addresses = r.public_addresses;
-    n.overlay_address = r.overlay_address;
     n.ssh_port = r.ssh_port;
     s.db.put("nodes", &node_id, &n).await?;
     synchronize_peers(&s).await?;
     synchronize_probes(&s).await?;
+    network::synchronize(&s).await?;
     Ok(Json(n))
 }
 pub async fn revoke(S(s): S<State>, Path(node_id): Path<String>) -> ApiResult<Json<Value>> {
@@ -506,6 +513,7 @@ pub async fn revoke(S(s): S<State>, Path(node_id): Path<String>) -> ApiResult<Js
     s.channels.write().await.remove(&node_id);
     synchronize_peers(&s).await?;
     synchronize_probes(&s).await?;
+    network::synchronize(&s).await?;
     Ok(Json(json!({"ok":true})))
 }
 pub async fn synchronize_peers(s: &State) -> Result<()> {
@@ -544,7 +552,10 @@ pub async fn synchronize_peers(s: &State) -> Result<()> {
         .bind(serde_json::to_string(&set)?)
         .execute(&mut *tx)
         .await?;
-    for n in nodes.iter().filter(|n| !n.revoked) {
+    for n in nodes
+        .iter()
+        .filter(|n| !n.revoked && !n.capabilities.as_ref().is_some_and(|c| c.dual_path))
+    {
         let t = TaskEnvelope::new(
             n.id.clone(),
             format!("peer-set-{}", set.version),
@@ -610,6 +621,7 @@ pub fn probe_targets_for(nodes: &[Node], me: &str) -> Vec<ProbeTarget> {
         .filter(|node| !node.revoked && node.id != me)
         .filter_map(|node| {
             probe_address(node).map(|address| ProbeTarget {
+                path: opsd::network::PathKind::Public,
                 node_id: node.id.clone(),
                 address,
                 // 默认走 ICMP：不产生任何服务端日志，也不需要额外特权
@@ -660,7 +672,10 @@ pub async fn synchronize_probes(s: &State) -> Result<()> {
         old.version + 1
     };
     let mut tx = s.db.pool.begin().await?;
-    for node in nodes.iter().filter(|node| !node.revoked) {
+    for node in nodes
+        .iter()
+        .filter(|node| !node.revoked && !node.capabilities.as_ref().is_some_and(|c| c.dual_path))
+    {
         let set = ProbeTargetSet {
             version,
             targets: probe_targets_for(&nodes, &node.id),
@@ -734,6 +749,14 @@ pub async fn action(
     check(
         !matches!(input.action, Action::PeerSync { .. }),
         "地址集合只能由节点目录生成",
+    )?;
+    check(
+        !input.action.legacy_business(),
+        "Docker 与存储动作已迁入插件命名空间",
+    )?;
+    check(
+        !matches!(input.action, Action::Plugin { .. }),
+        "插件动作只能由插件入口提交",
     )?;
     if let Action::FirewallApply {
         witness: Some(ref witness),

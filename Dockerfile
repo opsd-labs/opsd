@@ -8,12 +8,12 @@ COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
-RUN npx vite build --config vite.share.config.ts
 
 FROM rust:${RUST_VERSION}-bookworm AS rust-source
 WORKDIR /source
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
+COPY plugins/ ./plugins/
 COPY deploy/install-agent.sh deploy/opsd-agent.service ./deploy/
 
 FROM rust-source AS rust

@@ -29,19 +29,17 @@ type Task = components['schemas']['TaskEnvelope']
 export type PageName =
   | 'console'
   | 'nodes'
-  | 'docker'
   | 'firewall'
   | 'database'
-  | 'storage'
+  | 'plugins'
   | 'settings'
 
 export const PAGES: { name: PageName; label: string }[] = [
   { name: 'console',  label: '控制台' },
   { name: 'nodes',    label: '节点' },
-  { name: 'docker',   label: 'Docker' },
   { name: 'firewall', label: '防火墙' },
   { name: 'database', label: '数据库' },
-  { name: 'storage',  label: '存储' },
+  { name: 'plugins',  label: '插件' },
   { name: 'settings', label: '设置' },
 ]
 
@@ -64,6 +62,15 @@ function pushRoute(params: Record<string, string | null>): void {
 
 // ---- 状态 ----
 
+export interface NetworkState {
+  directory: {revision: number; controller_node_id: string | null; overlays: {node_id: string;address: string;interface: string;prefix: number;provider: string;machine_id: string;instance_id: string}[]}
+  nodes: {node_id: string;desired_revision: number|null;connections: {active_path: string|null;paths: {path: string; connected: boolean;rtt_ms: number|null;error: string|null;last_seen: number|null}[]};applied: {desired_revision:number;applied_revision:number;backend:string|null;error:string|null}|null;addresses: unknown}[]
+}
+export interface PluginRecord {
+  manifest: { id: string; version: string; name: string; dependencies: string[]; config_keys: string[]; configuration_help: string; page: string|null; node: boolean }
+  enabled: boolean
+  installed_at: number
+}
 interface WorkspaceState {
   // 认证
   session: Session | null
@@ -78,6 +85,9 @@ interface WorkspaceState {
 
   // 当前页
   page: PageName
+  selectedPluginId: string | null
+  plugins: PluginRecord[]
+  network: NetworkState | null
   selectedNodeId: string | null
 
   // UI 状态
@@ -98,6 +108,9 @@ const state = reactive<WorkspaceState>({
 
   page: (getUrlParam('page') as PageName) ?? 'console',
   selectedNodeId: getUrlParam('node'),
+  selectedPluginId: getUrlParam('plugin'),
+  plugins: [],
+  network: null,
 
   sidebarCollapsed: localStorage.getItem('opsd3.sidebar') === 'collapsed',
   activeTaskCount: 0,
@@ -191,6 +204,8 @@ async function loadAll(): Promise<void> {
     loadTasks(),
     loadMetrics(),
     loadEnrollments(),
+    loadPlugins(),
+    loadNetwork(),
   ])
   const failure = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
   state.error = failure ? (failure.reason instanceof Error ? failure.reason.message : '控制台数据加载失败') : null
@@ -220,6 +235,13 @@ async function loadMetrics(): Promise<void> {
 
 async function loadEnrollments(): Promise<void> {
   state.enrollments = await apiGet<EnrollmentSummary[]>('/api/v1/enrollment-tokens')
+}
+
+async function loadNetwork(): Promise<void> {
+  state.network = await apiGet<NetworkState>('/api/v1/network')
+}
+async function loadPlugins(): Promise<void> {
+  state.plugins = (await apiGet<{ plugins: PluginRecord[] }>('/api/v1/plugins')).plugins
 }
 
 // ---- 认证 ----
@@ -275,9 +297,14 @@ async function logout(): Promise<void> {
 function navigate(page: PageName, nodeId?: string): void {
   state.page = page
   if (nodeId !== undefined) state.selectedNodeId = nodeId
-  pushRoute({ page, node: state.selectedNodeId })
+  if (page !== 'plugins') state.selectedPluginId = null
+  pushRoute({ page, node: state.selectedNodeId, plugin: state.selectedPluginId })
 }
 
+function openPlugin(id: string | null): void {
+  state.selectedPluginId = id
+  navigate('plugins')
+}
 function selectNode(nodeId: string | null): void {
   state.selectedNodeId = nodeId
   pushRoute({ node: nodeId })
@@ -289,6 +316,7 @@ window.addEventListener('popstate', () => {
   const node = getUrlParam('node')
   state.page = page
   state.selectedNodeId = node
+  state.selectedPluginId = getUrlParam('plugin')
 })
 
 // ---- 侧栏 ----
@@ -333,6 +361,7 @@ export const workspace = {
 
   // 路由
   navigate,
+  openPlugin,
   selectNode,
 
   // UI
@@ -341,6 +370,8 @@ export const workspace = {
   // 数据
   loadAll,
   refreshEnrollments: loadEnrollments,
+  refreshPlugins: loadPlugins,
+  refreshNetwork: loadNetwork,
   submitAction,
 }
 

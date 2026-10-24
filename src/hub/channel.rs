@@ -118,7 +118,7 @@ pub async fn connect(
     let binding = identity(&s, &peer).await?;
     Ok(ws
         .max_message_size(1024 * 1024)
-        .on_upgrade(move |socket| agent_socket(s, binding.node_id, socket)))
+        .on_upgrade(move |socket| agent_socket(s, binding.node_id, peer.address.ip(), socket)))
 }
 pub async fn status(
     S(s): S<State>,
@@ -128,9 +128,11 @@ pub async fn status(
     let node = s.db.get::<Node>("nodes", &binding.node_id).await?;
     let connected = s.channels.read().await.contains_key(&binding.node_id)
         && node.is_some_and(|node| node.last_seen > now() - 45);
-    Ok(Json(json!({"node_id": binding.node_id, "connected": connected})))
+    Ok(Json(
+        json!({"node_id": binding.node_id, "connected": connected}),
+    ))
 }
-async fn agent_socket(s: State, node_id: String, mut socket: WebSocket) {
+async fn agent_socket(s: State, node_id: String, source: std::net::IpAddr, mut socket: WebSocket) {
     let Some(Ok(Message::Text(text))) =
         tokio::time::timeout(std::time::Duration::from_secs(10), socket.recv())
             .await
@@ -140,6 +142,7 @@ async fn agent_socket(s: State, node_id: String, mut socket: WebSocket) {
         return;
     };
     let Ok(Frame::Hello {
+        path,
         version,
         node_id: claimed,
         capabilities,
@@ -162,13 +165,54 @@ async fn agent_socket(s: State, node_id: String, mut socket: WebSocket) {
     if s.db.put("nodes", &node_id, &node).await.is_err() {
         return;
     }
+    if node.capabilities.as_ref().is_some_and(|c| c.dual_path) {
+        for mut task in
+            s.db.tasks()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|t| {
+                    t.node_id == node_id
+                        && !t.status.terminal()
+                        && matches!(
+                            t.action,
+                            Action::PeerSync { .. } | Action::PeerProbeTargets { .. }
+                        )
+                })
+        {
+            task.status = TaskStatus::Cancelled;
+            task.sequence += 1;
+            task.updated_at = now();
+            task.error = Some("已切换为网络期望状态，取消旧目录任务".into());
+            let _ = s.db.save_task(&task).await;
+        }
+    }
     let generation = id();
     let (tx, mut rx) = mpsc::channel::<Frame>(64);
     s.channels
         .write()
         .await
-        .insert(node_id.clone(), (generation.clone(), tx));
+        .insert(node_id.clone(), path, (generation.clone(), tx));
     drop(registration_lock);
+    if network::observe(&s, &node_id, Some(source), None)
+        .await
+        .is_err()
+    {
+        return;
+    }
+    if let Ok(desired) = network::desired(&s, &node_id).await
+        && node.capabilities.as_ref().is_some_and(|c| c.dual_path)
+    {
+        let _ = socket
+            .send(Message::Text(
+                serde_json::to_string(&Frame::NetworkDesired { desired })
+                    .unwrap()
+                    .into(),
+            ))
+            .await;
+    }
+    let _ = s.events.send(json!({"type":"network"}));
+    let mut ping_at = std::time::Instant::now();
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(15));
     let mut last = now();
     loop {
@@ -176,12 +220,15 @@ async fn agent_socket(s: State, node_id: String, mut socket: WebSocket) {
             biased;
             _=heartbeat.tick()=>{
                 if last<now()-45 {break}
-                let active=s.channels.read().await.get(&node_id).is_some_and(|c|c.0==generation);if !active {break}
+                let active=s.channels.read().await.current(&node_id,path,&generation);if !active {break}
+                ping_at=std::time::Instant::now();
                 if socket.send(Message::Ping(vec![].into())).await.is_err(){break}
             },
             Some(frame)=rx.recv()=>{if socket.send(Message::Text(serde_json::to_string(&frame).unwrap().into())).await.is_err(){break}},
             frame=socket.recv()=>{
                 let Some(Ok(frame))=frame else{break};last=now();
+                let rtt=matches!(&frame,Message::Pong(_)).then(||ping_at.elapsed().as_millis() as u64);
+                s.channels.write().await.touch(&node_id,path,&generation,rtt);
                 let Message::Text(text)=frame else{continue};
                 let Ok(frame)=serde_json::from_str::<Frame>(&text) else{break};
                 if handle(&s,&node_id,frame).await.is_err(){break}
@@ -189,13 +236,20 @@ async fn agent_socket(s: State, node_id: String, mut socket: WebSocket) {
         }
     }
     let mut channels = s.channels.write().await;
-    if channels.get(&node_id).is_some_and(|c| c.0 == generation) {
-        channels.remove(&node_id);
-    }
+    channels.disconnect(&node_id, path, &generation);
     let _ = s.events.send(json!({"type":"nodes"}));
 }
 async fn handle(s: &State, node_id: &str, frame: Frame) -> Result<()> {
     match frame {
+        Frame::NetworkFacts { facts } => {
+            network::observe(s, node_id, None, Some(facts)).await?;
+            network::synchronize(s).await?;
+            let _ = s.events.send(json!({"type":"network"}));
+        }
+        Frame::NetworkApplied { applied } => {
+            s.db.put("network_applied", node_id, &applied).await?;
+            let _ = s.events.send(json!({"type":"network"}));
+        }
         Frame::Heartbeat | Frame::Inventory { .. } => {
             let _lock = s.gate.lock().await;
             let mut n =
@@ -382,12 +436,7 @@ impl StreamQuery {
     /// 把查询参数折算成流目标。非法组合明确拒绝，不做猜测。
     fn target(&self) -> ApiResult<StreamTarget> {
         match self.kind.as_str() {
-            "container" => Ok(StreamTarget::Container {
-                id: self
-                    .container
-                    .clone()
-                    .ok_or_else(|| bad("容器会话缺少容器编号"))?,
-            }),
+            "container" => Err(bad("容器终端已迁入 Docker 插件")),
             "shell" => Ok(StreamTarget::Host {
                 shell: "/bin/bash".into(),
                 workdir: self.workdir.clone(),

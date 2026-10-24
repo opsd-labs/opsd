@@ -73,6 +73,19 @@ pub fn certs(path: &Path) -> Result<Vec<rustls::pki_types::CertificateDer<'stati
         .collect::<std::io::Result<Vec<_>>>()
         .map_err(Into::into)
 }
+
+pub fn sign_server_csr(dir: &Path, csr: &str, address: std::net::IpAddr) -> Result<String> {
+    let key = KeyPair::from_pem(&std::fs::read_to_string(dir.join("ca-key.pem"))?)?;
+    let issuer = Issuer::from_ca_cert_pem(&std::fs::read_to_string(dir.join("ca.pem"))?, key)?;
+    let mut request = CertificateSigningRequestParams::from_pem(csr)?;
+    request.params.is_ca = IsCa::NoCa;
+    request.params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    request.params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    request.params.subject_alt_names = vec![rcgen::SanType::IpAddress(address)];
+    request.params.not_before = time::OffsetDateTime::now_utc() - time::Duration::minutes(5);
+    request.params.not_after = time::OffsetDateTime::now_utc() + time::Duration::days(365);
+    Ok(request.signed_by(&issuer)?.pem())
+}
 pub fn key(path: &Path) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
     rustls_pemfile::private_key(&mut std::io::BufReader::new(std::fs::File::open(path)?))?
         .context("缺少私钥")

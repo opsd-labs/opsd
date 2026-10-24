@@ -27,6 +27,10 @@ pub fn id() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeCapabilities {
+    #[serde(default)]
+    pub plugins: bool,
+    #[serde(default)]
+    pub dual_path: bool,
     pub os: String,
     pub docker: bool,
     pub compose: bool,
@@ -69,8 +73,10 @@ pub struct DiskUsage {
 ///
 /// 由主控下发（它是唯一知道全部节点地址的一方），并且在目录变化时带版本号重发，
 /// 因此 Agent 不需要自己发现邻居，也不会猜地址。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProbeTarget {
+    #[serde(default)]
+    pub path: crate::network::PathKind,
     pub node_id: String,
     /// 被探测地址。优先用覆盖网地址：它是节点之间真实的转发路径。
     pub address: String,
@@ -81,7 +87,7 @@ pub struct ProbeTarget {
 }
 
 /// 带版本号的对端探测目标集合，与 `PeerAddressSet` 一样走任务机制下发。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProbeTargetSet {
     pub version: i64,
     #[serde(default)]
@@ -94,6 +100,8 @@ pub struct ProbeTargetSet {
 /// 与"探测失败"是完全不同的两件事。失败原因单独放在 `error` 里。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PeerLatency {
+    #[serde(default)]
+    pub path: crate::network::PathKind,
     pub node_id: String,
     pub address: String,
     /// 探测方式：`icmp` 或 `tcp`。
@@ -242,6 +250,12 @@ impl TaskStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
+    Plugin {
+        plugin: String,
+        version: String,
+        operation: String,
+        input: Value,
+    },
     Inspect {},
     /// 主机与块设备盘点。只读，是存储预检的唯一数据来源。
     HostInspect {},
@@ -374,6 +388,26 @@ pub enum Action {
         remove: bool,
     },
 }
+impl Action {
+    pub fn legacy_business(&self) -> bool {
+        matches!(
+            self,
+            Self::DockerInspect { .. }
+                | Self::Docker { .. }
+                | Self::PullImage { .. }
+                | Self::StackImport { .. }
+                | Self::StackCreate { .. }
+                | Self::StackPlan { .. }
+                | Self::StackApply { .. }
+                | Self::StackControl { .. }
+                | Self::StoragePrepare { .. }
+                | Self::StorageDeploy { .. }
+                | Self::StorageStatus { .. }
+                | Self::StorageBucket { .. }
+                | Self::StorageUser { .. }
+        )
+    }
+}
 fn readwrite() -> String {
     "readwrite".into()
 }
@@ -397,6 +431,8 @@ pub struct TaskEnvelope {
     pub node_id: String,
     pub key: String,
     pub action: Action,
+    #[serde(default)]
+    pub plugin_versions: std::collections::HashMap<String, String>,
     pub digest: String,
     pub status: TaskStatus,
     #[serde(default)]
@@ -410,6 +446,9 @@ impl TaskEnvelope {
     pub fn redacted(&self) -> Self {
         let mut task = self.clone();
         match &mut task.action {
+            Action::Plugin { input, .. } => {
+                *input = serde_json::json!({"hidden":true});
+            }
             Action::StackCreate { content, .. } | Action::StackPlan { content, .. } => {
                 *content = "[配置正文已隐藏]".into();
             }
@@ -424,6 +463,7 @@ impl TaskEnvelope {
             node_id,
             key,
             action,
+            plugin_versions: Default::default(),
             digest,
             status: TaskStatus::Pending,
             sequence: 0,
@@ -448,6 +488,8 @@ pub struct TaskEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Frame {
     Hello {
+        #[serde(default)]
+        path: crate::network::PathKind,
         version: u32,
         node_id: String,
         capabilities: NodeCapabilities,
@@ -466,6 +508,15 @@ pub enum Frame {
         report: MetricsReport,
     },
     Heartbeat,
+    NetworkFacts {
+        facts: crate::network::NetworkFacts,
+    },
+    NetworkDesired {
+        desired: crate::network::DesiredNetwork,
+    },
+    NetworkApplied {
+        applied: crate::network::AppliedNetwork,
+    },
     StreamOpen {
         stream_id: String,
         kind: StreamKind,

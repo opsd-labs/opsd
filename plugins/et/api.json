@@ -1,0 +1,382 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "EasyTier 网络 业务接口",
+    "version": "0.1.0",
+    "description": "挂在 /{安全入口}/api/v1/plugins/et/api 下。Cookie、Origin 与 CSRF 由核心校验；秘密通过受保护存储引用。"
+  },
+  "paths": {
+    "/machines": {
+      "get": {
+        "summary": "读取或操作插件会话/machines",
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/instances": {
+      "post": {
+        "summary": "读取或操作插件会话/instances",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "machine_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "machine_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/info": {
+      "post": {
+        "summary": "读取或操作插件会话/info",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "machine_id": {
+                    "type": "string"
+                  },
+                  "instance_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "machine_id",
+                  "instance_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/config": {
+      "post": {
+        "summary": "读取或操作插件会话/config",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "machine_id": {
+                    "type": "string"
+                  },
+                  "instance_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "machine_id",
+                  "instance_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/config/update": {
+      "post": {
+        "summary": "提交持久任务/config/update",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "machine_id": {
+                    "type": "string"
+                  },
+                  "instance_id": {
+                    "type": "string"
+                  },
+                  "patch": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                },
+                "required": [
+                  "idempotency_key",
+                  "machine_id",
+                  "instance_id",
+                  "patch"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理，实际结果通过核心任务接口读取",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/instance/state": {
+      "post": {
+        "summary": "提交持久任务/instance/state",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "machine_id": {
+                    "type": "string"
+                  },
+                  "instance_id": {
+                    "type": "string"
+                  },
+                  "disabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "idempotency_key",
+                  "machine_id",
+                  "instance_id",
+                  "disabled"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理，实际结果通过核心任务接口读取",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/bind": {
+      "post": {
+        "summary": "提交持久任务/bind",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "machine_id": {
+                    "type": "string"
+                  },
+                  "instance_id": {
+                    "type": "string"
+                  },
+                  "node_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "idempotency_key",
+                  "machine_id",
+                  "instance_id",
+                  "node_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理，实际结果通过核心任务接口读取",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/console": {
+      "get": {
+        "summary": "读取或操作插件会话/console",
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    }
+  }
+}

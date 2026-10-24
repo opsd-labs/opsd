@@ -6,12 +6,10 @@
 //!
 //! 数据来源：`lsblk -J -O`（块设备拓扑）、`/proc`、`/sys`、`uname`、`/etc/os-release`。
 //! 不写任何东西，全部只读。
-use opsd::protocol::{
-    BlockDevice, DriveRisk, ExistingStorage, HostInterface, HostInventory,
-};
+use crate::protocol::{BlockDevice, DriveRisk, ExistingStorage, HostInterface, HostInventory};
 use serde_json::Value;
 
-use super::command;
+use crate::command;
 
 /// 承载这些挂载点的设备一律视为系统盘，绝不参与格式化。
 const SYSTEM_MOUNTS: &[&str] = &["/", "/boot", "/boot/efi", "/usr", "/var"];
@@ -47,7 +45,7 @@ pub async fn inspect() -> HostInventory {
     };
 
     HostInventory {
-        collected_at: opsd::protocol::now(),
+        collected_at: crate::protocol::now(),
         hostname: read_trim("/proc/sys/kernel/hostname").unwrap_or_else(|| "未知".into()),
         distro: distro(),
         kernel: read_trim("/proc/sys/kernel/osrelease").unwrap_or_else(|| "未知".into()),
@@ -183,9 +181,7 @@ pub fn assess(devices: &[BlockDevice]) -> Vec<DriveRisk> {
         } else {
             devices
                 .iter()
-                .find(|parent| {
-                    parent.children.iter().any(|child| child == &device.name)
-                })
+                .find(|parent| parent.children.iter().any(|child| child == &device.name))
                 .map(|parent| parent.name.as_str())
         };
         if let Some(owner) = owner {
@@ -201,9 +197,8 @@ pub fn assess(devices: &[BlockDevice]) -> Vec<DriveRisk> {
         let mut reasons = Vec::new();
         let mounts = disk_mounts.get(device.name.as_str());
         let system_disk = mounts.is_some_and(|list| {
-            list.iter().any(|mount| {
-                SYSTEM_MOUNTS.contains(mount) || *mount == "/boot/efi"
-            })
+            list.iter()
+                .any(|mount| SYSTEM_MOUNTS.contains(mount) || *mount == "/boot/efi")
         });
         if system_disk {
             let list = mounts.cloned().unwrap_or_default().join("、");
@@ -214,19 +209,19 @@ pub fn assess(devices: &[BlockDevice]) -> Vec<DriveRisk> {
         let children: Vec<&BlockDevice> = devices
             .iter()
             .filter(|child| {
-                device.children.iter().any(|name| name == &child.name)
-                    || child.name == device.name
+                device.children.iter().any(|name| name == &child.name) || child.name == device.name
             })
             .collect();
         let lvm_member = children
             .iter()
             .any(|child| child.kind == "lvm" || child.kind == "lvm-pv");
         let raid_member = children.iter().any(|child| {
-            child.kind.starts_with("raid") || child.filesystem.as_deref() == Some("linux_raid_member")
+            child.kind.starts_with("raid")
+                || child.filesystem.as_deref() == Some("linux_raid_member")
         });
-        let luks = children
-            .iter()
-            .any(|child| child.kind == "crypt" || child.filesystem.as_deref() == Some("crypto_LUKS"));
+        let luks = children.iter().any(|child| {
+            child.kind == "crypt" || child.filesystem.as_deref() == Some("crypto_LUKS")
+        });
         if lvm_member {
             reasons.push("是 LVM 物理卷，需先确认是否有在用逻辑卷".into());
         }
@@ -260,10 +255,7 @@ pub fn assess(devices: &[BlockDevice]) -> Vec<DriveRisk> {
                 device.children.len()
             ));
         }
-        let removable = device
-            .transport
-            .as_deref()
-            .is_some_and(|t| t == "usb");
+        let removable = device.transport.as_deref().is_some_and(|t| t == "usb");
         if removable {
             reasons.push("通过 USB 连接，不适合作为集群磁盘".into());
         }
@@ -341,12 +333,7 @@ fn uptime() -> u64 {
 
 /// 物理网卡与链路速率。跳过回环与容器网桥，与指标采样保持一致。
 async fn interfaces() -> anyhow::Result<Vec<HostInterface>> {
-    let text = command(
-        "/usr/bin/ls",
-        &["-1", "/sys/class/net"],
-        10,
-    )
-    .await?;
+    let text = command("/usr/bin/ls", &["-1", "/sys/class/net"], 10).await?;
     let mut list = Vec::new();
     for name in text.lines().map(str::trim).filter(|n| !n.is_empty()) {
         if name == "lo" || name.starts_with("docker") || name.starts_with("br-") {
@@ -394,7 +381,11 @@ async fn existing_storage() -> ExistingStorage {
         }
     }
     // 数据目录特征
-    for path in ["/data/.minio.sys", "/data/minio.sys", "/mnt/data/.minio.sys"] {
+    for path in [
+        "/data/.minio.sys",
+        "/data/minio.sys",
+        "/mnt/data/.minio.sys",
+    ] {
         if std::path::Path::new(path).exists() {
             existing.data_directories.push(path.to_owned());
         }
@@ -408,19 +399,16 @@ async fn smart_summary(devices: &[BlockDevice]) -> anyhow::Result<Option<String>
     let mut lines = Vec::new();
     let mut collected = false;
     for device in devices.iter().filter(|d| d.kind == "disk") {
-        let Ok(output) = command(
-            "/usr/sbin/smartctl",
-            &["-H", "-A", &device.path],
-            15,
-        )
-        .await
+        let Ok(output) = command("/usr/sbin/smartctl", &["-H", "-A", &device.path], 15).await
         else {
             continue;
         };
         collected = true;
         let health = output
             .lines()
-            .find(|line| line.contains("SMART overall-health") || line.contains("SMART Health Status"))
+            .find(|line| {
+                line.contains("SMART overall-health") || line.contains("SMART Health Status")
+            })
             .map(str::trim)
             .unwrap_or("未给出整体健康结论");
         lines.push(format!("{}：{health}", device.name));
@@ -627,7 +615,11 @@ mod tests {
             inventory
                 .risks
                 .iter()
-                .map(|r| format!("{}={}", r.device, if r.usable() { "可用" } else { "不可用" }))
+                .map(|r| format!(
+                    "{}={}",
+                    r.device,
+                    if r.usable() { "可用" } else { "不可用" }
+                ))
                 .collect::<Vec<_>>(),
             inventory.gaps
         );

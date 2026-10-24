@@ -47,6 +47,15 @@ packages=()
 command -v curl >/dev/null 2>&1 || packages+=(curl)
 command -v jq >/dev/null 2>&1 || packages+=(jq)
 command -v tar >/dev/null 2>&1 || packages+=(tar)
+if [[ "$mode" == host ]]; then
+  command -v openssl >/dev/null 2>&1 || packages+=(openssl)
+  command -v lsblk >/dev/null 2>&1 || packages+=(util-linux)
+  if ! command -v ip >/dev/null 2>&1; then
+    if [[ "$package_manager" == apt ]]; then packages+=(iproute2); else packages+=(iproute); fi
+  fi
+  command -v nft >/dev/null 2>&1 || packages+=(nftables)
+  command -v iptables-restore >/dev/null 2>&1 || packages+=(iptables)
+fi
 if [[ ! -s /etc/ssl/certs/ca-certificates.crt && ! -s /etc/pki/tls/certs/ca-bundle.crt ]]; then packages+=(ca-certificates); fi
 if (( ${#packages[@]} )); then
   printf '%s\n' '正在安装必要的基础依赖……'

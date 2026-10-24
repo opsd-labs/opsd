@@ -197,7 +197,7 @@ try {
   // --- 契约结构负向（6+3） ---
   const scenarios = [
     ['删 WS 101 应失败', (doc) => delete doc.paths['/api/v1/nodes/{id}/stream'].get.responses['101'], '101'],
-    ['分享机器接口匿名应失败', (doc) => { doc.paths['/share/{token}/api/v1/public/summary'].get.security = [] }, '不得使用 security: []'],
+    ['只读输出接口匿名应失败', (doc) => { doc.paths['/api/v1/public/summary'].get.security = [] }, '不得使用 security: []'],
     ['删 422 应失败', (doc) => delete doc.paths['/api/v1/auth/login'].post.responses['422'], '缺少 422'],
     ['删 400 text/plain 应失败', (doc) => delete doc.paths['/api/v1/auth/login'].post.responses['400'].content['text/plain'], '400 必须允许框架纯文本'],
     ['415 错误响应形状应失败', (doc) => { doc.components.responses.UnsupportedMediaType.content = { 'application/json': { schema: { type: 'object' } } } }, '必须声明 text/plain'],

@@ -9,10 +9,9 @@ import Sidebar from './Sidebar.vue'
 import Topbar from './Topbar.vue'
 import ConsolePage from '../../pages/ConsolePage.vue'
 import NodesPage from '../../pages/NodesPage.vue'
-import DockerPage from '../../pages/DockerPage.vue'
 import FirewallPage from '../../pages/FirewallPage.vue'
 import DatabasePage from '../../pages/DatabasePage.vue'
-import StoragePage from '../../pages/StoragePage.vue'
+import PluginsPage from '../../pages/PluginsPage.vue'
 import SettingsPage from '../../pages/SettingsPage.vue'
 
 const page = computed(() => workspace.state.page)
@@ -30,10 +29,9 @@ const collapsed = computed(() => workspace.state.sidebarCollapsed)
         <p v-if="workspace.state.error" role="alert" class="shell__error">{{ workspace.state.error }}</p>
         <ConsolePage  v-if="page === 'console'" />
         <NodesPage    v-else-if="page === 'nodes'" />
-        <DockerPage   v-else-if="page === 'docker'" />
         <FirewallPage v-else-if="page === 'firewall'" />
         <DatabasePage v-else-if="page === 'database'" />
-        <StoragePage  v-else-if="page === 'storage'" />
+        <PluginsPage  v-else-if="page === 'plugins'" />
         <SettingsPage v-else-if="page === 'settings'" />
       </main>
     </div>

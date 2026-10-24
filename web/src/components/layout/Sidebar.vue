@@ -22,6 +22,7 @@ const navIcons: Record<string, string> = {
   firewall: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
   database: 'M12 2a9 3 0 0 0-9 3v14a9 3 0 0 0 18 0V5a9 3 0 0 0-9-3z M3 5a9 3 0 0 0 18 0 M3 12a9 3 0 0 0 18 0',
   storage:  'M22 12H2 M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z M6 16h.01 M10 16h.01',
+  plugins: 'M12 3v7m0 4v7M3 12h7m4 0h7M5 5l5 5m4 4 5 5M5 19l5-5m4-4 5-5',
   settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
 }
 </script>
@@ -57,6 +58,9 @@ const navIcons: Record<string, string> = {
           <path :d="navIcons[p.name]" />
         </svg>
         <span class="nav-item__label">{{ p.label }}</span>
+      </button>
+      <button v-for="record in workspace.state.plugins.filter(record => record.enabled && record.manifest.page)" :key="record.manifest.id" class="nav-item" :class="{ 'nav-item--active': page === 'plugins' && workspace.state.selectedPluginId === record.manifest.id }" :title="record.manifest.name" @click="workspace.openPlugin(record.manifest.id)">
+        <span class="nav-item__icon" aria-hidden="true">◇</span><span class="nav-item__label">{{ record.manifest.name }}</span>
       </button>
     </nav>
 

@@ -1,9 +1,4 @@
-/**
- * 内置控制台与分享面的端到端验证：真实主控、浏览器及 Agent。
- *
- * 重点是那条隔离承诺——**浏览器不会把控制台会话 Cookie 发给分享路径**。
- * 这一点只能在实际浏览器里看请求头才能确认，单元测试与接口测试都覆盖不到。
- */
+/** 内置控制台、插件页面与真实 Agent 的浏览器验收。 */
 import { spawn } from "node:child_process";
 import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -15,12 +10,12 @@ import { makeZip } from './lib/theme-zip.mjs';
 const require = createRequire(new URL("../tools/package.json", import.meta.url));
 const { chromium, expect } = require("@playwright/test");
 
-// 分享页由主仓库维护，浏览器依赖由 tools 提供。
+// 浏览器依赖由 tools 提供，插件页面随独立插件包分发。
 const root = path.resolve(import.meta.dirname, "..");
 const installAcceptance = process.env.OPSD_INSTALL_ACCEPTANCE || '';
 const installFailures = installAcceptance === 'host' && process.arch === 'x64';
 const sensitiveValues = new Set();
-const run = path.join(root, ".data", "share-e2e-" + Date.now());
+const run = path.join(root, ".data", "console-e2e-" + Date.now());
 await mkdir(run, { recursive: true });
 const exe = (n) =>
   path.join(process.env.OPSD_TEST_BIN_DIR || path.join(root, "target", "debug"), n + (process.platform === "win32" ? ".exe" : ""));
@@ -187,18 +182,6 @@ try {
     `会话 Cookie 应限定在入口路径，实际：${login.cookie}`,
   );
 
-  // 分享页与内置控制台共用真实 Hub，令牌仅留在本次进程内。
-  let shareToken;
-  if (!installAcceptance) {
-  await request("/share/settings", "PUT", {
-    enabled: true,
-    site: { name: "十二节点状态", description: "只读展示", footer: "" },
-  });
-  const token = await request("/share/tokens", "POST", { label: "浏览器验证", expires_hours: 1 });
-  assert.equal(token.status, 200);
-  shareToken = token.data.token;
-  }
-
   const browser = await chromium.launch({
     executablePath: process.env.OPSD_BROWSER_EXECUTABLE,
   });
@@ -220,24 +203,18 @@ try {
   assert.equal(audit.data.records.length, 0);
   await expect(consolePage.locator('.audit-table tbody tr').first()).toContainText('暂无审计记录');
 
-  await consolePage.getByRole('tab', { name: '分享', exact: true }).click();
-  await expect(consolePage.getByText('公开分享：已启用')).toBeVisible();
-  await consolePage.getByPlaceholder('标签（如：团队演示）').fill('界面分享验证');
-  await consolePage.getByRole('button', { name: '创建', exact: true }).click();
-  const createdLink = consolePage.locator('a[href*="/share/"]');
-  await expect(createdLink).toBeVisible();
-  assert.ok((await createdLink.getAttribute('href')).startsWith(`https://localhost:${base}/share/`));
-  const shareItem = consolePage.locator('.share-item').filter({ hasText: '界面分享验证' });
-  await shareItem.getByRole('button', { name: '撤销' }).click();
-  await expect(shareItem).toContainText('已撤销');
-  await consolePage.getByRole('button', { name: '关闭分享' }).click();
-  await expect(consolePage.getByText('公开分享：已关闭')).toBeVisible();
-  await consolePage.getByRole('button', { name: '启用分享' }).click();
-  await expect(consolePage.getByText('公开分享：已启用')).toBeVisible();
+  await consolePage.getByRole('tab', { name: '输出 API', exact: true }).click();
+  await consolePage.getByPlaceholder('密钥用途，例如 Prometheus').fill('浏览器输出验证');
+  await consolePage.getByRole('button', { name: '创建只读密钥', exact: true }).click();
+  const exportItem = consolePage.locator('.export-item').filter({ hasText: '浏览器输出验证' });
+  await expect(exportItem).toContainText('有效');
+  await expect(consolePage.getByText('密钥仅显示一次，请保存：')).toBeVisible();
+  await exportItem.getByRole('button', { name: '撤销' }).click();
+  await expect(exportItem).toContainText('已撤销');
 
   await consolePage.getByRole('tab', { name: '主题', exact: true }).click();
   const zip = makeZip({
-    'theme.json': JSON.stringify({ short: 'browser-console', name: '浏览器主题', version: '1.0.0', surfaces: ['console'], console_frontend: { api_version: 1 } }),
+    'theme.json': JSON.stringify({ short: 'browser-console', name: '浏览器主题', version: '1.0.0', surfaces: ['console'], console_frontend: { api_version: 2 } }),
     'index.html': '<!doctype html><html><head><title>浏览器主题</title></head><body>外部控制台验证</body></html>',
   });
   await consolePage.locator('input[type=file]').setInputFiles({ name: 'console.zip', mimeType: 'application/zip', buffer: zip });
@@ -269,14 +246,8 @@ try {
   const enrollmentDrawer = consolePage.getByRole('dialog', { name: '添加节点', exact: true });
   if (!installAcceptance) {
   await enrollmentDrawer.getByLabel('节点名称', { exact: true }).fill('浏览器 Docker 节点');
-  await enrollmentDrawer.getByLabel('公网 IP（选填）', { exact: true }).fill('127.0.0.1');
-  const invalidRegistration = consolePage.waitForResponse(r => r.url().endsWith('/enrollment-tokens') && r.request().method() === 'POST');
-  await enrollmentDrawer.getByRole('button', { name: '生成注册信息', exact: true }).click();
-  assert.equal((await invalidRegistration).status(), 400);
-  await expect(enrollmentDrawer.getByRole('alert')).toBeVisible();
-  assert.equal((await request('/nodes')).data.length, 0);
-  assert.equal((await request('/enrollment-tokens')).data.length, 0);
-  await enrollmentDrawer.getByLabel('公网 IP（选填）', { exact: true }).fill('');
+  await expect(enrollmentDrawer.getByLabel('公网 IP（选填）', { exact: true })).toHaveCount(0);
+  await expect(enrollmentDrawer.getByLabel('覆盖网 IP（选填）', { exact: true })).toHaveCount(0);
   await enrollmentDrawer.getByLabel('安装方式', { exact: true }).selectOption('docker');
   const dockerRegistrationResponse = consolePage.waitForResponse(r => r.url().endsWith('/enrollment-tokens') && r.request().method() === 'POST');
   await enrollmentDrawer.getByRole('button', { name: '生成注册信息', exact: true }).click();
@@ -435,77 +406,70 @@ try {
   await expect(hostPending).toHaveCount(0);
   await expect(consolePage.locator('.node-header')).toContainText('浏览器节点');
   await expect(consolePage.locator('.node-header')).toContainText('在线');
-  await consolePage.getByRole('button', { name: 'Docker', exact: true }).click();
-  await expect(consolePage.getByRole('button', { name: '刷新', exact: true })).toBeVisible();
-  const refreshResponse = consolePage.waitForResponse(r => r.url().endsWith(`/nodes/${registration.node_id}/actions`) && r.request().method() === 'POST');
-  await consolePage.getByRole('button', { name: '刷新', exact: true }).click();
-  const submitted = await refreshResponse;
-  assert.equal(submitted.status(), 202);
-  assert.equal(submitted.request().postDataJSON().action.type, 'inspect');
-  const submittedTask = await submitted.json();
-  await expect.poll(async () => (await request(`/tasks/${submittedTask.task_id}`)).data.status, { timeout: 30000 }).toBe('succeeded');
-  await expect(consolePage.getByText('盘点任务已提交，完成后列表将自动更新')).toBeVisible();
+  await expect(consolePage.getByRole('heading', { name: '控制线路与自动互信' })).toBeVisible();
+  const inspected = await request(`/nodes/${registration.node_id}/actions`, 'POST', { idempotency_key: 'browser-inspect', action: { type: 'inspect' } });
+  assert.equal(inspected.status, 202);
+  await expect.poll(async () => (await request('/tasks/' + inspected.data.task_id)).data.status, { timeout: 30000 }).toBe('succeeded');
 
   if (installAcceptance) {
     console.log(JSON.stringify({ 一键安装: '页面原样命令、下载脚本、重复执行、权限、服务重启恢复与真实上线通过', 模式: installAcceptance, 架构: process.arch, 定点失败: installFailures ? '下载、过期、CA、已有身份、启动失败与 mTLS 不可达通过' : '复用 x64 宿主机的失败分支证据' }));
   } else {
-  const page = await context.newPage();
-  const seen = [];
-  page.on("request", (req) => {
-    const url = new URL(req.url());
-    if (url.pathname.startsWith("/share/")) {
-      seen.push({ path: url.pathname, cookie: req.headers()["cookie"] || "" });
-    }
-  });
-  await page.goto(`https://localhost:${base}/share/${shareToken}/`, {
-    waitUntil: "networkidle",
-  });
-  await page.waitForTimeout(500);
-
-  const info = await page.evaluate(() => ({
-    title: document.title,
-    heading: document.querySelector("h1")?.textContent?.trim() || "",
-    hasConsole: !!document.querySelector(".app-shell"),
-    bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 120),
-    assetCount: performance.getEntriesByType("resource").length,
-  }));
-  // 分享页不得加载控制台外壳
-  assert.equal(info.hasConsole, false, "分享页不应包含控制台外壳");
-  assert.ok(info.assetCount > 0, "分享页资源应加载成功");
-  // 关键：没有任何一个分享路径请求带上控制台会话 Cookie
-  assert.ok(seen.length > 0, "应观察到分享路径请求");
-  const leaked = seen.filter((r) => r.cookie.includes("opsd_session"));
-  assert.equal(
-    leaked.length,
-    0,
-    `分享路径不应收到控制台会话 Cookie，实际：${JSON.stringify(leaked)}`,
-  );
-
-  // 令牌无效时门禁直接丢弃：浏览器会看到连接失败而不是错误页
-  let dropped = false;
-  try {
-    const bad = await context.newPage();
-    await bad.goto(`https://localhost:${base}/share/wrongtoken00000/data/nodes`, {
-      timeout: 8000,
-    });
-  } catch {
-    dropped = true;
+  await consolePage.getByRole('button', { name: '插件', exact: true }).click();
+  await expect(consolePage.getByText('暂无插件。安装独立发行的插件 ZIP 后，按依赖顺序启用。')).toBeVisible();
+  for (const id of ['et', 'docker', 'silo']) {
+    const zipPath = path.join(root, '.release/plugins', id + '-0.1.0.zip');
+    const installed = consolePage.waitForResponse(response => response.url().endsWith('/plugins/package') && response.request().method() === 'POST');
+    await consolePage.locator('.upload input[type=file]').setInputFiles(zipPath);
+    assert.equal((await installed).status(), 200);
+    const card = consolePage.locator('.plugin-card').filter({ hasText: id === 'et' ? 'EasyTier 网络' : id === 'docker' ? 'Docker / Portainer' : 'Silo 分布式存储' });
+    await card.getByRole('button', { name: '启用此版本', exact: true }).click();
+    await expect(card).toContainText('已启用');
   }
-  assert.ok(dropped, "无效令牌应导致连接被丢弃");
-
-  console.log(
-    JSON.stringify(
-      {
-        内置控制台: '真实登录、主题、分享、安装命令复制、脚本下载、复制失败回退、过期重建、取消失败阻止创建、待接入恢复、真实 Agent 上线及盘点任务通过',
-        分享页: info,
-        分享路径请求数: seen.length,
-        带控制台Cookie的请求: leaked.length,
-        无效令牌被丢弃: dropped,
-      },
-      null,
-      1,
-    ),
-  );
+  // 页面只读数据使用接口夹具；上游 ET 写入与双控制连接已由 HTTP 集成验收。
+  await consolePage.route('**/api/v1/plugins/et/api/**', route => {
+    const path = new URL(route.request().url()).pathname.split('/api/').at(-1);
+    const value = path === 'machines' ? { machines: [{ machine_id: '11111111-1111-4111-8111-111111111111', info: { hostname: '浏览器 ET 机器', easytier_version: '2.6.4', report_time: '当前夹具时间' } }] }
+      : path === 'console' ? { url: 'http://100.100.201.101:61018/' }
+      : path === 'instances' ? { running_inst_ids: ['22222222-2222-4222-8222-222222222222'], disabled_inst_ids: [] }
+      : path === 'config' ? { hostname: '浏览器 ET 机器', virtual_ipv4: '100.100.201.91', network_length: 10, dev_name: 'jkfujr-easytier' }
+      : { info: { map: {} } };
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+  });
+  await consolePage.getByRole('button', { name: 'EasyTier 网络', exact: true }).click();
+  const etFrame = consolePage.frameLocator('iframe');
+  await expect(etFrame.getByRole('heading', { name: 'EasyTier 网络', exact: true })).toBeVisible();
+  await etFrame.getByRole('button', { name: '查看实例', exact: true }).click();
+  await etFrame.getByRole('button', { name: '配置与链路', exact: true }).click();
+  await expect(etFrame.getByText('实例配置与关联', { exact: true })).toBeVisible();
+  assert.equal(await etFrame.getByRole('link', { name: '打开 ET 管理台 ↗' }).getAttribute('target'), '_blank');
+  await consolePage.getByRole('button', { name: '插件管理', exact: true }).click();
+  await consolePage.route('**/api/v1/plugins/docker/api/**', route => {
+    const path = new URL(route.request().url()).pathname.split('/api/').at(-1);
+    const value = path === 'environments' ? { bindings: [{ node_id: registration.node_id, endpoint_id: 1 }], environments: [] }
+      : path === 'console' ? { url: 'https://100.100.201.91:9443/' }
+      : path === 'logs' ? { text: '浏览器日志夹具' }
+      : { containers: [{ Id: 'abc123', Names: ['/existing-app'], Image: 'nginx:stable', Status: '运行中', Labels: {} }], stacks: [], images: [], networks: [], volumes: { Volumes: [] } };
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+  });
+  await consolePage.getByRole('button', { name: 'Docker / Portainer', exact: true }).click();
+  const dockerFrame = consolePage.frameLocator('iframe');
+  await expect(dockerFrame.getByText('/existing-app', { exact: true })).toBeVisible();
+  await dockerFrame.getByRole('button', { name: '日志', exact: true }).click();
+  await expect(dockerFrame.getByText('浏览器日志夹具', { exact: true })).toBeVisible();
+  await dockerFrame.getByRole('button', { name: 'Stack', exact: true }).click();
+  await expect(dockerFrame.getByRole('button', { name: '新建 Stack', exact: true })).toBeVisible();
+  await consolePage.getByRole('button', { name: '插件管理', exact: true }).click();
+  await consolePage.getByRole('button', { name: 'Silo 分布式存储', exact: true }).click();
+  const siloFrame = consolePage.frameLocator('iframe');
+  await expect(siloFrame.getByRole('heading', { name: 'Silo 分布式存储', exact: true })).toBeVisible();
+  await siloFrame.getByText('部署新集群', { exact: true }).click();
+  await expect(siloFrame.getByText('我已核对下列新盘设备与容量，确认允许清空所选新盘。已有路径不格式化。', { exact: true })).toBeVisible();
+  await consolePage.setViewportSize({ width: 390, height: 844 });
+  for (const frame of [siloFrame]) {
+    const dimensions = await frame.locator('main').evaluate(element => ({ width: element.scrollWidth, viewport: innerWidth }));
+    assert.ok(dimensions.width <= dimensions.viewport + 1, '插件页面不应出现横向溢出');
+  }
+  console.log('通过：真实登录、输出密钥、主题 v2、无 IP 安装、真实 Agent 上线、插件包管理和三个独立页面；业务页只读上游使用夹具，未声明真实 Portainer 或 Silo 部署通过。');
   }
   await browser.close();
 } finally {

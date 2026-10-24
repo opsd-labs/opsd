@@ -83,24 +83,6 @@ pub fn first_segment(path: &str) -> Option<&str> {
     (!segment.is_empty()).then_some(segment)
 }
 
-/// 分享面路径的首段。
-pub const SHARE_PREFIX: &str = "share";
-
-/// 取出 `/share/{令牌}` 中的令牌。
-pub fn share_token(path: &str) -> Option<&str> {
-    if first_segment(path)? != SHARE_PREFIX {
-        return None;
-    }
-    let rest = path.strip_prefix('/')?.strip_prefix(SHARE_PREFIX)?;
-    let token = rest.strip_prefix('/')?.split('/').next().unwrap_or_default();
-    (!token.is_empty()).then_some(token)
-}
-
-/// 分享面校验：令牌无效时与错误入口一样被丢弃，不给出任何响应。
-fn share_token_matches(path: &str, check: &Arc<dyn Fn(&str) -> bool + Send + Sync>) -> bool {
-    share_token(path).is_some_and(|token| check(token))
-}
-
 /// 错误入口的按来源限速，防止暴力枚举。
 #[derive(Clone, Default)]
 pub struct Limits(Arc<Mutex<HashMap<IpAddr, (i64, u32)>>>);
@@ -136,14 +118,18 @@ pub type Shared = Arc<RwLock<String>>;
 /// 使扫描者能据此得知这是一个 opsd 主控。因此白名单必须**逐条精确匹配**，
 /// 绝不能写成前缀，否则会变成绕过门禁的通道。
 pub const AGENT_PATHS: &[&str] = &["/api/v1/enroll"];
+pub const EXPORT_PATHS: &[&str] = &[
+    "/api/v1/public/nodes",
+    "/api/v1/public/summary",
+    "/api/v1/public/metrics",
+];
 
 /// 连接的入口门禁。
 ///
 /// 放行规则有两类：
 ///
 /// 1. **安全入口**：控制台，首段路径必须等于安全入口。
-/// 2. **分享令牌**：分享面，路径形如 `/share/{令牌}/...`，且令牌必须有效。
-///    令牌的校验由调用方通过 `share` 回调注入，门禁只负责"不通过就丢弃"。
+/// 2. **输出 API**：精确路径豁免入口，由端点校验只读密钥。
 ///
 /// 其余请求**不产生任何 HTTP 响应**：返回错误让 hyper 直接关闭连接，
 /// 从而不留下 404/400 之类可区分的存在性信号。
@@ -154,8 +140,6 @@ pub struct Gate<S> {
     limits: Limits,
     peer: SocketAddr,
     allow: Arc<Vec<String>>,
-    /// 分享令牌校验：给定路径首段之后的第二个路径段，返回是否有效。
-    share: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
 }
 
 impl<S> Gate<S> {
@@ -166,17 +150,11 @@ impl<S> Gate<S> {
             limits,
             peer,
             allow: Arc::new(Vec::new()),
-            share: None,
         }
     }
     /// 设置精确匹配的白名单路径。见 [`AGENT_PATHS`]。
     pub fn allow(mut self, paths: &[&str]) -> Self {
         self.allow = Arc::new(paths.iter().map(|p| (*p).to_owned()).collect());
-        self
-    }
-    /// 注入分享令牌校验。分享面与安全入口是两条独立的放行路径。
-    pub fn share(mut self, check: Arc<dyn Fn(&str) -> bool + Send + Sync>) -> Self {
-        self.share = Some(check);
         self
     }
 }
@@ -210,17 +188,11 @@ where
             return Box::pin(async move { future.await.map_err(|e| match e {}) });
         }
         let candidate = first_segment(&path).unwrap_or_default().to_owned();
-        // 分享面：首段是 share 时必须出示有效令牌，否则与错误入口一样直接丢弃。
-        let shared = candidate == crate::entrance::SHARE_PREFIX
-            && self
-                .share
-                .as_ref()
-                .is_some_and(|check| share_token_matches(&path, check));
         let expected = entrance
             .read()
             .map(|value| value.clone())
             .unwrap_or_default();
-        let accepted = shared || matches(&expected, &candidate);
+        let accepted = matches(&expected, &candidate);
         if !accepted {
             let limits = self.limits.clone();
             let ip = self.peer.ip();
@@ -268,12 +240,12 @@ mod tests {
         for bad in [
             "",
             "short",
-            "0123456789abcdefg",                     // 17 位
-            "0123456789abcde/",                      // 非法字符
-            "0123456789abcde ",                      // 空格
-            "0123456789abcde中",                     // 非 ASCII 字节长度不符
-            ".0123456789abcde",                      // 以点开头
-            "-0123456789abcde",                      // 以连字符开头
+            "0123456789abcdefg", // 17 位
+            "0123456789abcde/",  // 非法字符
+            "0123456789abcde ",  // 空格
+            "0123456789abcde中", // 非 ASCII 字节长度不符
+            ".0123456789abcde",  // 以点开头
+            "-0123456789abcde",  // 以连字符开头
         ] {
             assert!(validate(bad).is_err(), "应拒绝 {bad:?}");
         }
@@ -294,20 +266,6 @@ mod tests {
         ] {
             assert!(!matches(value, bad), "应拒绝 {bad:?}");
         }
-    }
-    #[test]
-    fn 分享路径按前缀与令牌段解析() {
-        assert_eq!(share_token("/share/abc/"), Some("abc"));
-        assert_eq!(share_token("/share/abc"), Some("abc"));
-        assert_eq!(share_token("/share/abc/data/nodes"), Some("abc"));
-        assert_eq!(share_token("/share/abc/api/v1/public/metrics"), Some("abc"));
-        // 缺少令牌段
-        assert_eq!(share_token("/share/"), None);
-        assert_eq!(share_token("/share"), None);
-        // 其他首段一概不认，安全入口不会被当成分享令牌
-        assert_eq!(share_token("/other/abc"), None);
-        assert_eq!(share_token("/abc/api/v1/nodes"), None);
-        assert_eq!(share_token("/"), None);
     }
 
     #[test]

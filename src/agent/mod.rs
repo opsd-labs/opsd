@@ -1,14 +1,13 @@
-mod docker;
 mod database;
 mod files;
 mod firewall;
 mod firewall_backends;
-mod host;
-mod storage;
+use opsd::host;
 mod metrics;
+mod network;
+mod plugins;
 mod probe;
 mod shell;
-mod stack;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
@@ -58,7 +57,11 @@ pub struct ContextState {
     pub dir: PathBuf,
     pub config: Config,
     pub outbound: Arc<RwLock<Option<mpsc::Sender<Frame>>>>,
+    pub paths: Arc<RwLock<std::collections::BTreeMap<opsd::network::PathKind, network::Link>>>,
+    pub probe_results: Arc<RwLock<Vec<PeerLatency>>>,
     pub network: Arc<Mutex<()>>,
+    pub desired_gate: Arc<Mutex<()>>,
+    pub network_changed: Arc<tokio::sync::Notify>,
 }
 pub async fn run() -> Result<()> {
     let args = Args::parse();
@@ -130,7 +133,11 @@ pub async fn run() -> Result<()> {
         dir: args.data_dir,
         config,
         outbound: Default::default(),
+        paths: Default::default(),
+        probe_results: Default::default(),
         network: Default::default(),
+        desired_gate: Default::default(),
+        network_changed: Default::default(),
     };
     if let Command::FirewallRollback { operation_id } = args.command {
         return firewall::rollback(&ctx, &operation_id).await;
@@ -146,6 +153,20 @@ pub async fn run() -> Result<()> {
         return renew_certificate(&ctx, true).await;
     }
     for mut t in ctx.db.tasks().await? {
+        if !t.status.terminal()
+            && (t.action.legacy_business()
+                || matches!(
+                    t.action,
+                    Action::PeerSync { .. } | Action::PeerProbeTargets { .. }
+                ))
+        {
+            t.status = TaskStatus::Blocked;
+            t.sequence += 1;
+            t.updated_at = now();
+            t.error = Some("旧业务任务停止自动重放，请核实实际状态".into());
+            ctx.db.save_task(&t).await?;
+            continue;
+        }
         if matches!(t.status, TaskStatus::Running | TaskStatus::Validating) {
             t.status = TaskStatus::Uncertain;
             t.sequence += 1;
@@ -190,23 +211,29 @@ pub async fn run() -> Result<()> {
                 && let Some(tx) = collector.outbound.read().await.as_ref()
             {
                 let _ = tx.try_send(Frame::Inventory { value });
+                let _ = tx.try_send(Frame::NetworkFacts {
+                    facts: network::facts().await,
+                });
             }
         }
     });
-    let mut backoff = 1;
-    loop {
-        let start = now();
-        match connection(ctx.clone(), worker_tx.clone()).await {
-            Ok(_) => {}
-            Err(e) => tracing::warn!(error=%e,"主控连接断开"),
-        };
-        *ctx.outbound.write().await = None;
-        if now() - start > 30 {
-            backoff = 1
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
-        backoff = (backoff * 2).min(30);
-    }
+    let reconciler = ctx.clone();
+    tokio::spawn(async move {
+        network::reconcile_loop(reconciler).await;
+    });
+    let probe_ctx = ctx.clone();
+    tokio::spawn(async move {
+        probe::probe_loop(probe_ctx.db, probe_ctx.probe_results).await;
+    });
+    tokio::join!(
+        network::dial_loop(
+            ctx.clone(),
+            worker_tx.clone(),
+            opsd::network::PathKind::Public
+        ),
+        network::dial_loop(ctx, worker_tx, opsd::network::PathKind::Overlay)
+    );
+    Ok(())
 }
 async fn renew_certificate(ctx: &ContextState, force: bool) -> Result<()> {
     let certificate = std::fs::read(ctx.dir.join("client.pem"))?;
@@ -250,13 +277,15 @@ async fn renew_certificate(ctx: &ContextState, force: bool) -> Result<()> {
         pki::certificate_expires(renewed.as_bytes())? > now() + 30 * 86400,
         "续期证书有效期不足"
     );
-    stack::atomic_replace(&ctx.dir.join("client.pem"), renewed.as_bytes())?;
+    atomic_replace(&ctx.dir.join("client.pem"), renewed.as_bytes())?;
     tracing::info!("节点证书已续期，后续连接使用新证书");
     Ok(())
 }
 async fn capabilities() -> NodeCapabilities {
     let container = container_mode();
     NodeCapabilities {
+        plugins: !container && cfg!(target_os = "linux"),
+        dual_path: true,
         os: std::env::consts::OS.into(),
         docker: std::path::Path::new("/var/run/docker.sock").exists(),
         compose: command("/usr/bin/docker", &["compose", "version"], 10)
@@ -273,7 +302,7 @@ async fn capabilities() -> NodeCapabilities {
             .collect(),
         metrics: cfg!(target_os = "linux"),
         hostinfo: cfg!(target_os = "linux"),
-        storage: !container && cfg!(target_os = "linux"),
+        storage: false,
         database: cfg!(target_os = "linux"),
         // 探测只用 ping 或 TCP 握手，不需要额外特权；`ping` 缺失时
         // 结果里会如实写出「本机没有 ping 命令」，而不是假装网络不通。
@@ -285,23 +314,47 @@ async fn capabilities() -> NodeCapabilities {
         },
     }
 }
-async fn connection(ctx: ContextState, worker: mpsc::Sender<String>) -> Result<()> {
+async fn connection(
+    ctx: ContextState,
+    worker: mpsc::Sender<String>,
+    path: opsd::network::PathKind,
+    generation: &str,
+    overlay: Option<String>,
+) -> Result<()> {
     let config = Arc::new(pki::client_config(&ctx.dir)?);
-    let (mut socket, _) = tokio_tungstenite::connect_async_tls_with_config(
-        &ctx.config.agent_url,
-        None,
-        false,
-        Some(tokio_tungstenite::Connector::Rustls(config)),
+    let url = reqwest::Url::parse(&ctx.config.agent_url)?;
+    let host = url.host_str().context("主控地址缺少主机名")?;
+    let port = url.port_or_known_default().unwrap_or(443);
+    let target = if path == opsd::network::PathKind::Overlay {
+        overlay.as_deref().context("尚未发现主控 ET 地址")?
+    } else {
+        host
+    };
+    let tcp = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        tokio::net::TcpStream::connect((target, port)),
     )
-    .await?;
+    .await??;
+    // 只改变拨号地址，保留 URL 的主机名进行 SNI 和证书校验。
+    let (mut socket, _) = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        tokio_tungstenite::client_async_tls_with_config(
+            &ctx.config.agent_url,
+            tcp,
+            None,
+            Some(tokio_tungstenite::Connector::Rustls(config)),
+        ),
+    )
+    .await??;
+    let mut last_inbound = now();
     // 能力位只声明一次，采样分支依据它决定是否上报，避免出现
     // 「声称没有采样能力、却持续发送采集失败」这种自相矛盾的状态。
     let capabilities = capabilities().await;
     let can_sample = capabilities.metrics;
-    let can_probe = capabilities.probe;
     socket
         .send(Message::Text(
             serde_json::to_string(&Frame::Hello {
+                path,
                 version: VERSION,
                 node_id: ctx.config.node_id.clone(),
                 capabilities,
@@ -309,9 +362,27 @@ async fn connection(ctx: ContextState, worker: mpsc::Sender<String>) -> Result<(
             .into(),
         ))
         .await?;
+    if path == opsd::network::PathKind::Public {
+        socket
+            .send(Message::Text(
+                serde_json::to_string(&Frame::NetworkFacts {
+                    facts: network::facts().await,
+                })?
+                .into(),
+            ))
+            .await?;
+    }
     let (tx, mut rx) = mpsc::channel(64);
     let (data_tx, mut data_rx) = mpsc::channel(128);
-    *ctx.outbound.write().await = Some(tx.clone());
+    ctx.paths.write().await.insert(
+        path,
+        network::Link {
+            generation: generation.into(),
+            tx: tx.clone(),
+            connected_at: now(),
+        },
+    );
+    network::preferred(&ctx).await;
     for task in ctx.db.tasks().await? {
         socket
             .send(Message::Text(
@@ -327,35 +398,31 @@ async fn connection(ctx: ContextState, worker: mpsc::Sender<String>) -> Result<(
     let mut sampler = metrics::Sampler::new();
     let mut sampling = tokio::time::interval(std::time::Duration::from_secs(15));
     sampling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    // 对端延迟探测独立成任务：一轮要连十几个对端，串在采样里会把采样节奏带偏。
-    // 采样只取"最近一轮已完成的结果"，因此不会被阻塞。
-    let probe_results: Arc<RwLock<Vec<PeerLatency>>> = Default::default();
-    let probe_task = {
-        let db = ctx.db.clone();
-        let results = probe_results.clone();
-        tokio::spawn(async move {
-            if can_probe {
-                probe::probe_loop(db, results).await;
-            }
-        })
-    };
     let result:Result<()>=async{loop{tokio::select!{
         biased;
-        _=interval.tick()=>{socket.send(Message::Text(serde_json::to_string(&Frame::Heartbeat)?.into())).await?;},
+        _=interval.tick()=>{
+            anyhow::ensure!(last_inbound>=now()-45,"控制线路心跳超时");
+            if path==opsd::network::PathKind::Overlay {
+                let current=ctx.db.get::<opsd::network::DesiredNetwork>("network","desired").await?.and_then(|d|d.hub_overlay_address);
+                anyhow::ensure!(current==overlay,"主控 ET 地址已变化，重新连接");
+            }
+            network::preferred(&ctx).await;
+            socket.send(Message::Text(serde_json::to_string(&Frame::Heartbeat)?.into())).await?;},
         _=sampling.tick()=>{
             // 没有采样能力时不发送，避免与 Hello 里的能力位自相矛盾。
-            if can_sample {
-                let peers=probe_results.read().await.clone();
+            if can_sample && network::active(&ctx,path,generation).await {
+                let peers=ctx.probe_results.read().await.clone();
                 let report=report_metrics(&mut sampler,peers);
                 socket.send(Message::Text(serde_json::to_string(&Frame::Metrics{report})?.into())).await?;
             }
         },
         Some(frame)=rx.recv()=>{socket.send(Message::Text(serde_json::to_string(&frame)?.into())).await?;},
         message=socket.next()=>{
-            let message=message.context("连接结束")??;
+            let message=message.context("连接结束")??;last_inbound=now();
             match message{Message::Ping(v)=>{socket.send(Message::Pong(v)).await?;continue},Message::Close(_)=>break,Message::Text(_)=>{},_=>continue}
             let Message::Text(text)=message else{continue};let frame:Frame=serde_json::from_str(&text)?;
             match frame{
+                Frame::NetworkDesired{desired}=>network::receive(&ctx,desired).await?,
                 Frame::Task{mut task}=>{
                     anyhow::ensure!(task.node_id==ctx.config.node_id,"拒绝其他节点的任务");
                     task.status=TaskStatus::Accepted;task.sequence=1;task.result=None;task.error=None;
@@ -372,8 +439,8 @@ async fn connection(ctx: ContextState, worker: mpsc::Sender<String>) -> Result<(
                         // 用内层 async 块承接错误，使 ? 落在 result 上而不是整个任务上
                         let result:Result<()>=async{
                             match (kind,target){
-                                (StreamKind::ContainerTerminal,StreamTarget::Container{id})=>
-                                    docker::stream(&sid,&id,true,command,input_rx,out.clone()).await,
+                                (StreamKind::ContainerTerminal,StreamTarget::Container{..})=>
+                                    anyhow::bail!("容器终端已迁入 Docker 插件"),
                                 (StreamKind::HostShell,StreamTarget::Host{shell,workdir})=>
                                     shell::Session::spawn(&jail,&shell,workdir.as_deref()).await?
                                         .pump(input_rx,out.clone(),sid.clone()).await,
@@ -401,8 +468,6 @@ async fn connection(ctx: ContextState, worker: mpsc::Sender<String>) -> Result<(
     for (_, (_, handle)) in streams {
         handle.abort();
     }
-    // 探测任务属于这一次连接：重连会重建，因此不能让它留到下一次连接里去
-    probe_task.abort();
     result
 }
 /// 文件操作的路径闸门。除固定禁止的前缀外，还要挡住 Agent 自己的数据目录，
@@ -548,7 +613,8 @@ fn report_metrics(sampler: &mut metrics::Sampler, peers: Vec<PeerLatency>) -> Me
         }
     }
 }
-pub async fn report(ctx: &ContextState, task: &mut TaskEnvelope) -> Result<()> {    task.sequence += 1;
+pub async fn report(ctx: &ContextState, task: &mut TaskEnvelope) -> Result<()> {
+    task.sequence += 1;
     ctx.db.save_task(task).await?;
     if let Some(tx) = ctx.outbound.read().await.as_ref() {
         let _ = tx.try_send(Frame::Report { task: task.clone() });
@@ -566,183 +632,107 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
     task.status = TaskStatus::Running;
     task.updated_at = now();
     report(ctx, &mut task).await?;
-    let result: Result<Value> = match &task.action {
-        Action::Inspect {} => inspect(ctx).await,
-        // 主机盘点只读，结果进 inventory 供控制台做存储预检
-        Action::HostInspect {} => {
-            anyhow::ensure!(
-                cfg!(target_os = "linux"),
-                "主机盘点只在 Linux 节点上可用"
-            );
-            let inventory = host::inspect().await;
-            Ok(serde_json::to_value(&inventory)?)
+    let result: Result<Value> = async {
+        match &task.action {
+            Action::Inspect {} => inspect(ctx).await,
+            // 主机盘点只读，结果进 inventory 供控制台做存储预检
+            Action::HostInspect {} => {
+                anyhow::ensure!(cfg!(target_os = "linux"), "主机盘点只在 Linux 节点上可用");
+                let inventory = host::inspect().await;
+                Ok(serde_json::to_value(&inventory)?)
+            }
+            Action::Plugin {
+                plugin,
+                version,
+                operation,
+                input,
+            } => plugins::execute(ctx, plugin, version, operation, input, &task.id).await,
+            action if action.legacy_business() => {
+                Err(anyhow::anyhow!("旧业务动作已停止，请通过对应插件操作"))
+            }
+            Action::FirewallPlan { operation } => firewall::plan(ctx, operation).await,
+            Action::FirewallApply { plan_id, witness } => {
+                anyhow::ensure!(!container_mode(), "Docker Agent 不支持防火墙写入");
+                let _lock = ctx.network.lock().await;
+                firewall::apply(ctx, plan_id, witness.as_deref()).await
+            }
+            Action::PeerSync { .. } => Err(anyhow::anyhow!(
+                "自动互信已改为网络期望状态，不执行旧地址任务"
+            )),
+            // 探测目标是配置而非变更：落盘即可，探测循环下一轮自己会读到。
+            Action::PeerProbeTargets { .. } => Err(anyhow::anyhow!("探测目录已改为网络期望状态")),
+            // 以下为结构化文件变更。它们走任务机制而不是流通道：天然带幂等键与事件，
+            // 并参与节点变更锁，不会与防火墙或存储任务同时改动同一台机器。
+            Action::FilePut {
+                path,
+                digest: expected,
+                size,
+            } => {
+                anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件写入");
+                let _lock = ctx.network.lock().await;
+                file_put(&file_jail(ctx), path, expected, *size).await
+            }
+            Action::FileRemove {
+                path,
+                recursive,
+                confirmed,
+            } => {
+                anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件删除");
+                let _lock = ctx.network.lock().await;
+                let jail = file_jail(ctx);
+                let removed = files::remove(&jail, path, *recursive, *confirmed)?;
+                // 目标被删除时，它的未完成上传也没有保留价值
+                let _ = files::discard_staged(&jail, path);
+                Ok(json!({ "removed": removed }))
+            }
+            Action::FileRename { from, to } => {
+                anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
+                let _lock = ctx.network.lock().await;
+                files::rename(&file_jail(ctx), from, to)?;
+                Ok(json!({ "from": from, "to": to }))
+            }
+            Action::FileMkdir { path } => {
+                anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
+                let _lock = ctx.network.lock().await;
+                files::mkdir(&file_jail(ctx), path)?;
+                Ok(json!({ "path": path }))
+            }
+            Action::FileChmod { path, mode } => {
+                anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
+                let _lock = ctx.network.lock().await;
+                files::chmod(&file_jail(ctx), path, *mode)?;
+                Ok(json!({ "path": path, "mode": mode }))
+            }
+            Action::FileChown { path, uid, gid } => {
+                anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
+                let _lock = ctx.network.lock().await;
+                files::chown(&file_jail(ctx), path, *uid, *gid)?;
+                Ok(json!({ "path": path, "uid": uid, "gid": gid }))
+            }
+            // 数据库只读巡检。语句固定在 agent::database 里，主控无法影响它们。
+            Action::DbInspect {} => {
+                anyhow::ensure!(
+                    cfg!(target_os = "linux"),
+                    "数据库只读巡检只在 Linux 节点上可用"
+                );
+                let report = database::inspect(&ctx.dir).await;
+                Ok(serde_json::to_value(&report)?)
+            }
+            _ => Err(anyhow::anyhow!("动作不受支持")),
         }
-        Action::DockerInspect { container } => docker::detail(container).await,
-        Action::StackCreate { project, content } => stack::create(ctx, project, content).await,
-        Action::Docker {
-            container,
-            operation,
-        } => {
-            let _lock = ctx.network.lock().await;
-            docker::action(container, operation).await
-        }
-        Action::PullImage { reference } => docker::pull(reference).await,
-        Action::StackImport {
-            project,
-            directory,
-            files,
-            env_files,
-        } => stack::import(ctx, project, directory, files, env_files).await,
-        Action::StackPlan { project, content } => stack::plan(ctx, project, content).await,
-        Action::StackApply { plan_id } => {
-            let _lock = ctx.network.lock().await;
-            stack::apply(ctx, plan_id).await
-        }
-        Action::StackControl { project, operation } => {
-            let _lock = ctx.network.lock().await;
-            stack::control(ctx, project, operation).await
-        }
-        Action::FirewallPlan { operation } => firewall::plan(ctx, operation).await,
-        Action::FirewallApply { plan_id, witness } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持防火墙写入");
-            let _lock = ctx.network.lock().await;
-            firewall::apply(ctx, plan_id, witness.as_deref()).await
-        }
-        Action::PeerSync { set } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持节点地址发布");
-            let _lock = ctx.network.lock().await;
-            firewall::peers(ctx, set).await
-        }
-        // 探测目标是配置而非变更：落盘即可，探测循环下一轮自己会读到。
-        Action::PeerProbeTargets { set } => {
-            probe::save(&ctx.db, set).await?;
-            Ok(json!({ "version": set.version, "targets": set.targets.len() }))
-        }
-        // 以下为结构化文件变更。它们走任务机制而不是流通道：天然带幂等键与事件，
-        // 并参与节点变更锁，不会与防火墙或存储任务同时改动同一台机器。
-        Action::FilePut {
-            path,
-            digest: expected,
-            size,
-        } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件写入");
-            let _lock = ctx.network.lock().await;
-            file_put(&file_jail(ctx), path, expected, *size).await
-        }
-        Action::FileRemove {
-            path,
-            recursive,
-            confirmed,
-        } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件删除");
-            let _lock = ctx.network.lock().await;
-            let jail = file_jail(ctx);
-            let removed = files::remove(&jail, path, *recursive, *confirmed)?;
-            // 目标被删除时，它的未完成上传也没有保留价值
-            let _ = files::discard_staged(&jail, path);
-            Ok(json!({ "removed": removed }))
-        }
-        Action::FileRename { from, to } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
-            let _lock = ctx.network.lock().await;
-            files::rename(&file_jail(ctx), from, to)?;
-            Ok(json!({ "from": from, "to": to }))
-        }
-        Action::FileMkdir { path } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
-            let _lock = ctx.network.lock().await;
-            files::mkdir(&file_jail(ctx), path)?;
-            Ok(json!({ "path": path }))
-        }
-        Action::FileChmod { path, mode } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
-            let _lock = ctx.network.lock().await;
-            files::chmod(&file_jail(ctx), path, *mode)?;
-            Ok(json!({ "path": path, "mode": mode }))
-        }
-        Action::FileChown { path, uid, gid } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持主机文件操作");
-            let _lock = ctx.network.lock().await;
-            files::chown(&file_jail(ctx), path, *uid, *gid)?;
-            Ok(json!({ "path": path, "uid": uid, "gid": gid }))
-        }
-        // 存储集群：磁盘准备会销毁数据，因此与其它节点变更共用同一把锁，
-        // 绝不会与文件、防火墙或容器任务同时改动同一台机器。
-        Action::StoragePrepare {
-            cluster,
-            plan_id,
-            devices,
-            filesystem,
-        } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持存储变更");
-            let _lock = ctx.network.lock().await;
-            anyhow::ensure!(
-                cfg!(target_os = "linux"),
-                "存储集群只在 Linux 节点上可用"
-            );
-            storage::prepare(cluster, plan_id, devices, filesystem).await
-        }
-        Action::StorageDeploy {
-            cluster,
-            plan_id,
-            image,
-            mounts,
-            peers,
-            access_key,
-            secret_key,
-        } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持存储变更");
-            let _lock = ctx.network.lock().await;
-            storage::deploy(
-                &ctx.dir,
-                cluster,
-                plan_id,
-                image,
-                mounts,
-                peers,
-                access_key,
-                secret_key,
-            )
-            .await
-        }
-        Action::StorageStatus { cluster } => storage::status(cluster).await,
-        // 数据库只读巡检。语句固定在 agent::database 里，主控无法影响它们。
-        Action::DbInspect {} => {
-            anyhow::ensure!(
-                cfg!(target_os = "linux"),
-                "数据库只读巡检只在 Linux 节点上可用"
-            );
-            let report = database::inspect(&ctx.dir).await;
-            Ok(serde_json::to_value(&report)?)
-        }
-        Action::StorageBucket {
-            cluster,
-            bucket,
-            remove,
-        } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持存储变更");
-            let _lock = ctx.network.lock().await;
-            storage::bucket(cluster, bucket, *remove).await
-        }
-        Action::StorageUser {
-            cluster,
-            user,
-            secret,
-            policy,
-            remove,
-        } => {
-            anyhow::ensure!(!container_mode(), "Docker Agent 不支持存储变更");
-            let _lock = ctx.network.lock().await;
-            storage::user(cluster, user, secret, policy, *remove).await
-        }
-    };
+    }
+    .await;
     match result {
         Ok(v) => {
             task.status = TaskStatus::Succeeded;
             task.result = Some(v)
         }
         Err(e) => {
-            task.status = TaskStatus::Failed;
+            task.status = if e.is::<opsd_plugin_sdk::Uncertain>() {
+                TaskStatus::Uncertain
+            } else {
+                TaskStatus::Failed
+            };
             task.error = Some(e.to_string())
         }
     }
@@ -756,17 +746,11 @@ async fn execute(ctx: &ContextState, id: &str) -> Result<()> {
     Ok(())
 }
 async fn inspect(ctx: &ContextState) -> Result<Value> {
-    let docker = match docker::inventory().await {
-        Ok(v) => json!({"state":"ok","data":v}),
-        Err(e) => json!({"state":"error","error":e.to_string()}),
-    };
     let firewall = match firewall::inspect(ctx).await {
         Ok(v) => json!({"state":"ok","data":v}),
         Err(e) => json!({"state":"error","error":e.to_string()}),
     };
-    Ok(
-        json!({"collected_at":now(),"docker":docker,"firewall":firewall,"stacks":ctx.db.list::<Value>("stacks").await?}),
-    )
+    Ok(json!({"collected_at":now(),"firewall":firewall}))
 }
 pub async fn command(executable: &str, args: &[&str], timeout: u64) -> Result<String> {
     command_env(executable, args, &[], timeout).await
@@ -834,4 +818,22 @@ pub async fn command_env(
         }
     );
     Ok(String::from_utf8(stdout)?)
+}
+
+pub fn atomic_replace(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension(format!("opsd-{}", id()));
+    pki::private_write(&tmp, bytes)?;
+    if path.exists() {
+        std::fs::set_permissions(&tmp, std::fs::metadata(path)?.permissions())?;
+    }
+    #[cfg(windows)]
+    {
+        std::fs::remove_file(path)?;
+    }
+    std::fs::rename(&tmp, path)?;
+    #[cfg(unix)]
+    {
+        std::fs::File::open(path.parent().context("缺少父目录")?)?.sync_all()?;
+    }
+    Ok(())
 }

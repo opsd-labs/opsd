@@ -1,0 +1,17 @@
+{
+  "api_version": 1,
+  "id": "et",
+  "version": "0.1.0",
+  "name": "EasyTier 网络",
+  "dependencies": [],
+  "node": false,
+  "permissions": [
+    "network.write"
+  ],
+  "config_keys": [
+    "url",
+    "username"
+  ],
+  "configuration_help": "普通配置：url 为现有 ET Web 同源地址，username 为登录账户。秘密：password。",
+  "page": "index.html"
+}

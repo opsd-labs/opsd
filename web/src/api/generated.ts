@@ -512,6 +512,145 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/export/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出只读输出密钥 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ExportKeyList"];
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        /** 创建只读输出密钥，原文只返回一次 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ExportKeyInput"];
+                };
+            };
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ExportKeyCreated"];
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/export/keys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 撤销只读输出密钥 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            revoked: boolean;
+                        };
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/metrics/overview": {
         parameters: {
             query?: never;
@@ -596,6 +735,93 @@ export interface paths {
             };
         };
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取控制线路、地址来源和白名单状态 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NetworkState"];
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        /** 指定手动接入的 Hub 宿主节点 */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        node_id: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NetworkDirectory"];
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
+            };
+        };
         post?: never;
         delete?: never;
         options?: never;
@@ -1234,6 +1460,795 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出已安装插件版本和当前平台 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            api_version: number;
+                            platform: string;
+                            plugins: components["schemas"]["PluginInstalled"][];
+                        };
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugins/{plugin}/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 卸载未启用且无活动任务的版本，保留管理数据和秘密 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    plugin: string;
+                    version: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data_retained: boolean;
+                            uninstalled: boolean;
+                        };
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugins/{plugin}/api/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                path: string;
+                plugin: string;
+            };
+            cookie?: never;
+        };
+        /** 转发已认证插件请求，具体契约由插件包 api.json 定义 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    path: string;
+                    plugin: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description 请求成功 */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            status: components["schemas"]["TaskStatus"];
+                            task_id: string;
+                        };
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                /** @description 结果不确定，需要核实实际状态 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
+            };
+        };
+        /** 转发已认证插件请求，具体契约由插件包 api.json 定义 */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    path: string;
+                    plugin: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description 请求成功 */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            status: components["schemas"]["TaskStatus"];
+                            task_id: string;
+                        };
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                /** @description 结果不确定，需要核实实际状态 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
+            };
+        };
+        /** 转发已认证插件请求，具体契约由插件包 api.json 定义 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    path: string;
+                    plugin: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description 请求成功 */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            status: components["schemas"]["TaskStatus"];
+                            task_id: string;
+                        };
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                /** @description 结果不确定，需要核实实际状态 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
+            };
+        };
+        /** 转发已认证插件请求，具体契约由插件包 api.json 定义 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    path: string;
+                    plugin: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description 请求成功 */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            status: components["schemas"]["TaskStatus"];
+                            task_id: string;
+                        };
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                /** @description 结果不确定，需要核实实际状态 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugins/{plugin}/configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin: string;
+            };
+            cookie?: never;
+        };
+        /** 读取普通配置及秘密名称 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    plugin: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            config: {
+                                [key: string]: unknown;
+                            };
+                            secret_names: string[];
+                        };
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        /** 更新普通配置和受保护秘密 */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    plugin: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        config: {
+                            [key: string]: unknown;
+                        };
+                        secrets?: {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            config: {
+                                [key: string]: unknown;
+                            };
+                            secret_names: string[];
+                        };
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugins/{plugin}/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 启用指定版本或禁用插件 */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    plugin: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        enabled: boolean;
+                        version: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PluginInstalled"];
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["UnprocessableEntity"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugins/{plugin}/stream/{path}": {
+        parameters: {
+            query: {
+                csrf: string;
+            };
+            header?: never;
+            path: {
+                path: string;
+                plugin: string;
+            };
+            cookie?: never;
+        };
+        /** 插件流升级，首条消息为插件定义的初始化 JSON */
+        get: {
+            parameters: {
+                query: {
+                    csrf: string;
+                };
+                header?: never;
+                path: {
+                    path: string;
+                    plugin: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已升级 WebSocket */
+                101: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugins/package": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 安装独立插件包，不覆盖已有版本 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/zip": string;
+                };
+            };
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PluginInstalled"];
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["OriginOrCsrfRejected"];
+                /** @description 插件包超过 128 MiB */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 只读 Prometheus 指标 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Prometheus 文本，仅公开字段和授权节点 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": string;
+                    };
+                };
+                /** @description 缺少或无效的只读 API Key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 版本化公开节点 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PublicNodes"];
+                    };
+                };
+                /** @description 缺少或无效的只读 API Key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 版本化公开概况 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 请求成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PublicSummary"];
+                    };
+                };
+                /** @description 缺少或无效的只读 API Key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/entrance": {
         parameters: {
             query?: never;
@@ -1314,772 +2329,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/share/keys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * API 密钥列表
-         * @description 按 created_at 降序返回全部密钥(含已撤销)。**列表只含摘要与元数据,绝不包含明文密钥**——明文只在创建响应中出现一次,之后无法取回。GET 不做 CSRF/Origin 校验。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 密钥记录数组。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiKeyList"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        put?: never;
-        /**
-         * 创建 API 密钥
-         * @description 生成明文密钥(opsd_ 前缀),控制库只存 sha256 摘要。**明文仅此一次返回,之后无法再取回**。
-         *     密钥授权走 DB 直查,不维护内存索引,无需刷新。不产生任务、无需幂等键。
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ApiKeyInput"];
-                };
-            };
-            responses: {
-                /** @description 明文密钥与密钥记录。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiKeyCreated"];
-                    };
-                };
-                /** @description label trim 后为空或超过 60 字符(「密钥名称长度不合法」),或数据库写入失败(正文为错误信息原文)。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                        "text/plain": string;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                413: components["responses"]["PayloadTooLarge"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/share/keys/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * 撤销 API 密钥
-         * @description 软删除:revoked 置 true,记录仍留在列表;授权每次读库过滤,撤销立即生效。不产生任务、无需幂等键。
-         */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description API Key 记录 id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 已撤销,ok 恒为 true。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Ok"];
-                    };
-                };
-                /**
-                 * @description id 在密钥桶中查不到(「API Key 不存在」,不存在返回 400 而非 404),
-                 *     或数据库读写失败(正文为错误信息原文)。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                413: components["responses"]["PayloadTooLarge"];
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/share/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * 读取分享设置
-         * @description GET 不做 CSRF/Origin 校验,只校验会话存在;只读进程内共享设置,不写库、不产生任务、无需幂等键。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 当前分享设置:enabled 为分享页整体开关,site 为站点公开信息。读锁失败时回落默认值(enabled=false 与默认站点),不报错。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareSettings"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        /**
-         * 更新分享设置
-         * @description 写 control.db 并同步内存,分享门禁立即生效;不产生任务、无需幂等键,写库失败同其他内部错误一样折算 400。
-         */
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ShareSettingsInput"];
-                };
-            };
-            responses: {
-                /** @description 回显写入后的设置。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareSettings"];
-                    };
-                };
-                /**
-                 * @description 站点名称超过 60 字符(「站点名称过长」)、站点描述超过 200 字符(「站点描述过长」)、页脚文字超过 200 字符(「页脚文字过长」),
-                 *     或数据库写入失败(正文为错误信息原文)。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                        "text/plain": string;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                413: components["responses"]["PayloadTooLarge"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/share/tokens": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * 分享令牌列表
-         * @description 按 created_at 降序返回全部令牌(含已撤销)。**列表只含摘要与元数据,绝不包含明文令牌**——明文只在创建响应中出现一次,之后无法取回。GET 不做 CSRF/Origin 校验。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 令牌记录数组。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareTokenList"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        put?: never;
-        /**
-         * 创建分享令牌
-         * @description 生成明文令牌,控制库只存 sha256 摘要。**明文仅此一次返回,之后无法再取回**。
-         *     落库后重建门禁内存索引,新令牌立即对 /share/{token}/ 生效。不产生任务、无需幂等键。
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ShareTokenInput"];
-                };
-            };
-            responses: {
-                /** @description 明文令牌与令牌记录。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareTokenCreated"];
-                    };
-                };
-                /**
-                 * @description label trim 后为空或超过 60 字符(「分享名称长度不合法」)、expires_hours 不在 1..=8760 内(「有效时长不合法」),
-                 *     或数据库写入/索引重建失败(正文为错误信息原文)。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                        "text/plain": string;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                413: components["responses"]["PayloadTooLarge"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/share/tokens/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * 撤销分享令牌
-         * @description 软删除:revoked 置 true,记录仍留在列表;重建门禁内存索引,撤销立即生效。不产生任务、无需幂等键。
-         */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 分享令牌记录 id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 已撤销,ok 恒为 true。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Ok"];
-                    };
-                };
-                /**
-                 * @description id 在令牌桶中查不到(「分享令牌不存在」,本项目怪异:不存在返回 400 而非 404),
-                 *     或数据库读写/索引重建失败(正文为错误信息原文)。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                413: components["responses"]["PayloadTooLarge"];
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/storage/buckets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 创建或删除存储桶
-         * @description 桶是集群级操作，在任一在线节点执行即可，不逐节点下发。remove=true 时删除桶而非创建。
-         *     成功返回 200 + task_id（不是 202），label 固定为「桶」。
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["BucketRequest"];
-                };
-            };
-            responses: {
-                /** @description 已下发的桶任务。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["StorageTaskAccepted"];
-                    };
-                };
-                /** @description 正文为对应中文消息：集群不存在 / 集群没有在线节点 / 节点通道不可用 / 任务入库失败（DB 错误信息）。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                        "text/plain": string;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/storage/clusters": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * 集群定义列表
-         * @description 已定义集群列表；每个集群的 secret_key 一律删除并替换为 has_secret_key 布尔（密钥不回传）。
-         *     同时返回固定的镜像仓库前缀、文件系统与最小节点数，界面据此生成选择项。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 集群列表与固定常量。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            clusters: components["schemas"]["ClusterListItem"][];
-                            /**
-                             * @description 固定文件系统，xfs。
-                             * @constant
-                             */
-                            filesystem: "xfs";
-                            /**
-                             * @description 允许的镜像仓库前缀，固定为 pgsty/silo。
-                             * @constant
-                             */
-                            image_prefix: "pgsty/silo";
-                            /**
-                             * @description 分布式部署允许的最小节点数。
-                             * @constant
-                             */
-                            min_nodes: 4;
-                        };
-                    };
-                };
-                /** @description 列集群失败，正文为对应 DB 错误信息。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        /**
-         * 保存集群定义
-         * @description 只写定义，不碰任何节点。created_at 由服务端填写：新建时设为当前时间，已存在则保留旧值。
-         *     校验失败返回 400 与中文校验消息。成功返回 200。
-         */
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ClusterSpec"];
-                };
-            };
-            responses: {
-                /** @description 保存后的集群定义，含服务端填写的 created_at；secret_key 原样回传（保存的是全量定义）。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            cluster: components["schemas"]["ClusterSpec"];
-                        };
-                    };
-                };
-                /**
-                 * @description validate_spec 任一校验失败（集群名称长度不合法 / 名称只能包含字母数字连字符下划线 /
-                 *     节点数不足 / 节点列表存在重复 / 镜像标签不合法 / 不接受 latest 标签 /
-                 *     标签应形如 RELEASE.<时间戳> 或具体版本号 / 必须给出集群对外服务地址 /
-                 *     访问凭据不合法：密钥至少 16 个字符），或保存失败时返回对应 DB 错误信息。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                        "text/plain": string;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/storage/plans": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 生成部署计划
-         * @description 计划精确列出将被清空的每一块设备及其计划时的容量，并带 fingerprint 指纹与 5 分钟有效期
-         *     （expires = now()+300）。本步只把「将要发生什么」固化下来，不写任何节点。
-         *     生成时逐一校验集群定义存在、节点存在 / 未撤销 / 在线 / 已盘点 / 有可用盘、各节点盘数一致。
-         *     成功返回 200 + plan。
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ClusterRefRequest"];
-                };
-            };
-            responses: {
-                /** @description 生成的部署计划。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            plan: components["schemas"]["Plan"];
-                        };
-                    };
-                };
-                /**
-                 * @description 正文为对应中文消息：集群定义不存在 / 节点不存在：<id> / 节点已撤销：<id> /
-                 *     节点离线，不能纳入计划：<id> / 节点尚未盘点，不能纳入计划：<id> /
-                 *     节点没有可用磁盘，不能纳入计划：<name> /
-                 *     各节点可用磁盘数量不一致（<数量列表>），请先补齐再部署 / 保存计划失败（DB 错误信息）。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                        "text/plain": string;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-                /** @description 盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/storage/plans/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 计划 id。 */
-                id: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 读取部署计划
-         * @description 返回计划全文与是否已过期（expired = plan.expires <= now()）。只读 storage_plans 桶。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 计划 id。 */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 计划全文与过期标志。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            /** @description 计划是否已过期（expires <= now()）。 */
-                            expired: boolean;
-                            plan: components["schemas"]["Plan"];
-                        };
-                    };
-                };
-                /** @description 按 id 查不到计划时返回「计划不存在」。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/storage/plans/apply": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 执行部署计划
-         * @description 逐节点串行执行：每节点按「磁盘准备 → 容器部署」两步各下发一个任务（各生成一个 task_id）。
-         *     任一节点任一步失败即记录到 plan.failed（写审计「已阻断后续节点」）并阻断后续节点，整单返回 400。
-         *     执行前按节点实时盘点重新核对：节点离线、盘点丢失、设备消失、容量变化、设备不再是无使用痕迹状态、
-         *     指纹不一致，任何一项不符即整单拒绝。破坏性计划（destructive=true）必须显式确认
-         *     acknowledge_destructive=true 才能执行。全部成功时写含「不可逆磁盘格式化」的审计。
-         *     返回 200（不是 202）与本次下发清单。
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["StoragePlanApplyRequest"];
-                };
-            };
-            responses: {
-                /** @description 本次执行的计划 id、每个节点每个已下发步骤的记录与已完整执行完成的节点列表。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["StoragePlanApplyResult"];
-                    };
-                };
-                /**
-                 * @description 执行前校验或执行中失败，正文为对应中文消息：计划不存在 / 集群定义已不存在，请重新生成计划 /
-                 *     计划已过期，请重新生成 / 该计划包含不可逆的磁盘格式化，必须显式确认后才能执行 /
-                 *     计划已有失败节点，不能继续执行 / 节点 <name> 已离线，计划作废 /
-                 *     节点 <name> 的盘点结果已丢失，计划作废 / 设备 <path> 在 <name> 上已不存在，计划作废 /
-                 *     设备 <path> 容量已变化（计划 <n> 字节，实际 <n> 字节），计划作废 /
-                 *     设备 <path> 已不再是无使用痕迹的状态，计划作废 / 计划的设备清单已被修改，请重新生成 /
-                 *     节点 <name> 执行失败，已阻断后续节点：<reason>。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                        "text/plain": string;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-                /** @description 盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/storage/readiness": {
         parameters: {
             query?: never;
@@ -2125,122 +2374,6 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/storage/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 触发集群状态采集
-         * @description 登记 StorageStatus 任务并下发给集群中首个在线节点（通道不可用即 400）。
-         *     成功返回 200 + task_id（不是 202），label 固定为「状态」。
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ClusterRefRequest"];
-                };
-            };
-            responses: {
-                /** @description 已下发的状态采集任务。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["StorageTaskAccepted"];
-                    };
-                };
-                /** @description 正文为对应中文消息：集群不存在 / 集群没有在线节点 / 节点通道不可用 / 任务入库失败（DB 错误信息）。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                        "text/plain": string;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/storage/users": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 创建或删除集群访问用户
-         * @description 用户是集群级操作，下发到任一在线节点执行，不逐节点下发。remove=true 时删除用户，
-         *     policy 缺省 readwrite。成功返回 200 + task_id（不是 202），label 固定为「用户」。
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["UserRequest"];
-                };
-            };
-            responses: {
-                /** @description 已下发的用户任务。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["StorageTaskAccepted"];
-                    };
-                };
-                /** @description 正文为对应中文消息：集群不存在 / 集群没有在线节点 / 节点通道不可用 / 任务入库失败（DB 错误信息）。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                        "text/plain": string;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                415: components["responses"]["UnsupportedMediaType"];
-                422: components["responses"]["UnprocessableEntity"];
-            };
-        };
         delete?: never;
         options?: never;
         head?: never;
@@ -2914,77 +3047,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/themes/share": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 安装分享页主题包（zip 原始字节）
-         * @description 请求体为主题包 zip 的原始字节，非 multipart，也不解析 Content-Type，直接读字节流；
-         *     包根目录必须含 theme.json 与 index.html。先解压到临时目录、校验通过后再就位，
-         *     同 short 覆盖旧记录与资源目录（无幂等键）。包体积上限 MAX_PACKAGE_BYTES（20 MiB），
-         *     解压后总量上限 MAX_EXTRACTED_BYTES（64 MiB，防解压炸弹）。
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            /** @description 主题包 zip 的原始字节。 */
-            requestBody: {
-                content: {
-                    "application/octet-stream": string;
-                };
-            };
-            responses: {
-                /** @description 已安装的主题 short 与内容摘要。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ThemeInstallShareResult"];
-                    };
-                };
-                /**
-                 * @description 请求体为空（「请求体为空」）、主题包不是有效的 zip（「主题包不是有效的 zip」）、根目录缺
-                 *     theme.json、theme.json 解析失败、清单校验失败、清单未声明支持分享页、根目录缺 index.html、
-                 *     包内越界路径、解压后总大小超 64 MiB 上限。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["OriginOrCsrfRejected"];
-                /** @description 请求体超过 MAX_PACKAGE_BYTES（20 MiB），由路由层 DefaultBodyLimit 在进入处理函数前拒绝；正文是 axum 默认纯文本，不是本模块的 JSON 错误体。 */
-                413: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "text/plain": "Failed to buffer the request body";
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/frontend/{short}/": {
         parameters: {
             query?: never;
@@ -3106,6 +3168,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/{plugin}/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                path: string;
+                plugin: string;
+            };
+            cookie?: never;
+        };
+        /** 读取插件独立页面资源 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    path: string;
+                    plugin: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 独立页面或资源 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                        "text/html": string;
+                    };
+                };
+                /** @description 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                        "text/plain": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/renew": {
         parameters: {
             query?: never;
@@ -3155,934 +3271,6 @@ export interface paths {
                 422: components["responses"]["UnprocessableEntity"];
             };
         };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 分享令牌明文。门禁按摘要常量时间校验，无效令牌与错误入口一样被直接丢弃连接、不产生任何 HTTP 响应。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 分享页首页
-         * @description 返回分享页 HTML（text/html; charset=utf-8）。启用了包级分享主题时返回主题入口 HTML 并带独立 CSP 头，
-         *     否则回落内置 share.html。只读，不写库、不广播、不产生任务；不设置缓存响应头。
-         *     带结尾斜杠的 /share/{token}/ 是分享面入口；不带斜杠的 /share/{token} 会先被 301 永久重定向到此处。
-         *     令牌无效时门禁直接丢弃连接、没有常规 HTTP 响应，因此不会出现 401 或 404 JSON。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 分享令牌明文。门禁按摘要常量时间校验，无效令牌与错误入口一样被直接丢弃连接、不产生任何 HTTP 响应。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 分享页 HTML 正文。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "text/html": string;
-                    };
-                };
-                /**
-                 * @description 纯文本「分享页尚未构建」（无 JSON error 包装）：读取 s.web/share.html 失败，即内置页未构建且未启用分享主题。
-                 *     令牌无效时门禁会直接丢弃连接、没有常规 HTTP 响应，不会到达本处理函数。
-                 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "text/plain": "分享页尚未构建";
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/api/v1/public/metrics": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 分享令牌明文（限定可见节点范围）。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 公开 Prometheus 指标（机器接口）
-         * @description 机器接口，双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
-         *     返回 Prometheus 文本格式平文（Content-Type: text/plain; version=0.0.4; charset=utf-8），
-         *     每条样本只带 node 与 display_name 两个标签，**不输出地址**；缺失的采样不输出样本行，
-         *     面板上表现为断档而不是被记成 0。只读，可能写回 API Key 的 lastUsed；不设置缓存响应头。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 分享令牌明文（限定可见节点范围）。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /**
-                 * @description Prometheus 文本格式平文（# HELP / # TYPE 与样本行），Content-Type 严格为 text/plain; version=0.0.4; charset=utf-8。
-                 *     指标为 opsd_node_online、opsd_node_cpu_usage_percent、opsd_node_memory_used_bytes、opsd_node_memory_total_bytes、
-                 *     opsd_node_disk_used_bytes、opsd_node_disk_total_bytes、opsd_node_load1、
-                 *     opsd_node_network_receive_bytes_per_second、opsd_node_network_transmit_bytes_per_second、opsd_node_uptime_seconds。
-                 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "text/plain": string;
-                    };
-                };
-                /** @description 分享页已关闭，正文 {"error":"分享页已关闭"}（JSON，不是 Prometheus 文本）。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。 */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/api/v1/public/nodes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 分享令牌明文（限定可见节点范围）。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 公开节点列表（机器接口）
-         * @description 机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
-         *     只返回可达交集内各节点详情；字段与页面接口同一套公开白名单（PublicNode），刻意不含内部地址、资源细节与凭据。
-         *     只读，可能写回 API Key 的 lastUsed。不设置缓存响应头。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 分享令牌明文（限定可见节点范围）。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 交集后可访问节点数组。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareNodes"];
-                    };
-                };
-                /** @description 分享页已关闭，正文 {"error":"分享页已关闭"}。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。 */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/api/v1/public/recent/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 节点编号，须同时落在令牌范围与 API Key 节点范围内。 */
-                id: string;
-                /** @description 分享令牌明文（限定可见节点范围）。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 单节点最近采样（机器接口）
-         * @description 机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
-         *     返回该节点最近一次成功采样折算的公开结构（字段同 PublicNode）：无采样或最近上报失败时，指标字段与
-         *     metrics_at 都为 null 而不是 0。刻意不含内部地址、资源细节与凭据。只读，可能写回 API Key 的 lastUsed；
-         *     不设置缓存响应头。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 节点编号，须同时落在令牌范围与 API Key 节点范围内。 */
-                    id: string;
-                    /** @description 分享令牌明文（限定可见节点范围）。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 单个节点的公开结构与最近采样时刻。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareRecent"];
-                    };
-                };
-                /**
-                 * @description 节点不在 API Key 与令牌的交集范围内，正文 {"error":"该节点不在访问范围内"}；
-                 *     或节点已撤销/被隐藏/不在令牌范围内，正文 {"error":"节点不可见"}。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。 */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/api/v1/public/records": {
-        parameters: {
-            query: {
-                /** @description 起始 Unix 秒。 */
-                from: number;
-                /** @description 节点编号，须同时落在令牌范围与 API Key 节点范围内。 */
-                node: string;
-                /** @description 步长（秒），默认 300，运行时 clamp 到 [60, 86400]。 */
-                step?: number;
-                /** @description 结束 Unix 秒，必须晚于 from。 */
-                to: number;
-            };
-            header?: never;
-            path: {
-                /** @description 分享令牌明文（限定可见节点范围）。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 公开指标历史降采样（机器接口）
-         * @description 机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
-         *     双重鉴权通过后复用页面接口的降采样逻辑，故 200 响应体与 /share/{token}/data/records 完全一致，
-         *     但拒绝文案不同：节点不在访问范围内时是 {"error":"该节点不在访问范围内"}。
-         *     点数上限 2000，缺失区间自然断开、不插值不补零；只读，可能写回 API Key 的 lastUsed；不设置缓存响应头。
-         */
-        get: {
-            parameters: {
-                query: {
-                    /** @description 起始 Unix 秒。 */
-                    from: number;
-                    /** @description 节点编号，须同时落在令牌范围与 API Key 节点范围内。 */
-                    node: string;
-                    /** @description 步长（秒），默认 300，运行时 clamp 到 [60, 86400]。 */
-                    step?: number;
-                    /** @description 结束 Unix 秒，必须晚于 from。 */
-                    to: number;
-                };
-                header?: never;
-                path: {
-                    /** @description 分享令牌明文（限定可见节点范围）。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 节点编号、选用层级、实际步长与降采样曲线点，与页面接口 /data/records 同形。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareRecords"];
-                    };
-                };
-                /**
-                 * @description 分享页已关闭，正文 {"error":"分享页已关闭"}；节点不在 API Key 与令牌的交集范围内，正文 {"error":"该节点不在访问范围内"}；
-                 *     或复用逻辑返回的 {"error":"该节点不在分享范围内"}；to<=from，正文 {"error":"结束时间必须晚于开始时间"}；
-                 *     或 (to-from)/step 超过 2000 点，正文 {"error":"区间与步长组合返回点数过多"}。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。 */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/api/v1/public/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 分享令牌明文（限定可见节点范围）。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 公开节点概况（机器接口）
-         * @description 机器接口（application/json），双授权：分享令牌放行 **加上** Authorization: Bearer <API Key>，
-         *     可见节点范围为令牌范围与 API Key 节点范围的交集。只读，仅可能写回 key.last_used（距上次更新超 60 秒时）。
-         *     API Key 经摘要校验；响应只含交集内的计数，不含节点地址、资源细节与凭据。不设置缓存响应头，不应被代理缓存。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 分享令牌明文（限定可见节点范围）。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 交集可见节点计数，量值不经缓存，实时读取。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareSummaryBase"];
-                    };
-                };
-                /** @description 分享页已关闭，正文 {"error":"分享页已关闭"}。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 缺少 Authorization: Bearer 头，正文 {"error":"缺少 API Key"}；或密钥摘要未匹配/已撤销，正文 {"error":"API Key 无效"}。 */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/assets/{path}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 构建产物 assets 目录内的相对路径，可含子目录；读取前做防目录穿越校验。 */
-                path: string;
-                /** @description 分享令牌明文。实际不会被处理函数使用（路径提取被忽略），门禁已预先校验。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 分享页构建产物静态资源
-         * @description 只读磁盘文件，返回 assets 目录下的静态文件二进制，Content-Type 依扩展名：
-         *     js→text/javascript、css→text/css、svg→image/svg+xml、json→application/json、woff2→font/woff2、其他→application/octet-stream。
-         *     不设置缓存响应头；响应体是构建产物原文，绝不包含令牌、凭据或服务端路径信息。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 构建产物 assets 目录内的相对路径，可含子目录；读取前做防目录穿越校验。 */
-                    path: string;
-                    /** @description 分享令牌明文。实际不会被处理函数使用（路径提取被忽略），门禁已预先校验。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 文件二进制，Content-Type 依扩展名而定（见操作描述）。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/octet-stream": string;
-                    };
-                };
-                /** @description 空正文（无 JSON、无文本）：path 包含 ".." 或以 / 开头（防目录穿越），或目标文件读取失败。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/data/nodes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 分享令牌明文。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 分享页可见节点列表
-         * @description 页面接口（application/json），仅凭分享令牌放行。只返回公开白名单字段（见 PublicNode），刻意不包含内部地址、资源细节与凭据；
-         *     节点为未撤销、未隐藏且在令牌范围内者，按权重降序、再按名称升序。只读，不设置缓存响应头。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 分享令牌明文。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 可见节点数组。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareNodes"];
-                    };
-                };
-                /** @description 分享页已关闭，正文 {"error":"分享页已关闭"}。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/data/records": {
-        parameters: {
-            query: {
-                /** @description 起始 Unix 秒。 */
-                from: number;
-                /** @description 节点编号，须在令牌可见范围内。 */
-                node: string;
-                /** @description 步长（秒），默认 300，运行时 clamp 到 [60, 86400]。 */
-                step?: number;
-                /** @description 结束 Unix 秒，必须晚于 from。 */
-                to: number;
-            };
-            header?: never;
-            path: {
-                /** @description 分享令牌明文。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 分享页指标历史降采样
-         * @description 页面接口（application/json），仅凭分享令牌放行。只读查指标历史，不写库、不广播；不设置缓存响应头。
-         *     点数上限 2000；缺失区间自然断开，不插值不补零。响应刻意不含节点地址、资源细节与凭据。
-         */
-        get: {
-            parameters: {
-                query: {
-                    /** @description 起始 Unix 秒。 */
-                    from: number;
-                    /** @description 节点编号，须在令牌可见范围内。 */
-                    node: string;
-                    /** @description 步长（秒），默认 300，运行时 clamp 到 [60, 86400]。 */
-                    step?: number;
-                    /** @description 结束 Unix 秒，必须晚于 from。 */
-                    to: number;
-                };
-                header?: never;
-                path: {
-                    /** @description 分享令牌明文。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 回显节点编号、选用层级、实际步长与降采样曲线点。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareRecords"];
-                    };
-                };
-                /**
-                 * @description 分享页已关闭，正文 {"error":"分享页已关闭"}；节点不在令牌范围，正文 {"error":"该节点不在分享范围内"}；
-                 *     to<=from，正文 {"error":"结束时间必须晚于开始时间"}；或 (to-from)/step 超过 2000 点，正文 {"error":"区间与步长组合返回点数过多"}。
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/data/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 分享令牌明文。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 分享页站点与节点概况
-         * @description 页面接口（application/json），仅凭分享令牌放行，不需要 Cookie 或 API Key。只读，不写库、不广播；
-         *     site 读取失败时回落到 SitePublic 默认值。不设置缓存响应头，不应被代理缓存。
-         *     响应刻意只含站点公开属性与计数，不含任何内部地址、资源细节与凭据。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 分享令牌明文。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 站点公开属性与令牌可见节点计数。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ShareSummary"];
-                    };
-                };
-                /** @description 分享页已关闭（ensure_enabled 校验），正文 {"error":"分享页已关闭"}；错误统一由 ApiError 包装为 JSON。 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/data/theme": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 分享令牌明文，门禁按 sha256 摘要查找。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 读取分享页公开主题数据
-         * @description 返回分享页当前启用主题的 describe 输出：short、名称、令牌、公开设置与配置项声明。
-         *     设置与配置项声明公开可读，不得放入密钥；未启用包级主题时同样返回内置主题形态
-         *     （short 为 default），不报错。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 分享令牌明文，门禁按 sha256 摘要查找。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 分享页主题公开数据。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ThemeDescribe"];
-                    };
-                };
-                /** @description 令牌无效、过期或被撤销（门禁直接丢弃，不产生业务响应）。空正文。 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/share/{token}/theme/{path}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 主题资源相对路径（资源目录内），可含子路径。 */
-                path: string;
-                /** @description 分享令牌明文，门禁按 sha256 摘要查找。 */
-                token: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * 读取分享页主题资源
-         * @description 返回主题资源原始字节。Content-Type 按扩展名推测：js/mjs→text/javascript、css→text/css、
-         *     html→text/html; charset=utf-8、svg→image/svg+xml、json→application/json、png→image/png、
-         *     jpg/jpeg→image/jpeg、webp→image/webp、woff2→font/woff2，其余→application/octet-stream；
-         *     并附独立 CSP 响应头（default-src 'none'，只放行 self，内联样式例外）。路径必须落在该主题
-         *     资源目录内；未启用包级分享主题时本端点恒 404。
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 主题资源相对路径（资源目录内），可含子路径。 */
-                    path: string;
-                    /** @description 分享令牌明文，门禁按 sha256 摘要查找。 */
-                    token: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 主题资源原始字节，带按扩展名推测的 Content-Type 与 CSP 响应头。 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/octet-stream": string;
-                    };
-                };
-                /**
-                 * @description 令牌无效/过期/被撤销、path 包含 .. 或以 / 开头、当前未启用包级分享主题（has_assets=false）、
-                 *     或资源读取失败。空正文。
-                 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4197,11 +3385,8 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /**
-         * @description 节点操作负载，按 type 判别，拒绝未知字段。这是控制台唯一的下发手段：
-         *     Agent 侧不存在接收任意命令的接口。
-         */
-        Action: components["schemas"]["ActionInspect"] | components["schemas"]["ActionHostInspect"] | components["schemas"]["ActionDbInspect"] | components["schemas"]["ActionDockerInspect"] | components["schemas"]["ActionDocker"] | components["schemas"]["ActionPullImage"] | components["schemas"]["ActionStackImport"] | components["schemas"]["ActionStackCreate"] | components["schemas"]["ActionStackPlan"] | components["schemas"]["ActionStackApply"] | components["schemas"]["ActionStackControl"] | components["schemas"]["ActionFirewallPlan"] | components["schemas"]["ActionFirewallApply"] | components["schemas"]["ActionPeerSync"] | components["schemas"]["ActionPeerProbeTargets"] | components["schemas"]["ActionFilePut"] | components["schemas"]["ActionFileRemove"] | components["schemas"]["ActionFileRename"] | components["schemas"]["ActionFileMkdir"] | components["schemas"]["ActionFileChmod"] | components["schemas"]["ActionFileChown"] | components["schemas"]["ActionStoragePrepare"] | components["schemas"]["ActionStorageDeploy"] | components["schemas"]["ActionStorageStatus"] | components["schemas"]["ActionStorageBucket"] | components["schemas"]["ActionStorageUser"];
+        /** @description 持久任务动作。保留旧业务类型用于历史读取；新业务只通过通用插件动作产生。 */
+        Action: components["schemas"]["ActionPlugin"] | components["schemas"]["ActionInspect"] | components["schemas"]["ActionHostInspect"] | components["schemas"]["ActionDbInspect"] | components["schemas"]["ActionDockerInspect"] | components["schemas"]["ActionDocker"] | components["schemas"]["ActionPullImage"] | components["schemas"]["ActionStackImport"] | components["schemas"]["ActionStackCreate"] | components["schemas"]["ActionStackPlan"] | components["schemas"]["ActionStackApply"] | components["schemas"]["ActionStackControl"] | components["schemas"]["ActionFirewallPlan"] | components["schemas"]["ActionFirewallApply"] | components["schemas"]["ActionPeerSync"] | components["schemas"]["ActionPeerProbeTargets"] | components["schemas"]["ActionFilePut"] | components["schemas"]["ActionFileRemove"] | components["schemas"]["ActionFileRename"] | components["schemas"]["ActionFileMkdir"] | components["schemas"]["ActionFileChmod"] | components["schemas"]["ActionFileChown"] | components["schemas"]["ActionStoragePrepare"] | components["schemas"]["ActionStorageDeploy"] | components["schemas"]["ActionStorageStatus"] | components["schemas"]["ActionStorageBucket"] | components["schemas"]["ActionStorageUser"];
         ActionDbInspect: {
             /** @constant */
             type: "db_inspect";
@@ -4294,6 +3479,14 @@ export interface components {
             set: components["schemas"]["PeerAddressSet"];
             /** @constant */
             type: "peer_sync";
+        };
+        ActionPlugin: {
+            input: unknown;
+            operation: string;
+            plugin: string;
+            /** @constant */
+            type: "plugin";
+            version: string;
         };
         ActionPullImage: {
             reference: string;
@@ -4396,44 +3589,12 @@ export interface components {
         };
         /** @enum {string} */
         AgentInstallMode: "host" | "docker";
-        ApiKey: {
-            /**
-             * Format: int64
-             * @description 创建时间,Unix 秒。
-             */
-            created_at: number;
-            /** @description sha256(明文密钥) 十六进制摘要;明文永不落库、不再出现在任何响应中。 */
-            digest: string;
-            /** @description 密钥记录 id。 */
-            id: string;
-            /** @description 密钥名称。 */
-            label: string;
-            /**
-             * Format: int64
-             * @description 最近一次机器接口使用时间,Unix 秒;从未使用或较上次写入相差不超过 60 秒时为 null 或旧值(只在相差超过 60 秒时才写回)。
-             */
-            last_used: number | null;
-            /** @description 限定可见节点 id 列表;null 表示全部(授权时与分享令牌范围取交集)。 */
-            nodes: string[] | null;
-            /** @description 是否已撤销。 */
-            revoked: boolean;
-        };
-        ApiKeyCreated: {
-            /** @description 明文密钥(opsd_ 前缀),仅此一次返回,之后无法再取回。 */
-            key: string;
-            /** @description 密钥记录本身,last_used 为 null。 */
-            record: components["schemas"]["ApiKey"];
-        };
-        /** @description 创建 API 密钥的请求体。拒绝未知字段（serde deny_unknown_fields），与 additionalProperties: false 一致。 */
-        ApiKeyInput: {
-            /** @description 密钥名称,trim 后非空且不超过 60 字符,否则 400。 */
-            label: string;
-            /** @description 限定可见节点 id 列表;省略或 null 表示全部。 */
-            nodes?: string[] | null;
-        };
-        ApiKeyList: {
-            /** @description 按 created_at 降序;只含摘要与元数据,绝不包含明文密钥(明文仅创建响应一次)。 */
-            keys: components["schemas"]["ApiKey"][];
+        AppliedNetwork: {
+            applied_revision: number;
+            at: number;
+            backend: string | null;
+            desired_revision: number;
+            error: string | null;
         };
         AuditRecord: {
             actor: string;
@@ -4577,6 +3738,15 @@ export interface components {
             nodes: string[];
             /** @description 访问键密钥，非空且至少 16 字符。 */
             secret_key: string;
+        };
+        ConnectionPath: {
+            connected: boolean;
+            connected_at: number | null;
+            error: string | null;
+            last_seen: number | null;
+            /** @enum {string} */
+            path: "public" | "overlay";
+            rtt_ms: number | null;
         };
         /** @description SSE 帧的 data 载荷，按 type 判别。 */
         ConsoleEvent: {
@@ -4764,6 +3934,26 @@ export interface components {
             /** @description 中文错误消息。不含凭据、环境变量、SQL 正文与文件内容。 */
             error: string;
         };
+        ExportKey: {
+            created_at: number;
+            id: string;
+            label: string;
+            nodes: string[] | null;
+            revoked: boolean;
+        };
+        ExportKeyCreated: {
+            id: string;
+            key: string;
+            label: string;
+            nodes: string[] | null;
+        };
+        ExportKeyInput: {
+            label: string;
+            nodes?: string[] | null;
+        };
+        ExportKeyList: {
+            keys: components["schemas"]["ExportKey"][];
+        };
         /**
          * @description 结构化文件操作，按 type 判别，拒绝未知字段。
          *     各变体的字段都是必填（只有 remove 的 recursive / confirmed 有默认值），与 Action 的文件类变体同形；
@@ -4874,6 +4064,11 @@ export interface components {
         HostInspectRequest: {
             /** @description 幂等键，用于去重同一个盘点动作；同节点同键不同参数返回 400。 */
             idempotency_key: string;
+        };
+        InterfaceAddress: {
+            address: string;
+            interface: string;
+            prefix: number;
         };
         /** @description 单个网络接口的速率与累计错误。 */
         InterfaceRate: {
@@ -5040,6 +4235,30 @@ export interface components {
              */
             tier: "raw" | "m5" | "h1";
         };
+        NetworkDirectory: {
+            controller_node_id: string | null;
+            overlays: components["schemas"]["OverlayMember"][];
+            revision: number;
+        };
+        NetworkFacts: {
+            collected_at: number;
+            error: string | null;
+            hostname: string;
+            interfaces: components["schemas"]["InterfaceAddress"][];
+        };
+        NetworkState: {
+            directory: components["schemas"]["NetworkDirectory"];
+            nodes: {
+                addresses: {
+                    [key: string]: unknown;
+                };
+                applied: components["schemas"]["AppliedNetwork"] | null;
+                connections: components["schemas"]["NodeConnections"];
+                desired_revision: number | null;
+                facts: components["schemas"]["NetworkFacts"] | null;
+                node_id: string;
+            }[];
+        };
         Node: {
             /**
              * Format: int64
@@ -5081,6 +4300,8 @@ export interface components {
             /** @description 数据库只读巡检能力，缺省 false。 */
             database?: boolean;
             docker: boolean;
+            /** @description 双控制线路与网络期望状态能力，旧 Agent 缺省 false。 */
+            dual_path?: boolean;
             /** @description Agent 实际运行方式，旧 Agent 缺省为 host。 */
             execution_mode?: components["schemas"]["AgentInstallMode"];
             /** @description 该节点可用的防火墙后端列表。 */
@@ -5090,20 +4311,36 @@ export interface components {
             /** @description 指标采样能力，缺省 false。 */
             metrics?: boolean;
             os: string;
+            /** @description 宿主机插件节点动作能力，旧 Agent 缺省 false。 */
+            plugins?: boolean;
             /** @description 对端延迟探测能力，缺省 false。 */
             probe?: boolean;
             /** @description 存储集群能力，缺省 false。 */
             storage?: boolean;
             systemd: boolean;
         };
+        NodeConnections: {
+            active_path: ("public" | "overlay") | null;
+            paths: components["schemas"]["ConnectionPath"][];
+        };
         NodeEntry: {
             /** @description 当前是否在线。运行时判定，不属于 Node 结构体。 */
             connected: boolean;
+            connections: components["schemas"]["NodeConnections"];
             node: components["schemas"]["Node"];
         };
         Ok: {
             /** @constant */
             ok: true;
+        };
+        OverlayMember: {
+            address: string;
+            instance_id: string;
+            interface: string;
+            machine_id: string;
+            node_id: string;
+            prefix: number;
+            provider: string;
         };
         Overview: {
             /** @description 跨节点一致性检查结论(集群 UUID 不一致、节点 UUID 重复、成员数不一致、多数派不足、无人按时备份)。 */
@@ -5139,6 +4376,11 @@ export interface components {
             /** @enum {string} */
             method: "icmp" | "tcp";
             node_id: string;
+            /**
+             * @default public
+             * @enum {string}
+             */
+            path: "public" | "overlay";
             /**
              * Format: int64
              * @description 测量时刻，可早于采样时刻。
@@ -5188,6 +4430,25 @@ export interface components {
             /** @description 节点编号。 */
             node_id: string;
         };
+        PluginInstalled: {
+            enabled: boolean;
+            installed_at: number;
+            manifest: components["schemas"]["PluginManifest"];
+        };
+        PluginManifest: {
+            /** @constant */
+            api_version: 1;
+            config_keys: string[];
+            configuration_help: string;
+            dependencies: string[];
+            id: string;
+            name: string;
+            node: boolean;
+            node_secrets: string[];
+            page: string | null;
+            permissions: string[];
+            version: string;
+        };
         Point: {
             /**
              * Format: int64
@@ -5226,6 +4487,11 @@ export interface components {
             /** @description 被探测地址，优先使用覆盖网地址。 */
             address: string;
             node_id: string;
+            /**
+             * @default public
+             * @enum {string}
+             */
+            path: "public" | "overlay";
             /** @description 给了端口走 TCP 握手计时；为空时走 ICMP。 */
             port?: number | null;
         };
@@ -5401,14 +4667,27 @@ export interface components {
              */
             weight: number;
         };
+        PublicNodes: {
+            generated_at: number;
+            nodes: components["schemas"]["PublicNode"][];
+            /** @constant */
+            schema_version: 1;
+        };
+        PublicSummary: {
+            generated_at: number;
+            node_count: number;
+            online_count: number;
+            /** @constant */
+            schema_version: 1;
+        };
         Registration: {
             /** @description Agent 安装方式，缺省为宿主机 systemd。 */
             install_mode?: components["schemas"]["AgentInstallMode"];
             /** @description 节点名称，非空且不超过 100 字符。 */
             name: string;
-            /** @description 覆盖网地址，须为合法 IP。 */
-            overlay_address?: string | null;
-            /** @description 可路由的公网地址，缺省为空数组。 */
+            /** @description 新注册与更新不接受手填 ET 地址。 */
+            overlay_address?: null;
+            /** @description 仅为历史记录兼容保留。新注册与更新必须省略或为空；地址自动发现。 */
             public_addresses?: string[];
             /** @description SSH 端口，缺省 22。 */
             ssh_port?: number;
@@ -5451,121 +4730,6 @@ export interface components {
              * @description 会话过期时间（Unix 秒）。
              */
             expires: number;
-        };
-        ShareNodes: {
-            /** @description 可见节点列表，按权重降序、再按名称升序；只含公开白名单字段。 */
-            nodes: components["schemas"]["PublicNode"][];
-        };
-        ShareRecent: {
-            /** @description 该节点最近一次采样折算的公开结构；无采样的指标字段为 null 而不是 0。 */
-            node: components["schemas"]["PublicNode"];
-        };
-        ShareRecords: {
-            /** @description 回显请求的节点编号。 */
-            node: string;
-            /** @description 降采样后的曲线点，点数上限 2000；缺失区间自然断开，不插值不补零。 */
-            points: components["schemas"]["Point"][];
-            /**
-             * Format: int64
-             * @description 实际使用的步长（clamp 到 [60, 86400] 之后）。
-             */
-            step: number;
-            /**
-             * @description 选用的层级：step<300 为 raw、step<3600 为 m5、其余为 h1。
-             * @enum {string}
-             */
-            tier: "raw" | "m5" | "h1";
-        };
-        ShareSettings: {
-            /** @description 分享页整体开关。 */
-            enabled: boolean;
-            site: components["schemas"]["SitePublic"];
-        };
-        /** @description 更新分享设置的请求体。拒绝未知字段（serde deny_unknown_fields），与 additionalProperties: false 一致。 */
-        ShareSettingsInput: {
-            /** @description 分享页整体开关。 */
-            enabled: boolean;
-            /** @description 站点公开信息;其下 name/description/footer 三者均必填。 */
-            site: components["schemas"]["SitePublic"];
-        };
-        ShareSummary: {
-            /**
-             * Format: int64
-             * @description 响应生成时的 Unix 秒时间戳。
-             */
-            generated_at: number;
-            /**
-             * Format: int64
-             * @description 令牌可见（未撤销、未隐藏且在令牌范围内）的节点数。
-             */
-            node_count: number;
-            /**
-             * Format: int64
-             * @description 其中在线的节点数（存在活跃通道连接）。
-             */
-            online_count: number;
-            site: components["schemas"]["SitePublic"];
-        };
-        /** @description 机器接口的汇总，刻意不下发站点信息（site），只给交集内的计数与生成时刻。 */
-        ShareSummaryBase: {
-            /**
-             * Format: int64
-             * @description 响应生成时的 Unix 秒时间戳。
-             */
-            generated_at: number;
-            /**
-             * Format: int64
-             * @description 令牌范围与 API Key 节点范围交集后的可见节点数。
-             */
-            node_count: number;
-            /**
-             * Format: int64
-             * @description 其中在线的节点数（存在活跃通道连接）。
-             */
-            online_count: number;
-        };
-        ShareToken: {
-            /**
-             * Format: int64
-             * @description 创建时间,Unix 秒。
-             */
-            created_at: number;
-            /** @description sha256(明文令牌) 十六进制摘要,门禁常量时间查找用;明文永不落库、不再出现在任何响应中。 */
-            digest: string;
-            /**
-             * Format: int64
-             * @description 到期时间,Unix 秒;键恒存在,null 表示长期有效。
-             */
-            expires_at: number | null;
-            /** @description 令牌记录 id。 */
-            id: string;
-            /** @description 分享名称。 */
-            label: string;
-            /** @description 限定可见节点 id 列表;null 表示全部未隐藏节点。 */
-            nodes: string[] | null;
-            /** @description 是否已撤销;撤销后门禁立即失效,记录仍留在列表。 */
-            revoked: boolean;
-        };
-        ShareTokenCreated: {
-            record: components["schemas"]["ShareToken"];
-            /** @description 明文令牌,仅此一次返回,之后无法再取回。 */
-            token: string;
-        };
-        /** @description 创建分享令牌的请求体。拒绝未知字段（serde deny_unknown_fields），与 additionalProperties: false 一致。 */
-        ShareTokenInput: {
-            /**
-             * Format: int64
-             * @description 有效小时数,范围 1..=8760(24*365);省略或 null 表示长期有效。
-             */
-            expires_hours?: number | null;
-            /** @description 分享名称,trim 后非空且不超过 60 字符,否则 400。 */
-            label: string;
-            /** @description 限定可见节点 id 列表;省略或 null 表示全部未隐藏节点。 */
-            nodes?: string[] | null;
-        };
-        ShareTokenList: {
-            /** @description 按 created_at 降序;只含摘要与元数据,绝不包含明文令牌(明文仅创建响应一次)。 */
-            tokens: components["schemas"]["ShareToken"][];
         };
         SitePublic: {
             /** @description 站点描述,缺省 "节点状态";写入时超过 200 字符被拒。 */
@@ -5667,6 +4831,10 @@ export interface components {
             key: string;
             /** @description 目标节点编号。 */
             node_id: string;
+            /** @description 插件任务在受理时固定的自身及依赖版本；历史任务缺省为空。 */
+            plugin_versions?: {
+                [key: string]: string;
+            };
             /** @description 任务结果，任意 JSON 对象，可为 null（形状由具体操作决定）。 */
             result?: {
                 [key: string]: unknown;
@@ -5710,7 +4878,7 @@ export interface components {
              * @description 目标界面，大小写敏感。
              * @enum {string}
              */
-            surface: "console" | "console_frontend" | "share";
+            surface: "console" | "console_frontend";
         };
         ThemeActivateResult: {
             /** @description 实际生效的设置（含默认值补齐）；回落到内置主题时响应不含此键。 */
@@ -5725,8 +4893,6 @@ export interface components {
             console: components["schemas"]["ThemeDescribe"];
             /** @description 当前可用的完整控制台前端，与 console 样式覆盖独立。 */
             console_frontend: components["schemas"]["ThemeConsoleFrontendDescribe"];
-            /** @description 分享页界面当前启用主题（describe 输出）。 */
-            share: components["schemas"]["ThemeDescribe"];
         };
         /** @description 托管配置声明；首版只接受 managed，raw 不做。 */
         ThemeConfiguration: {
@@ -5740,14 +4906,14 @@ export interface components {
         };
         ThemeConsoleFrontend: {
             /**
-             * @description 完整控制台前端契约版本，当前只支持 1。
+             * @description 完整控制台前端契约版本，当前支持 2；旧版本自动回落内置前端。
              * @constant
              */
-            api_version: 1;
+            api_version: 2;
         };
         ThemeConsoleFrontendDescribe: {
             /** @constant */
-            api_version: 1;
+            api_version: 2;
             name: components["schemas"]["ThemeLocalized"];
             short: string;
             version: string | null;

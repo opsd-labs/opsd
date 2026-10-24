@@ -1,4 +1,5 @@
 pub mod entrance;
+pub mod network;
 pub mod pki;
 pub mod protocol;
 pub mod store;
@@ -12,4 +13,17 @@ pub fn init_logging() {
                 .unwrap_or_else(|_| "opsd=info".into()),
         )
         .init();
+}
+
+pub mod host;
+
+pub async fn command(executable: &str, args: &[&str], timeout: u64) -> anyhow::Result<String> {
+    opsd_plugin_sdk::command(
+        executable,
+        &opsd_plugin_sdk::strings(args),
+        &[],
+        None,
+        timeout,
+    )
+    .await
 }

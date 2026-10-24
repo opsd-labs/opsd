@@ -1,0 +1,439 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Docker / Portainer 业务接口",
+    "version": "0.1.0",
+    "description": "挂在 /{安全入口}/api/v1/plugins/docker/api 下。Cookie、Origin 与 CSRF 由核心校验；秘密通过受保护存储引用。"
+  },
+  "paths": {
+    "/environments": {
+      "get": {
+        "summary": "读取或操作插件会话/environments",
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/console": {
+      "get": {
+        "summary": "读取或操作插件会话/console",
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/inventory": {
+      "post": {
+        "summary": "读取或操作插件会话/inventory",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "node_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "node_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/logs": {
+      "post": {
+        "summary": "读取或操作插件会话/logs",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "node_id": {
+                    "type": "string"
+                  },
+                  "container": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "node_id",
+                  "container"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/detail": {
+      "post": {
+        "summary": "读取或操作插件会话/detail",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "node_id": {
+                    "type": "string"
+                  },
+                  "resource": {
+                    "type": "string",
+                    "enum": [
+                      "container",
+                      "stack"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "node_id",
+                  "resource",
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/install": {
+      "post": {
+        "summary": "提交持久任务/install",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "nodes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "allow_engine_install": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "idempotency_key",
+                  "nodes"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理，实际结果通过核心任务接口读取",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/mutate": {
+      "post": {
+        "summary": "提交持久任务/mutate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "idempotency_key",
+                  "node_id",
+                  "resource",
+                  "operation"
+                ],
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "node_id": {
+                    "type": "string"
+                  },
+                  "resource": {
+                    "type": "string",
+                    "enum": [
+                      "container",
+                      "stack",
+                      "image",
+                      "network",
+                      "volume"
+                    ]
+                  },
+                  "operation": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "spec": {
+                    "type": "object"
+                  },
+                  "confirmed": {
+                    "type": "boolean"
+                  },
+                  "stack_id": {
+                    "type": "integer"
+                  },
+                  "reference": {
+                    "type": "string"
+                  },
+                  "env": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理，实际结果通过核心任务接口读取",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    },
+    "/terminal/resize": {
+      "post": {
+        "summary": "读取或操作插件会话/terminal/resize",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "node_id": {
+                    "type": "string"
+                  },
+                  "exec_id": {
+                    "type": "string"
+                  },
+                  "rows": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500
+                  },
+                  "cols": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500
+                  }
+                },
+                "required": [
+                  "node_id",
+                  "exec_id",
+                  "rows",
+                  "cols"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "实际请求结果",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "参数无效或明确失败"
+          },
+          "409": {
+            "description": "执行结果不确定，须核实后恢复"
+          }
+        }
+      }
+    }
+  },
+  "x-streams": {
+    "terminal": {
+      "path": "/{安全入口}/api/v1/plugins/docker/stream/terminal",
+      "init": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "container": {
+            "type": "string"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "node_id",
+          "container",
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "messages": "首条 ready 消息给出 exec_id；其余为终端字节，断线不自动重连或重开命令。"
+    }
+  }
+}

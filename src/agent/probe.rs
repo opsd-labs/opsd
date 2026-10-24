@@ -139,6 +139,7 @@ pub async fn probe_one(target: &ProbeTarget) -> PeerLatency {
         icmp(target).await
     };
     PeerLatency {
+        path: target.path,
         node_id: target.node_id.clone(),
         address: target.address.clone(),
         method: method.into(),
@@ -162,7 +163,7 @@ pub async fn probe_all(set: &ProbeTargetSet) -> Vec<PeerLatency> {
         .collect()
         .await;
     // 顺序固定下来，避免每次上报的数组顺序抖动导致无意义的差异
-    results.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    results.sort_by(|a, b| (&a.node_id, a.path, &a.address).cmp(&(&b.node_id, b.path, &b.address)));
     results
 }
 
@@ -210,6 +211,7 @@ mod tests {
 
     fn target(node_id: &str, address: &str, port: Option<u16>) -> ProbeTarget {
         ProbeTarget {
+            path: Default::default(),
             node_id: node_id.into(),
             address: address.into(),
             port,
@@ -302,7 +304,10 @@ rtt min/avg/max/mdev = 0.420/0.420/0.420/0.000 ms\n";
         };
         let results = probe_all(&set).await;
         assert_eq!(
-            results.iter().map(|r| r.node_id.as_str()).collect::<Vec<_>>(),
+            results
+                .iter()
+                .map(|r| r.node_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["C001", "C041", "C052"],
             "顺序必须稳定，否则每次上报的数组都在无意义地抖动"
         );
@@ -330,9 +335,10 @@ rtt min/avg/max/mdev = 0.420/0.420/0.420/0.000 ms\n";
         assert_eq!(back.targets.len(), 2);
         assert_eq!(back.targets[1].port, Some(65522));
         // 端口可省略：旧主控或手写配置里没有这个字段也必须能解析
-        let minimal: ProbeTargetSet =
-            serde_json::from_str(r#"{"version":1,"targets":[{"node_id":"A","address":"1.2.3.4"}]}"#)
-                .unwrap();
+        let minimal: ProbeTargetSet = serde_json::from_str(
+            r#"{"version":1,"targets":[{"node_id":"A","address":"1.2.3.4"}]}"#,
+        )
+        .unwrap();
         assert_eq!(minimal.targets[0].port, None);
     }
 

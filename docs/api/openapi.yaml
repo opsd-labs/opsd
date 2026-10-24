@@ -4,59 +4,26 @@ info:
   version: 1.0.0
   summary: 主控控制台的浏览器接口契约
   description: |
-    本文档是 opsd 主控 HTTP 接口的**契约源文件**。`web/src/api/generated.ts` 由它生成，
-    漂移检查会阻止生成物与它不一致；因此接口变更必须先改这里。
-
-    ## 路径与安全入口
-
-    控制台整体挂在 `/{安全入口}/` 之下，安全入口是路径第一段（16 位随机字符，可在设置页轮换）。
-    因此下列 `/api/v1/...` 路径的**真实地址都带该前缀**，本文件通过 server 变量的形式表达，
-    不在每条路径里重复。首段不匹配的请求由门禁直接断连，不产生 HTTP 响应。
-
-    入口之外只有两个面：一次性注册（`/api/v1/enroll`，经白名单精确放行）与分享页（`/share/{token}/...`，
-    凭各自令牌放行）。二者在对应操作上用 `servers` 覆盖。
-
-    ## 认证
-
-    会话 Cookie `opsd_session`（HttpOnly、Secure、SameSite=Strict、Path=/{安全入口}/、8 小时）配合
-    CSRF 头 `x-csrf-token`。**非 GET/HEAD 请求**还必须满足 `Origin` 精确等于 `OPSD_ORIGIN`。
-
-    - 未登录：`401` + `{"error":"请先登录"}`。
-    - CSRF 或 Origin 失败：`403`，正文是**纯文本**，不是 JSON。
-    - Cookie 的 Path 被限定在安全入口之下，浏览器不会把它发给分享面。
-
-    ## 错误约定
-
-    业务错误统一为 `{"error":"<中文消息>"}`；具体状态码与文案见各操作。注意三类例外：
-    门禁的 `403` 是纯文本；控制台面的 `413`（请求体超过 1MB）由 `DefaultBodyLimit` 直接产生；
-    **请求体的框架级拒绝**——JSON 语法错误、字段缺失或类型不符、未知字段、Content-Type 不对——在进入处理函数之前
-    就由 axum 的 `Json` 提取器产生，正文是**纯文本**，不是 `{"error"}`。
-    状态码：JSON 语法错误 → 400；可解析但无法反序列化（含 `deny_unknown_fields` 拒绝的未知字段）→ 422；
-    Content-Type 不是 application/json → 415。各写操作列出的 `400` 只覆盖处理函数内部的校验失败。
-
-    错误响应一律不含凭据、环境变量、SQL 正文与文件内容。
-
-    ## 变更与幂等
-
-    产生变更的操作都带 `task_id`，但状态码分两档：**只有节点操作
-    `POST /api/v1/nodes/{id}/actions` 返回 `202`**；文件（`/nodes/{id}/files`）、主机盘点、
-    数据库巡检、存储集群等其余变更接口都是 `200`。以各操作自身的响应表为准，不要按这一句推断。
-    提交时提供 `idempotency_key`：同节点 + 同键 + 同参数摘要 → 返回已存在的任务（不重复执行）；
-    同节点 + 同键 + **不同**参数摘要 → `400`「幂等键已用于不同参数」。这是 `400` 而不是 `409`。
-
-    ## 资源标识
-
-    资源一律用 `node_id + resource_id` 定位，不存在跨节点按名称操作。`node_id` 是路径参数 `{id}`。
-
-    ## 不在本文档范围内
-
-    以下端点存在，但不是浏览器/机器 HTTP 契约，刻意不收录（不要据此认为它们不存在）：
-    `GET /agent` 是 Agent 的常驻 WebSocket 通道，其内部协议与本文档分离，只要求协议版本、目标节点与身份绑定；
-    `GET /api/v1/health` 是只绑定回环的运维健康检查，不经安全入口，返回 `{"status":"ok"}`；
-    `GET /{安全入口}` → 301 跳转到 `/{安全入口}/`，是静态入口重定向而不是接口。
+    本文档是 OPSD 核心 HTTP 契约源文件，生成物为 web/src/api/generated.ts。
+    
+    控制台接口位于 /{安全入口}/ 下，入口不匹配时直接断开连接。入口之外仅豁免一次性注册
+    /api/v1/enroll 与精确列出的只读输出 API /api/v1/public/nodes、summary、metrics。
+    会话 Cookie 限定在安全入口下，非 GET/HEAD 请求同时校验 Origin 与 x-csrf-token。
+    输出 API 使用独立 Bearer 密钥，按节点范围及公开字段白名单返回结果。
+    
+    业务错误返回 JSON；Json 提取器产生的 400、415、422 及认证中间件的 403 可能为纯文本。
+    普通请求体上限 1 MiB，插件 ZIP 包上限 128 MiB。
+    
+    插件业务接口在插件自己的 api.json 中定义，核心只提供认证转发、任务、依赖版本和资源入口。
+    旧 Docker、存储动作仅保留在任务响应类型中供历史读取，新请求通过插件提交。TaskEnvelope
+    的 node_id 为 @hub 时由插件后端执行，其余为节点程序；受理返回的 task_id 不是执行成功。
+    同目标、同幂等键、同动作复用原任务，不重复执行；执行中断的任务标为 uncertain，禁止盲重试。
+    
+    Agent 常驻 mTLS /agent 通道属于内部协议，回环 /api/v1/health 为运维健康端点，均不在本契约内。
+    插件流升级前校验 Cookie、Origin 和查询参数 csrf；原生管理台的操作由上游记录。
 servers:
   - url: https://{host}/{entrance}
-    description: 控制台面。分享面与注册不在这个 server 下。
+    description: 控制台面。输出 API 与注册不在这个 server 下。
     variables:
       host:
         default: localhost:65535
@@ -65,7 +32,7 @@ servers:
         default: 安全入口占位
         description: 16 位安全入口路径段，改后旧地址立即失效
   - url: https://{host}
-    description: 入口之外的公开面：一次性注册与分享页。
+    description: 入口之外的公开面：一次性注册与只读输出 API。
     variables:
       host:
         default: localhost:65535
@@ -83,8 +50,10 @@ tags:
     description: 指标
   - name: agent
     description: Agent 注册与续期（mTLS，非浏览器接口）
-  - name: share
-    description: 分享页与公开数据
+  - name: export
+    description: 只读输出 API
+  - name: plugins
+    description: 独立插件管理与通用入口
   - name: theme
     description: 主题
   - name: audit
@@ -1062,855 +1031,6 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /api/v1/share/settings:
-    get:
-      tags:
-        - share
-      summary: 读取分享设置
-      description: GET 不做 CSRF/Origin 校验,只校验会话存在;只读进程内共享设置,不写库、不产生任务、无需幂等键。
-      responses:
-        "200":
-          description: 当前分享设置:enabled 为分享页整体开关,site 为站点公开信息。读锁失败时回落默认值(enabled=false 与默认站点),不报错。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareSettings"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-    put:
-      tags:
-        - share
-      summary: 更新分享设置
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: 写 control.db 并同步内存,分享门禁立即生效;不产生任务、无需幂等键,写库失败同其他内部错误一样折算 400。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ShareSettingsInput"
-      responses:
-        "200":
-          description: 回显写入后的设置。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareSettings"
-        "400":
-          description: |
-            站点名称超过 60 字符(「站点名称过长」)、站点描述超过 200 字符(「站点描述过长」)、页脚文字超过 200 字符(「页脚文字过长」),
-            或数据库写入失败(正文为错误信息原文)。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-            text/plain:
-              schema:
-                type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "413":
-          $ref: "#/components/responses/PayloadTooLarge"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-  /api/v1/share/tokens:
-    get:
-      tags:
-        - share
-      summary: 分享令牌列表
-      description: 按 created_at 降序返回全部令牌(含已撤销)。**列表只含摘要与元数据,绝不包含明文令牌**——明文只在创建响应中出现一次,之后无法取回。GET 不做 CSRF/Origin 校验。
-      responses:
-        "200":
-          description: 令牌记录数组。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareTokenList"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-    post:
-      tags:
-        - share
-      summary: 创建分享令牌
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: |
-        生成明文令牌,控制库只存 sha256 摘要。**明文仅此一次返回,之后无法再取回**。
-        落库后重建门禁内存索引,新令牌立即对 /share/{token}/ 生效。不产生任务、无需幂等键。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ShareTokenInput"
-      responses:
-        "200":
-          description: 明文令牌与令牌记录。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareTokenCreated"
-        "400":
-          description: |
-            label trim 后为空或超过 60 字符(「分享名称长度不合法」)、expires_hours 不在 1..=8760 内(「有效时长不合法」),
-            或数据库写入/索引重建失败(正文为错误信息原文)。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-            text/plain:
-              schema:
-                type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "413":
-          $ref: "#/components/responses/PayloadTooLarge"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-  /api/v1/share/tokens/{id}:
-    delete:
-      tags:
-        - share
-      summary: 撤销分享令牌
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: 软删除:revoked 置 true,记录仍留在列表;重建门禁内存索引,撤销立即生效。不产生任务、无需幂等键。
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: 分享令牌记录 id
-      responses:
-        "200":
-          description: 已撤销,ok 恒为 true。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Ok"
-        "400":
-          description: |
-            id 在令牌桶中查不到(「分享令牌不存在」,本项目怪异:不存在返回 400 而非 404),
-            或数据库读写/索引重建失败(正文为错误信息原文)。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "413":
-          $ref: "#/components/responses/PayloadTooLarge"
-  /api/v1/share/keys:
-    get:
-      tags:
-        - share
-      summary: API 密钥列表
-      description: 按 created_at 降序返回全部密钥(含已撤销)。**列表只含摘要与元数据,绝不包含明文密钥**——明文只在创建响应中出现一次,之后无法取回。GET 不做 CSRF/Origin 校验。
-      responses:
-        "200":
-          description: 密钥记录数组。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiKeyList"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-    post:
-      tags:
-        - share
-      summary: 创建 API 密钥
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: |
-        生成明文密钥(opsd_ 前缀),控制库只存 sha256 摘要。**明文仅此一次返回,之后无法再取回**。
-        密钥授权走 DB 直查,不维护内存索引,无需刷新。不产生任务、无需幂等键。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ApiKeyInput"
-      responses:
-        "200":
-          description: 明文密钥与密钥记录。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiKeyCreated"
-        "400":
-          description: label trim 后为空或超过 60 字符(「密钥名称长度不合法」),或数据库写入失败(正文为错误信息原文)。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-            text/plain:
-              schema:
-                type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "413":
-          $ref: "#/components/responses/PayloadTooLarge"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-  /api/v1/share/keys/{id}:
-    delete:
-      tags:
-        - share
-      summary: 撤销 API 密钥
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: 软删除:revoked 置 true,记录仍留在列表;授权每次读库过滤,撤销立即生效。不产生任务、无需幂等键。
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: API Key 记录 id
-      responses:
-        "200":
-          description: 已撤销,ok 恒为 true。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Ok"
-        "400":
-          description: |
-            id 在密钥桶中查不到(「API Key 不存在」,不存在返回 400 而非 404),
-            或数据库读写失败(正文为错误信息原文)。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "413":
-          $ref: "#/components/responses/PayloadTooLarge"
-  /share/{token}/:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文。门禁按摘要常量时间校验，无效令牌与错误入口一样被直接丢弃连接、不产生任何 HTTP 响应。
-    get:
-      tags:
-        - share
-      summary: 分享页首页
-      description: |
-        返回分享页 HTML（text/html; charset=utf-8）。启用了包级分享主题时返回主题入口 HTML 并带独立 CSP 头，
-        否则回落内置 share.html。只读，不写库、不广播、不产生任务；不设置缓存响应头。
-        带结尾斜杠的 /share/{token}/ 是分享面入口；不带斜杠的 /share/{token} 会先被 301 永久重定向到此处。
-        令牌无效时门禁直接丢弃连接、没有常规 HTTP 响应，因此不会出现 401 或 404 JSON。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security: []
-      responses:
-        "200":
-          description: 分享页 HTML 正文。
-          content:
-            text/html:
-              schema:
-                type: string
-        "404":
-          description: |
-            纯文本「分享页尚未构建」（无 JSON error 包装）：读取 s.web/share.html 失败，即内置页未构建且未启用分享主题。
-            令牌无效时门禁会直接丢弃连接、没有常规 HTTP 响应，不会到达本处理函数。
-          content:
-            text/plain:
-              schema:
-                type: string
-                const: 分享页尚未构建
-  /share/{token}/assets/{path}:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文。实际不会被处理函数使用（路径提取被忽略），门禁已预先校验。
-      - name: path
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 构建产物 assets 目录内的相对路径，可含子目录；读取前做防目录穿越校验。
-    get:
-      tags:
-        - share
-      summary: 分享页构建产物静态资源
-      description: >
-        只读磁盘文件，返回 assets 目录下的静态文件二进制，Content-Type 依扩展名：
-
-        js→text/javascript、css→text/css、svg→image/svg+xml、json→application/json、woff2→font/woff2、其他→application/octet-stream。
-
-        不设置缓存响应头；响应体是构建产物原文，绝不包含令牌、凭据或服务端路径信息。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security: []
-      responses:
-        "200":
-          description: 文件二进制，Content-Type 依扩展名而定（见操作描述）。
-          content:
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        "404":
-          description: |
-            空正文（无 JSON、无文本）：path 包含 ".." 或以 / 开头（防目录穿越），或目标文件读取失败。
-  /share/{token}/data/summary:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文。
-    get:
-      tags:
-        - share
-      summary: 分享页站点与节点概况
-      description: |
-        页面接口（application/json），仅凭分享令牌放行，不需要 Cookie 或 API Key。只读，不写库、不广播；
-        site 读取失败时回落到 SitePublic 默认值。不设置缓存响应头，不应被代理缓存。
-        响应刻意只含站点公开属性与计数，不含任何内部地址、资源细节与凭据。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security: []
-      responses:
-        "200":
-          description: 站点公开属性与令牌可见节点计数。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareSummary"
-        "400":
-          description: 分享页已关闭（ensure_enabled 校验），正文 {"error":"分享页已关闭"}；错误统一由 ApiError 包装为 JSON。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /share/{token}/data/nodes:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文。
-    get:
-      tags:
-        - share
-      summary: 分享页可见节点列表
-      description: |
-        页面接口（application/json），仅凭分享令牌放行。只返回公开白名单字段（见 PublicNode），刻意不包含内部地址、资源细节与凭据；
-        节点为未撤销、未隐藏且在令牌范围内者，按权重降序、再按名称升序。只读，不设置缓存响应头。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security: []
-      responses:
-        "200":
-          description: 可见节点数组。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareNodes"
-        "400":
-          description: 分享页已关闭，正文 {"error":"分享页已关闭"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /share/{token}/data/records:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文。
-      - name: node
-        in: query
-        required: true
-        schema:
-          type: string
-        description: 节点编号，须在令牌可见范围内。
-      - name: from
-        in: query
-        required: true
-        schema:
-          type: integer
-          format: int64
-        description: 起始 Unix 秒。
-      - name: to
-        in: query
-        required: true
-        schema:
-          type: integer
-          format: int64
-        description: 结束 Unix 秒，必须晚于 from。
-      - name: step
-        in: query
-        required: false
-        schema:
-          type: integer
-          default: 300
-        description: 步长（秒），默认 300，运行时 clamp 到 [60, 86400]。
-    get:
-      tags:
-        - share
-      summary: 分享页指标历史降采样
-      description: |
-        页面接口（application/json），仅凭分享令牌放行。只读查指标历史，不写库、不广播；不设置缓存响应头。
-        点数上限 2000；缺失区间自然断开，不插值不补零。响应刻意不含节点地址、资源细节与凭据。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security: []
-      responses:
-        "200":
-          description: 回显节点编号、选用层级、实际步长与降采样曲线点。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareRecords"
-        "400":
-          description: |
-            分享页已关闭，正文 {"error":"分享页已关闭"}；节点不在令牌范围，正文 {"error":"该节点不在分享范围内"}；
-            to<=from，正文 {"error":"结束时间必须晚于开始时间"}；或 (to-from)/step 超过 2000 点，正文 {"error":"区间与步长组合返回点数过多"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /share/{token}/api/v1/public/summary:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文（限定可见节点范围）。
-    get:
-      tags:
-        - share
-      summary: 公开节点概况（机器接口）
-      description: |
-        机器接口（application/json），双授权：分享令牌放行 **加上** Authorization: Bearer <API Key>，
-        可见节点范围为令牌范围与 API Key 节点范围的交集。只读，仅可能写回 key.last_used（距上次更新超 60 秒时）。
-        API Key 经摘要校验；响应只含交集内的计数，不含节点地址、资源细节与凭据。不设置缓存响应头，不应被代理缓存。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security:
-        - bearerApiKey: []
-      responses:
-        "200":
-          description: 交集可见节点计数，量值不经缓存，实时读取。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareSummaryBase"
-        "400":
-          description: 分享页已关闭，正文 {"error":"分享页已关闭"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: "缺少 Authorization: Bearer 头，正文 {\"error\":\"缺少 API Key\"}；或密钥摘要未匹配/已撤销，正文 {\"error\":\"API Key 无效\"}。"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /share/{token}/api/v1/public/nodes:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文（限定可见节点范围）。
-    get:
-      tags:
-        - share
-      summary: 公开节点列表（机器接口）
-      description: |
-        机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
-        只返回可达交集内各节点详情；字段与页面接口同一套公开白名单（PublicNode），刻意不含内部地址、资源细节与凭据。
-        只读，可能写回 API Key 的 lastUsed。不设置缓存响应头。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security:
-        - bearerApiKey: []
-      responses:
-        "200":
-          description: 交集后可访问节点数组。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareNodes"
-        "400":
-          description: 分享页已关闭，正文 {"error":"分享页已关闭"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: "缺少 Authorization: Bearer 头，正文 {\"error\":\"缺少 API Key\"}；或密钥摘要未匹配/已撤销，正文 {\"error\":\"API Key 无效\"}。"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /share/{token}/api/v1/public/recent/{id}:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文（限定可见节点范围）。
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 节点编号，须同时落在令牌范围与 API Key 节点范围内。
-    get:
-      tags:
-        - share
-      summary: 单节点最近采样（机器接口）
-      description: |
-        机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
-        返回该节点最近一次成功采样折算的公开结构（字段同 PublicNode）：无采样或最近上报失败时，指标字段与
-        metrics_at 都为 null 而不是 0。刻意不含内部地址、资源细节与凭据。只读，可能写回 API Key 的 lastUsed；
-        不设置缓存响应头。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security:
-        - bearerApiKey: []
-      responses:
-        "200":
-          description: 单个节点的公开结构与最近采样时刻。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareRecent"
-        "400":
-          description: |
-            节点不在 API Key 与令牌的交集范围内，正文 {"error":"该节点不在访问范围内"}；
-            或节点已撤销/被隐藏/不在令牌范围内，正文 {"error":"节点不可见"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: "缺少 Authorization: Bearer 头，正文 {\"error\":\"缺少 API Key\"}；或密钥摘要未匹配/已撤销，正文 {\"error\":\"API Key 无效\"}。"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /share/{token}/api/v1/public/records:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文（限定可见节点范围）。
-      - name: node
-        in: query
-        required: true
-        schema:
-          type: string
-        description: 节点编号，须同时落在令牌范围与 API Key 节点范围内。
-      - name: from
-        in: query
-        required: true
-        schema:
-          type: integer
-          format: int64
-        description: 起始 Unix 秒。
-      - name: to
-        in: query
-        required: true
-        schema:
-          type: integer
-          format: int64
-        description: 结束 Unix 秒，必须晚于 from。
-      - name: step
-        in: query
-        required: false
-        schema:
-          type: integer
-          default: 300
-        description: 步长（秒），默认 300，运行时 clamp 到 [60, 86400]。
-    get:
-      tags:
-        - share
-      summary: 公开指标历史降采样（机器接口）
-      description: |
-        机器接口（application/json），双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
-        双重鉴权通过后复用页面接口的降采样逻辑，故 200 响应体与 /share/{token}/data/records 完全一致，
-        但拒绝文案不同：节点不在访问范围内时是 {"error":"该节点不在访问范围内"}。
-        点数上限 2000，缺失区间自然断开、不插值不补零；只读，可能写回 API Key 的 lastUsed；不设置缓存响应头。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security:
-        - bearerApiKey: []
-      responses:
-        "200":
-          description: 节点编号、选用层级、实际步长与降采样曲线点，与页面接口 /data/records 同形。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShareRecords"
-        "400":
-          description: |
-            分享页已关闭，正文 {"error":"分享页已关闭"}；节点不在 API Key 与令牌的交集范围内，正文 {"error":"该节点不在访问范围内"}；
-            或复用逻辑返回的 {"error":"该节点不在分享范围内"}；to<=from，正文 {"error":"结束时间必须晚于开始时间"}；
-            或 (to-from)/step 超过 2000 点，正文 {"error":"区间与步长组合返回点数过多"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: "缺少 Authorization: Bearer 头，正文 {\"error\":\"缺少 API Key\"}；或密钥摘要未匹配/已撤销，正文 {\"error\":\"API Key 无效\"}。"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /share/{token}/api/v1/public/metrics:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文（限定可见节点范围）。
-    get:
-      tags:
-        - share
-      summary: 公开 Prometheus 指标（机器接口）
-      description: |
-        机器接口，双授权：分享令牌同 Authorization: Bearer <API Key>，节点范围取交集。
-        返回 Prometheus 文本格式平文（Content-Type: text/plain; version=0.0.4; charset=utf-8），
-        每条样本只带 node 与 display_name 两个标签，**不输出地址**；缺失的采样不输出样本行，
-        面板上表现为断档而不是被记成 0。只读，可能写回 API Key 的 lastUsed；不设置缓存响应头。
-      servers:
-        - url: https://{host}
-          description: 主控 HTTPS 监听地址
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security:
-        - bearerApiKey: []
-      responses:
-        "200":
-          description: >
-            Prometheus 文本格式平文（# HELP / # TYPE 与样本行），Content-Type 严格为 text/plain; version=0.0.4; charset=utf-8。
-
-            指标为 opsd_node_online、opsd_node_cpu_usage_percent、opsd_node_memory_used_bytes、opsd_node_memory_total_bytes、
-
-            opsd_node_disk_used_bytes、opsd_node_disk_total_bytes、opsd_node_load1、
-
-            opsd_node_network_receive_bytes_per_second、opsd_node_network_transmit_bytes_per_second、opsd_node_uptime_seconds。
-          content:
-            text/plain:
-              schema:
-                type: string
-        "400":
-          description: 分享页已关闭，正文 {"error":"分享页已关闭"}（JSON，不是 Prometheus 文本）。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: "缺少 Authorization: Bearer 头，正文 {\"error\":\"缺少 API Key\"}；或密钥摘要未匹配/已撤销，正文 {\"error\":\"API Key 无效\"}。"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: 令牌不在分享索引中，正文 {"error":"分享链接无效或已失效"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          description: 分享索引读写锁中毒，正文 {"error":"分享索引不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
   /api/v1/themes:
     get:
       tags:
@@ -2306,54 +1426,6 @@ paths:
             text/plain:
               schema:
                 type: string
-  /api/v1/themes/share:
-    post:
-      tags:
-        - theme
-      summary: 安装分享页主题包（zip 原始字节）
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: |
-        请求体为主题包 zip 的原始字节，非 multipart，也不解析 Content-Type，直接读字节流；
-        包根目录必须含 theme.json 与 index.html。先解压到临时目录、校验通过后再就位，
-        同 short 覆盖旧记录与资源目录（无幂等键）。包体积上限 MAX_PACKAGE_BYTES（20 MiB），
-        解压后总量上限 MAX_EXTRACTED_BYTES（64 MiB，防解压炸弹）。
-      requestBody:
-        required: true
-        description: 主题包 zip 的原始字节。
-        content:
-          application/octet-stream:
-            schema:
-              type: string
-              format: binary
-      responses:
-        "200":
-          description: 已安装的主题 short 与内容摘要。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ThemeInstallShareResult"
-        "400":
-          description: |
-            请求体为空（「请求体为空」）、主题包不是有效的 zip（「主题包不是有效的 zip」）、根目录缺
-            theme.json、theme.json 解析失败、清单校验失败、清单未声明支持分享页、根目录缺 index.html、
-            包内越界路径、解压后总大小超 64 MiB 上限。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "413":
-          description: 请求体超过 MAX_PACKAGE_BYTES（20 MiB），由路由层 DefaultBodyLimit 在进入处理函数前拒绝；正文是 axum 默认纯文本，不是本模块的 JSON 错误体。
-          content:
-            text/plain:
-              schema:
-                type: string
-                const: Failed to buffer the request body
   /api/v1/themes/{short}:
     parameters:
       - name: short
@@ -2389,81 +1461,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/OriginOrCsrfRejected"
-  /share/{token}/data/theme:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文，门禁按 sha256 摘要查找。
-    get:
-      tags:
-        - theme
-      summary: 读取分享页公开主题数据
-      description: |
-        返回分享页当前启用主题的 describe 输出：short、名称、令牌、公开设置与配置项声明。
-        设置与配置项声明公开可读，不得放入密钥；未启用包级主题时同样返回内置主题形态
-        （short 为 default），不报错。
-      servers:
-        - url: https://{host}
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security: []
-      responses:
-        "200":
-          description: 分享页主题公开数据。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ThemeDescribe"
-        "404":
-          description: 令牌无效、过期或被撤销（门禁直接丢弃，不产生业务响应）。空正文。
-  /share/{token}/theme/{path}:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 分享令牌明文，门禁按 sha256 摘要查找。
-      - name: path
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 主题资源相对路径（资源目录内），可含子路径。
-    get:
-      tags:
-        - theme
-      summary: 读取分享页主题资源
-      description: |
-        返回主题资源原始字节。Content-Type 按扩展名推测：js/mjs→text/javascript、css→text/css、
-        html→text/html; charset=utf-8、svg→image/svg+xml、json→application/json、png→image/png、
-        jpg/jpeg→image/jpeg、webp→image/webp、woff2→font/woff2，其余→application/octet-stream；
-        并附独立 CSP 响应头（default-src 'none'，只放行 self，内联样式例外）。路径必须落在该主题
-        资源目录内；未启用包级分享主题时本端点恒 404。
-      servers:
-        - url: https://{host}
-          variables:
-            host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
-      security: []
-      responses:
-        "200":
-          description: 主题资源原始字节，带按扩展名推测的 Content-Type 与 CSP 响应头。
-          content:
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        "404":
-          description: |
-            令牌无效/过期/被撤销、path 包含 .. 或以 / 开头、当前未启用包级分享主题（has_assets=false）、
-            或资源读取失败。空正文。
   /api/v1/storage/readiness:
     get:
       tags:
@@ -2518,387 +1515,6 @@ paths:
           description: |
             同节点同 idempotency_key 已用于参数不同的动作时返回「幂等键已用于不同参数」；
             其他错误（如任务入库失败）返回对应 DB 错误信息。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-            text/plain:
-              schema:
-                type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-  /api/v1/storage/clusters:
-    get:
-      tags:
-        - storage
-      summary: 集群定义列表
-      description: |
-        已定义集群列表；每个集群的 secret_key 一律删除并替换为 has_secret_key 布尔（密钥不回传）。
-        同时返回固定的镜像仓库前缀、文件系统与最小节点数，界面据此生成选择项。
-      responses:
-        "200":
-          description: 集群列表与固定常量。
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - clusters
-                  - image_prefix
-                  - filesystem
-                  - min_nodes
-                properties:
-                  clusters:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ClusterListItem"
-                  image_prefix:
-                    type: string
-                    const: pgsty/silo
-                    description: 允许的镜像仓库前缀，固定为 pgsty/silo。
-                  filesystem:
-                    type: string
-                    const: xfs
-                    description: 固定文件系统，xfs。
-                  min_nodes:
-                    type: integer
-                    const: 4
-                    description: 分布式部署允许的最小节点数。
-                additionalProperties: false
-        "400":
-          description: 列集群失败，正文为对应 DB 错误信息。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-    put:
-      tags:
-        - storage
-      summary: 保存集群定义
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: |
-        只写定义，不碰任何节点。created_at 由服务端填写：新建时设为当前时间，已存在则保留旧值。
-        校验失败返回 400 与中文校验消息。成功返回 200。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ClusterSpec"
-      responses:
-        "200":
-          description: 保存后的集群定义，含服务端填写的 created_at；secret_key 原样回传（保存的是全量定义）。
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - cluster
-                properties:
-                  cluster:
-                    $ref: "#/components/schemas/ClusterSpec"
-                additionalProperties: false
-        "400":
-          description: |
-            validate_spec 任一校验失败（集群名称长度不合法 / 名称只能包含字母数字连字符下划线 /
-            节点数不足 / 节点列表存在重复 / 镜像标签不合法 / 不接受 latest 标签 /
-            标签应形如 RELEASE.<时间戳> 或具体版本号 / 必须给出集群对外服务地址 /
-            访问凭据不合法：密钥至少 16 个字符），或保存失败时返回对应 DB 错误信息。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-            text/plain:
-              schema:
-                type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-  /api/v1/storage/plans:
-    post:
-      tags:
-        - storage
-      summary: 生成部署计划
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: |
-        计划精确列出将被清空的每一块设备及其计划时的容量，并带 fingerprint 指纹与 5 分钟有效期
-        （expires = now()+300）。本步只把「将要发生什么」固化下来，不写任何节点。
-        生成时逐一校验集群定义存在、节点存在 / 未撤销 / 在线 / 已盘点 / 有可用盘、各节点盘数一致。
-        成功返回 200 + plan。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ClusterRefRequest"
-      responses:
-        "200":
-          description: 生成的部署计划。
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - plan
-                properties:
-                  plan:
-                    $ref: "#/components/schemas/Plan"
-                additionalProperties: false
-        "400":
-          description: |
-            正文为对应中文消息：集群定义不存在 / 节点不存在：<id> / 节点已撤销：<id> /
-            节点离线，不能纳入计划：<id> / 节点尚未盘点，不能纳入计划：<id> /
-            节点没有可用磁盘，不能纳入计划：<name> /
-            各节点可用磁盘数量不一致（<数量列表>），请先补齐再部署 / 保存计划失败（DB 错误信息）。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-            text/plain:
-              schema:
-                type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-        "500":
-          description: 盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /api/v1/storage/plans/{id}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-        description: 计划 id。
-    get:
-      tags:
-        - storage
-      summary: 读取部署计划
-      description: 返回计划全文与是否已过期（expired = plan.expires <= now()）。只读 storage_plans 桶。
-      responses:
-        "200":
-          description: 计划全文与过期标志。
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - plan
-                  - expired
-                properties:
-                  plan:
-                    $ref: "#/components/schemas/Plan"
-                  expired:
-                    type: boolean
-                    description: 计划是否已过期（expires <= now()）。
-                additionalProperties: false
-        "400":
-          description: 按 id 查不到计划时返回「计划不存在」。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/v1/storage/plans/apply:
-    post:
-      tags:
-        - storage
-      summary: 执行部署计划
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: |
-        逐节点串行执行：每节点按「磁盘准备 → 容器部署」两步各下发一个任务（各生成一个 task_id）。
-        任一节点任一步失败即记录到 plan.failed（写审计「已阻断后续节点」）并阻断后续节点，整单返回 400。
-        执行前按节点实时盘点重新核对：节点离线、盘点丢失、设备消失、容量变化、设备不再是无使用痕迹状态、
-        指纹不一致，任何一项不符即整单拒绝。破坏性计划（destructive=true）必须显式确认
-        acknowledge_destructive=true 才能执行。全部成功时写含「不可逆磁盘格式化」的审计。
-        返回 200（不是 202）与本次下发清单。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/StoragePlanApplyRequest"
-      responses:
-        "200":
-          description: 本次执行的计划 id、每个节点每个已下发步骤的记录与已完整执行完成的节点列表。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StoragePlanApplyResult"
-        "400":
-          description: |
-            执行前校验或执行中失败，正文为对应中文消息：计划不存在 / 集群定义已不存在，请重新生成计划 /
-            计划已过期，请重新生成 / 该计划包含不可逆的磁盘格式化，必须显式确认后才能执行 /
-            计划已有失败节点，不能继续执行 / 节点 <name> 已离线，计划作废 /
-            节点 <name> 的盘点结果已丢失，计划作废 / 设备 <path> 在 <name> 上已不存在，计划作废 /
-            设备 <path> 容量已变化（计划 <n> 字节，实际 <n> 字节），计划作废 /
-            设备 <path> 已不再是无使用痕迹的状态，计划作废 / 计划的设备清单已被修改，请重新生成 /
-            节点 <name> 执行失败，已阻断后续节点：<reason>。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-            text/plain:
-              schema:
-                type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-        "500":
-          description: 盘点缓存读锁失败，正文 {"error":"盘点缓存不可用"}。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /api/v1/storage/status:
-    post:
-      tags:
-        - storage
-      summary: 触发集群状态采集
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: |
-        登记 StorageStatus 任务并下发给集群中首个在线节点（通道不可用即 400）。
-        成功返回 200 + task_id（不是 202），label 固定为「状态」。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ClusterRefRequest"
-      responses:
-        "200":
-          description: 已下发的状态采集任务。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StorageTaskAccepted"
-        "400":
-          description: |
-            正文为对应中文消息：集群不存在 / 集群没有在线节点 / 节点通道不可用 / 任务入库失败（DB 错误信息）。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-            text/plain:
-              schema:
-                type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-  /api/v1/storage/buckets:
-    post:
-      tags:
-        - storage
-      summary: 创建或删除存储桶
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: |
-        桶是集群级操作，在任一在线节点执行即可，不逐节点下发。remove=true 时删除桶而非创建。
-        成功返回 200 + task_id（不是 202），label 固定为「桶」。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BucketRequest"
-      responses:
-        "200":
-          description: 已下发的桶任务。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StorageTaskAccepted"
-        "400":
-          description: |
-            正文为对应中文消息：集群不存在 / 集群没有在线节点 / 节点通道不可用 / 任务入库失败（DB 错误信息）。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-            text/plain:
-              schema:
-                type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/OriginOrCsrfRejected"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-  /api/v1/storage/users:
-    post:
-      tags:
-        - storage
-      summary: 创建或删除集群访问用户
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: |
-        用户是集群级操作，下发到任一在线节点执行，不逐节点下发。remove=true 时删除用户，
-        policy 缺省 readwrite。成功返回 200 + task_id（不是 202），label 固定为「用户」。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UserRequest"
-      responses:
-        "200":
-          description: 已下发的用户任务。
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StorageTaskAccepted"
-        "400":
-          description: |
-            正文为对应中文消息：集群不存在 / 集群没有在线节点 / 节点通道不可用 / 任务入库失败（DB 错误信息）。
           content:
             application/json:
               schema:
@@ -2993,6 +1609,799 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/export/keys:
+    get:
+      tags:
+        - export
+      summary: 列出只读输出密钥
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportKeyList"
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - export
+      summary: 创建只读输出密钥，原文只返回一次
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportKeyInput"
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportKeyCreated"
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/export/keys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags:
+        - export
+      summary: 撤销只读输出密钥
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - revoked
+                properties:
+                  revoked:
+                    type: boolean
+                additionalProperties: false
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/public/nodes:
+    get:
+      tags:
+        - export
+      summary: 版本化公开节点
+      servers:
+        - url: https://{host}
+          description: 入口之外的公开面：一次性注册与只读输出 API。
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security:
+        - bearerApiKey: []
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicNodes"
+        "401":
+          description: 缺少或无效的只读 API Key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/public/summary:
+    get:
+      tags:
+        - export
+      summary: 版本化公开概况
+      servers:
+        - url: https://{host}
+          description: 入口之外的公开面：一次性注册与只读输出 API。
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security:
+        - bearerApiKey: []
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicSummary"
+        "401":
+          description: 缺少或无效的只读 API Key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/public/metrics:
+    get:
+      tags:
+        - export
+      summary: 只读 Prometheus 指标
+      servers:
+        - url: https://{host}
+          description: 入口之外的公开面：一次性注册与只读输出 API。
+          variables:
+            host:
+              default: localhost:65535
+              description: 主控 HTTPS 监听地址
+      security:
+        - bearerApiKey: []
+      responses:
+        "200":
+          description: Prometheus 文本，仅公开字段和授权节点
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: 缺少或无效的只读 API Key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/network:
+    get:
+      tags:
+        - nodes
+      summary: 读取控制线路、地址来源和白名单状态
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkState"
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags:
+        - nodes
+      summary: 指定手动接入的 Hub 宿主节点
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - node_id
+              properties:
+                node_id:
+                  anyOf:
+                    - type: string
+                    - type: "null"
+              additionalProperties: false
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkDirectory"
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/plugins:
+    get:
+      tags:
+        - plugins
+      summary: 列出已安装插件版本和当前平台
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - plugins
+                  - api_version
+                  - platform
+                properties:
+                  plugins:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PluginInstalled"
+                  api_version:
+                    type: integer
+                  platform:
+                    type: string
+                additionalProperties: false
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/plugins/package:
+    post:
+      tags:
+        - plugins
+      summary: 安装独立插件包，不覆盖已有版本
+      requestBody:
+        required: true
+        content:
+          application/zip:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PluginInstalled"
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "413":
+          description: 插件包超过 128 MiB
+  /api/v1/plugins/{plugin}/selection:
+    parameters:
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags:
+        - plugins
+      summary: 启用指定版本或禁用插件
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - version
+                - enabled
+              properties:
+                version:
+                  type: string
+                enabled:
+                  type: boolean
+              additionalProperties: false
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PluginInstalled"
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/plugins/{plugin}/{version}:
+    parameters:
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: version
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags:
+        - plugins
+      summary: 卸载未启用且无活动任务的版本，保留管理数据和秘密
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - uninstalled
+                  - data_retained
+                properties:
+                  uninstalled:
+                    type: boolean
+                  data_retained:
+                    type: boolean
+                additionalProperties: false
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+  /api/v1/plugins/{plugin}/configuration:
+    parameters:
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - plugins
+      summary: 读取普通配置及秘密名称
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - config
+                  - secret_names
+                properties:
+                  config:
+                    type: object
+                    additionalProperties: true
+                  secret_names:
+                    type: array
+                    items:
+                      type: string
+                additionalProperties: false
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags:
+        - plugins
+      summary: 更新普通配置和受保护秘密
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - config
+              properties:
+                config:
+                  type: object
+                  additionalProperties: true
+                secrets:
+                  type: object
+                  additionalProperties:
+                    type: string
+              additionalProperties: false
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - config
+                  - secret_names
+                properties:
+                  config:
+                    type: object
+                    additionalProperties: true
+                  secret_names:
+                    type: array
+                    items:
+                      type: string
+                additionalProperties: false
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/plugins/{plugin}/api/{path}:
+    parameters:
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - plugins
+      summary: 转发已认证插件请求，具体契约由插件包 api.json 定义
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema: {}
+        "202":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - task_id
+                  - status
+                properties:
+                  task_id:
+                    type: string
+                  status:
+                    $ref: "#/components/schemas/TaskStatus"
+                additionalProperties: false
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "409":
+          description: 结果不确定，需要核实实际状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    post:
+      tags:
+        - plugins
+      summary: 转发已认证插件请求，具体契约由插件包 api.json 定义
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema: {}
+        "202":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - task_id
+                  - status
+                properties:
+                  task_id:
+                    type: string
+                  status:
+                    $ref: "#/components/schemas/TaskStatus"
+                additionalProperties: false
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "409":
+          description: 结果不确定，需要核实实际状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    put:
+      tags:
+        - plugins
+      summary: 转发已认证插件请求，具体契约由插件包 api.json 定义
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema: {}
+        "202":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - task_id
+                  - status
+                properties:
+                  task_id:
+                    type: string
+                  status:
+                    $ref: "#/components/schemas/TaskStatus"
+                additionalProperties: false
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "409":
+          description: 结果不确定，需要核实实际状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      tags:
+        - plugins
+      summary: 转发已认证插件请求，具体契约由插件包 api.json 定义
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+      responses:
+        "200":
+          description: 请求成功
+          content:
+            application/json:
+              schema: {}
+        "202":
+          description: 请求成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - task_id
+                  - status
+                properties:
+                  task_id:
+                    type: string
+                  status:
+                    $ref: "#/components/schemas/TaskStatus"
+                additionalProperties: false
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OriginOrCsrfRejected"
+        "409":
+          description: 结果不确定，需要核实实际状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/plugins/{plugin}/stream/{path}:
+    parameters:
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: csrf
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - plugins
+      summary: 插件流升级，首条消息为插件定义的初始化 JSON
+      responses:
+        "101":
+          description: 已升级 WebSocket
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /plugins/{plugin}/{path}:
+    parameters:
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - plugins
+      summary: 读取插件独立页面资源
+      responses:
+        "200":
+          description: 独立页面或资源
+          content:
+            text/html:
+              schema:
+                type: string
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: 业务校验失败 {"error"}；JSON 语法错误为框架纯文本。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 components:
   securitySchemes:
     sessionCookie:
@@ -3272,6 +2681,12 @@ components:
           type: integer
           format: int64
           description: 测量时刻，可早于采样时刻。
+        path:
+          type: string
+          enum:
+            - public
+            - overlay
+          default: public
       additionalProperties: false
     InterfaceRate:
       type: object
@@ -3368,31 +2783,6 @@ components:
           format: int64
           description: 最早一条记录的时刻（Unix 秒）；无记录时为 null。
       additionalProperties: false
-    ShareSettingsInput:
-      description: "更新分享设置的请求体。拒绝未知字段（serde deny_unknown_fields），与 additionalProperties: false 一致。"
-      type: object
-      required:
-        - enabled
-        - site
-      properties:
-        enabled:
-          type: boolean
-          description: 分享页整体开关。
-        site:
-          $ref: "#/components/schemas/SitePublic"
-          description: 站点公开信息;其下 name/description/footer 三者均必填。
-    ShareSettings:
-      type: object
-      required:
-        - enabled
-        - site
-      properties:
-        enabled:
-          type: boolean
-          description: 分享页整体开关。
-        site:
-          $ref: "#/components/schemas/SitePublic"
-      additionalProperties: false
     SitePublic:
       type: object
       required:
@@ -3412,177 +2802,6 @@ components:
           type: string
           maxLength: 200
           description: 页脚自定义文字,不允许 HTML,缺省为空串;写入时超过 200 字符被拒。
-      additionalProperties: false
-    ShareTokenInput:
-      description: "创建分享令牌的请求体。拒绝未知字段（serde deny_unknown_fields），与 additionalProperties: false 一致。"
-      type: object
-      required:
-        - label
-      properties:
-        label:
-          type: string
-          maxLength: 60
-          description: 分享名称,trim 后非空且不超过 60 字符,否则 400。
-        expires_hours:
-          type:
-            - integer
-            - "null"
-          format: int64
-          minimum: 1
-          maximum: 8760
-          description: 有效小时数,范围 1..=8760(24*365);省略或 null 表示长期有效。
-        nodes:
-          type:
-            - array
-            - "null"
-          items:
-            type: string
-          description: 限定可见节点 id 列表;省略或 null 表示全部未隐藏节点。
-    ShareToken:
-      type: object
-      required:
-        - id
-        - label
-        - digest
-        - created_at
-        - expires_at
-        - nodes
-        - revoked
-      properties:
-        id:
-          type: string
-          description: 令牌记录 id。
-        label:
-          type: string
-          description: 分享名称。
-        digest:
-          type: string
-          description: sha256(明文令牌) 十六进制摘要,门禁常量时间查找用;明文永不落库、不再出现在任何响应中。
-        created_at:
-          type: integer
-          format: int64
-          description: 创建时间,Unix 秒。
-        expires_at:
-          type:
-            - integer
-            - "null"
-          format: int64
-          description: 到期时间,Unix 秒;键恒存在,null 表示长期有效。
-        nodes:
-          type:
-            - array
-            - "null"
-          items:
-            type: string
-          description: 限定可见节点 id 列表;null 表示全部未隐藏节点。
-        revoked:
-          type: boolean
-          description: 是否已撤销;撤销后门禁立即失效,记录仍留在列表。
-      additionalProperties: false
-    ShareTokenList:
-      type: object
-      required:
-        - tokens
-      properties:
-        tokens:
-          type: array
-          items:
-            $ref: "#/components/schemas/ShareToken"
-          description: 按 created_at 降序;只含摘要与元数据,绝不包含明文令牌(明文仅创建响应一次)。
-      additionalProperties: false
-    ShareTokenCreated:
-      type: object
-      required:
-        - token
-        - record
-      properties:
-        token:
-          type: string
-          description: 明文令牌,仅此一次返回,之后无法再取回。
-        record:
-          $ref: "#/components/schemas/ShareToken"
-      additionalProperties: false
-    ApiKeyInput:
-      description: "创建 API 密钥的请求体。拒绝未知字段（serde deny_unknown_fields），与 additionalProperties: false 一致。"
-      type: object
-      required:
-        - label
-      properties:
-        label:
-          type: string
-          maxLength: 60
-          description: 密钥名称,trim 后非空且不超过 60 字符,否则 400。
-        nodes:
-          type:
-            - array
-            - "null"
-          items:
-            type: string
-          description: 限定可见节点 id 列表;省略或 null 表示全部。
-    ApiKey:
-      type: object
-      required:
-        - id
-        - label
-        - digest
-        - created_at
-        - last_used
-        - revoked
-        - nodes
-      properties:
-        id:
-          type: string
-          description: 密钥记录 id。
-        label:
-          type: string
-          description: 密钥名称。
-        digest:
-          type: string
-          description: sha256(明文密钥) 十六进制摘要;明文永不落库、不再出现在任何响应中。
-        created_at:
-          type: integer
-          format: int64
-          description: 创建时间,Unix 秒。
-        last_used:
-          type:
-            - integer
-            - "null"
-          format: int64
-          description: 最近一次机器接口使用时间,Unix 秒;从未使用或较上次写入相差不超过 60 秒时为 null 或旧值(只在相差超过 60 秒时才写回)。
-        revoked:
-          type: boolean
-          description: 是否已撤销。
-        nodes:
-          type:
-            - array
-            - "null"
-          items:
-            type: string
-          description: 限定可见节点 id 列表;null 表示全部(授权时与分享令牌范围取交集)。
-      additionalProperties: false
-    ApiKeyList:
-      type: object
-      required:
-        - keys
-      properties:
-        keys:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiKey"
-          description: 按 created_at 降序;只含摘要与元数据,绝不包含明文密钥(明文仅创建响应一次)。
-      additionalProperties: false
-    ApiKeyCreated:
-      type: object
-      required:
-        - key
-        - record
-      properties:
-        key:
-          type: string
-          description: 明文密钥(opsd_ 前缀),仅此一次返回,之后无法再取回。
-        record:
-          $ref: "#/components/schemas/ApiKey"
-          description: 密钥记录本身,last_used 为 null。
       additionalProperties: false
     PublicNode:
       type: object
@@ -3756,98 +2975,6 @@ components:
         net_tx_bytes_per_second:
           type: number
           description: 出站速率（字节/秒），各网卡求和。
-      additionalProperties: false
-    ShareSummary:
-      type: object
-      required:
-        - site
-        - node_count
-        - online_count
-        - generated_at
-      properties:
-        site:
-          $ref: "#/components/schemas/SitePublic"
-        node_count:
-          type: integer
-          format: int64
-          description: 令牌可见（未撤销、未隐藏且在令牌范围内）的节点数。
-        online_count:
-          type: integer
-          format: int64
-          description: 其中在线的节点数（存在活跃通道连接）。
-        generated_at:
-          type: integer
-          format: int64
-          description: 响应生成时的 Unix 秒时间戳。
-      additionalProperties: false
-    ShareSummaryBase:
-      type: object
-      description: 机器接口的汇总，刻意不下发站点信息（site），只给交集内的计数与生成时刻。
-      required:
-        - node_count
-        - online_count
-        - generated_at
-      properties:
-        node_count:
-          type: integer
-          format: int64
-          description: 令牌范围与 API Key 节点范围交集后的可见节点数。
-        online_count:
-          type: integer
-          format: int64
-          description: 其中在线的节点数（存在活跃通道连接）。
-        generated_at:
-          type: integer
-          format: int64
-          description: 响应生成时的 Unix 秒时间戳。
-      additionalProperties: false
-    ShareNodes:
-      type: object
-      required:
-        - nodes
-      properties:
-        nodes:
-          type: array
-          items:
-            $ref: "#/components/schemas/PublicNode"
-          description: 可见节点列表，按权重降序、再按名称升序；只含公开白名单字段。
-      additionalProperties: false
-    ShareRecent:
-      type: object
-      required:
-        - node
-      properties:
-        node:
-          $ref: "#/components/schemas/PublicNode"
-          description: 该节点最近一次采样折算的公开结构；无采样的指标字段为 null 而不是 0。
-      additionalProperties: false
-    ShareRecords:
-      type: object
-      required:
-        - node
-        - tier
-        - step
-        - points
-      properties:
-        node:
-          type: string
-          description: 回显请求的节点编号。
-        tier:
-          type: string
-          enum:
-            - raw
-            - m5
-            - h1
-          description: 选用的层级：step<300 为 raw、step<3600 为 m5、其余为 h1。
-        step:
-          type: integer
-          format: int64
-          description: 实际使用的步长（clamp 到 [60, 86400] 之后）。
-        points:
-          type: array
-          items:
-            $ref: "#/components/schemas/Point"
-          description: 降采样后的曲线点，点数上限 2000；缺失区间自然断开，不插值不补零。
       additionalProperties: false
     ThemeSurface:
       type: string
@@ -4090,15 +3217,11 @@ components:
       type: object
       required:
         - console
-        - share
         - console_frontend
       properties:
         console:
           $ref: "#/components/schemas/ThemeDescribe"
           description: 控制台界面当前启用主题（describe 输出）。
-        share:
-          $ref: "#/components/schemas/ThemeDescribe"
-          description: 分享页界面当前启用主题（describe 输出）。
         console_frontend:
           $ref: "#/components/schemas/ThemeConsoleFrontendDescribe"
           description: 当前可用的完整控制台前端，与 console 样式覆盖独立。
@@ -4114,7 +3237,6 @@ components:
           enum:
             - console
             - console_frontend
-            - share
           description: 目标界面，大小写敏感。
         short:
           type: string
@@ -4139,26 +3261,33 @@ components:
       additionalProperties: false
     ThemeConsoleFrontend:
       type: object
-      required: [api_version]
+      required:
+        - api_version
       properties:
         api_version:
           type: integer
-          const: 1
-          description: 完整控制台前端契约版本，当前只支持 1。
+          const: 2
+          description: 完整控制台前端契约版本，当前支持 2；旧版本自动回落内置前端。
       additionalProperties: false
     ThemeConsoleFrontendDescribe:
       type: object
-      required: [short, name, version, api_version]
+      required:
+        - short
+        - name
+        - version
+        - api_version
       properties:
         short:
           type: string
         name:
-          $ref: "#/components/schemas/ThemeLocalized"
+          $ref: '#/components/schemas/ThemeLocalized'
         version:
-          type: [string, "null"]
+          type:
+            - string
+            - 'null'
         api_version:
           type: integer
-          const: 1
+          const: 2
       additionalProperties: false
     ThemeRepositoryResolveRequest:
       type: object
@@ -5343,6 +4472,391 @@ components:
           type: string
           description: 幂等键。同节点 + 同键复用既有任务并返回其 task_id;同键但参数摘要不同则 400 拒绝。
       additionalProperties: false
+    ExportKey:
+      type: object
+      required:
+        - id
+        - label
+        - created_at
+        - revoked
+        - nodes
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        created_at:
+          type: integer
+        revoked:
+          type: boolean
+        nodes:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: "null"
+      additionalProperties: false
+    ExportKeyList:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExportKey"
+      additionalProperties: false
+    ExportKeyCreated:
+      type: object
+      required:
+        - id
+        - key
+        - label
+        - nodes
+      properties:
+        id:
+          type: string
+        key:
+          type: string
+        label:
+          type: string
+        nodes:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: "null"
+      additionalProperties: false
+    ExportKeyInput:
+      type: object
+      required:
+        - label
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+        nodes:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: "null"
+      additionalProperties: false
+    PublicNodes:
+      type: object
+      required:
+        - schema_version
+        - generated_at
+        - nodes
+      properties:
+        schema_version:
+          const: 1
+          type: integer
+        generated_at:
+          type: integer
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicNode"
+      additionalProperties: false
+    PublicSummary:
+      type: object
+      required:
+        - schema_version
+        - generated_at
+        - node_count
+        - online_count
+      properties:
+        schema_version:
+          const: 1
+          type: integer
+        generated_at:
+          type: integer
+        node_count:
+          type: integer
+        online_count:
+          type: integer
+      additionalProperties: false
+    ConnectionPath:
+      type: object
+      required:
+        - path
+        - connected
+        - last_seen
+        - connected_at
+        - rtt_ms
+        - error
+      properties:
+        path:
+          type: string
+          enum:
+            - public
+            - overlay
+        connected:
+          type: boolean
+        last_seen:
+          anyOf:
+            - type: integer
+            - type: "null"
+        connected_at:
+          anyOf:
+            - type: integer
+            - type: "null"
+        rtt_ms:
+          anyOf:
+            - type: integer
+            - type: "null"
+        error:
+          anyOf:
+            - type: string
+            - type: "null"
+      additionalProperties: false
+    NodeConnections:
+      type: object
+      required:
+        - active_path
+        - paths
+      properties:
+        active_path:
+          anyOf:
+            - type: string
+              enum:
+                - public
+                - overlay
+            - type: "null"
+        paths:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectionPath"
+      additionalProperties: false
+    InterfaceAddress:
+      type: object
+      required:
+        - interface
+        - address
+        - prefix
+      properties:
+        interface:
+          type: string
+        address:
+          type: string
+        prefix:
+          type: integer
+      additionalProperties: false
+    NetworkFacts:
+      type: object
+      required:
+        - hostname
+        - interfaces
+        - collected_at
+        - error
+      properties:
+        hostname:
+          type: string
+        interfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterfaceAddress"
+        collected_at:
+          type: integer
+        error:
+          anyOf:
+            - type: string
+            - type: "null"
+      additionalProperties: false
+    AppliedNetwork:
+      type: object
+      required:
+        - desired_revision
+        - applied_revision
+        - backend
+        - error
+        - at
+      properties:
+        desired_revision:
+          type: integer
+        applied_revision:
+          type: integer
+        backend:
+          anyOf:
+            - type: string
+            - type: "null"
+        error:
+          anyOf:
+            - type: string
+            - type: "null"
+        at:
+          type: integer
+      additionalProperties: false
+    OverlayMember:
+      type: object
+      required:
+        - node_id
+        - address
+        - prefix
+        - interface
+        - provider
+        - machine_id
+        - instance_id
+      properties:
+        node_id:
+          type: string
+        address:
+          type: string
+        prefix:
+          type: integer
+        interface:
+          type: string
+        provider:
+          type: string
+        machine_id:
+          type: string
+        instance_id:
+          type: string
+      additionalProperties: false
+    NetworkDirectory:
+      type: object
+      required:
+        - revision
+        - controller_node_id
+        - overlays
+      properties:
+        revision:
+          type: integer
+        controller_node_id:
+          anyOf:
+            - type: string
+            - type: "null"
+        overlays:
+          type: array
+          items:
+            $ref: "#/components/schemas/OverlayMember"
+      additionalProperties: false
+    NetworkState:
+      type: object
+      required:
+        - directory
+        - nodes
+      properties:
+        directory:
+          $ref: '#/components/schemas/NetworkDirectory'
+        nodes:
+          type: array
+          items:
+            type: object
+            required:
+              - node_id
+              - connections
+              - facts
+              - applied
+              - addresses
+              - desired_revision
+            properties:
+              node_id:
+                type: string
+              connections:
+                $ref: '#/components/schemas/NodeConnections'
+              facts:
+                anyOf:
+                  - $ref: '#/components/schemas/NetworkFacts'
+                  - type: 'null'
+              applied:
+                anyOf:
+                  - $ref: '#/components/schemas/AppliedNetwork'
+                  - type: 'null'
+              addresses:
+                type: object
+                additionalProperties: true
+              desired_revision:
+                type:
+                  - integer
+                  - 'null'
+            additionalProperties: false
+      additionalProperties: false
+    PluginManifest:
+      type: object
+      required:
+        - api_version
+        - id
+        - version
+        - name
+        - dependencies
+        - node
+        - permissions
+        - node_secrets
+        - config_keys
+        - configuration_help
+        - page
+      properties:
+        api_version:
+          type: integer
+          const: 1
+        id:
+          type: string
+        version:
+          type: string
+        name:
+          type: string
+        dependencies:
+          type: array
+          items:
+            type: string
+        node:
+          type: boolean
+        permissions:
+          type: array
+          items:
+            type: string
+        node_secrets:
+          type: array
+          items:
+            type: string
+        config_keys:
+          type: array
+          items:
+            type: string
+        configuration_help:
+          type: string
+        page:
+          type:
+            - string
+            - 'null'
+      additionalProperties: false
+    PluginInstalled:
+      type: object
+      required:
+        - manifest
+        - enabled
+        - installed_at
+      properties:
+        manifest:
+          $ref: "#/components/schemas/PluginManifest"
+        enabled:
+          type: boolean
+        installed_at:
+          type: integer
+      additionalProperties: false
+    ActionPlugin:
+      type: object
+      required:
+        - type
+        - plugin
+        - version
+        - operation
+        - input
+      properties:
+        type:
+          type: string
+          const: plugin
+        plugin:
+          type: string
+        version:
+          type: string
+        operation:
+          type: string
+        input: {}
+      additionalProperties: false
     Error:
       type: object
       required:
@@ -5462,12 +4976,15 @@ components:
       required:
         - connected
         - node
+        - connections
       properties:
         connected:
           type: boolean
           description: 当前是否在线。运行时判定，不属于 Node 结构体。
         node:
           $ref: "#/components/schemas/Node"
+        connections:
+          $ref: "#/components/schemas/NodeConnections"
       additionalProperties: false
     NodeCapabilities:
       type: object
@@ -5509,6 +5026,12 @@ components:
         execution_mode:
           $ref: "#/components/schemas/AgentInstallMode"
           description: Agent 实际运行方式，旧 Agent 缺省为 host。
+        plugins:
+          type: boolean
+          description: 宿主机插件节点动作能力，旧 Agent 缺省 false。
+        dual_path:
+          type: boolean
+          description: 双控制线路与网络期望状态能力，旧 Agent 缺省 false。
       additionalProperties: false
     Registration:
       type: object
@@ -5522,14 +5045,13 @@ components:
           description: 节点名称，非空且不超过 100 字符。
         public_addresses:
           type: array
+          maxItems: 0
           items:
             type: string
-          description: 可路由的公网地址，缺省为空数组。
+          description: 仅为历史记录兼容保留。新注册与更新必须省略或为空；地址自动发现。
         overlay_address:
-          type:
-            - string
-            - "null"
-          description: 覆盖网地址，须为合法 IP。
+          type: "null"
+          description: 新注册与更新不接受手填 ET 地址。
         ssh_port:
           type: integer
           minimum: 1
@@ -5674,6 +5196,12 @@ components:
             - integer
             - "null"
           description: 给了端口走 TCP 握手计时；为空时走 ICMP。
+        path:
+          type: string
+          enum:
+            - public
+            - overlay
+          default: public
       additionalProperties: false
     ProbeTargetSet:
       type: object
@@ -6062,10 +5590,9 @@ components:
           type: integer
       additionalProperties: false
     Action:
-      description: |
-        节点操作负载，按 type 判别，拒绝未知字段。这是控制台唯一的下发手段：
-        Agent 侧不存在接收任意命令的接口。
+      description: 持久任务动作。保留旧业务类型用于历史读取；新业务只通过通用插件动作产生。
       oneOf:
+        - $ref: "#/components/schemas/ActionPlugin"
         - $ref: "#/components/schemas/ActionInspect"
         - $ref: "#/components/schemas/ActionHostInspect"
         - $ref: "#/components/schemas/ActionDbInspect"
@@ -6535,12 +6062,12 @@ components:
           type: string
           description: 提交时的幂等键，与 node_id 组成唯一约束。
         action:
-          $ref: "#/components/schemas/Action"
+          $ref: '#/components/schemas/Action'
         digest:
           type: string
           description: 参数摘要（SHA-256）。相同节点与幂等键下摘要不同即视为冲突。
         status:
-          $ref: "#/components/schemas/TaskStatus"
+          $ref: '#/components/schemas/TaskStatus'
         sequence:
           type: integer
           format: int64
@@ -6548,13 +6075,13 @@ components:
         result:
           type:
             - object
-            - "null"
+            - 'null'
           additionalProperties: true
           description: 任务结果，任意 JSON 对象，可为 null（形状由具体操作决定）。
         error:
           type:
             - string
-            - "null"
+            - 'null'
           description: 失败信息，可为 null。
         created_at:
           type: integer
@@ -6562,4 +6089,9 @@ components:
         updated_at:
           type: integer
           format: int64
+        plugin_versions:
+          type: object
+          additionalProperties:
+            type: string
+          description: 插件任务在受理时固定的自身及依赖版本；历史任务缺省为空。
       additionalProperties: false

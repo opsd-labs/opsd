@@ -1,0 +1,17 @@
+{
+  "api_version": 1,
+  "id": "silo",
+  "version": "0.1.0",
+  "name": "Silo 分布式存储",
+  "dependencies": [
+    "docker",
+    "et"
+  ],
+  "node": true,
+  "permissions": [
+    "pki.server"
+  ],
+  "config_keys": [],
+  "configuration_help": "秘密：root_user、root_password（至少 16 位）。访问用户密钥另存为自定义名称，并在业务页面引用。",
+  "page": "index.html"
+}

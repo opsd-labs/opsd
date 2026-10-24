@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * SettingsPage — 设置页
- * 通用（外观 + 安全入口）/ 主题 / 分享 / 审计日志
+ * 通用（外观 + 安全入口）/ 主题 / 输出 API / 审计日志
  */
 import { ref, computed, onMounted } from 'vue'
 import { useTheme } from '../composables/useTheme'
@@ -13,18 +13,17 @@ import Input from '../components/ui/Input.vue'
 import Badge from '../components/ui/Badge.vue'
 import Skeleton from '../components/ui/Skeleton.vue'
 
-type SettingsTab = 'general' | 'themes' | 'share' | 'audit'
+type SettingsTab = 'general' | 'themes' | 'export' | 'audit'
 type ThemeInstalled = components['schemas']['ThemeInstalled']
 type ThemeActive = components['schemas']['ThemeActive']
-type ShareToken = components['schemas']['ShareToken']
-type ShareSettings = components['schemas']['ShareSettings']
+type ExportKey = components['schemas']['ExportKey']
 type RepositoryRelease = components['schemas']['ThemeRepositoryRelease']
 type AuditLog = components['schemas']['AuditRecord']
 
 const tabs: { key: SettingsTab; label: string }[] = [
   { key: 'general', label: '通用' },
   { key: 'themes',  label: '主题' },
-  { key: 'share',   label: '分享' },
+  { key: 'export',  label: '输出 API' },
   { key: 'audit',   label: '审计日志' },
 ]
 
@@ -205,70 +204,37 @@ async function loadThemes() {
   }
 }
 
-// ---- 分享令牌 ----
-
-const sharesLoading = ref(false)
-const shares = ref<ShareToken[]>([])
-const shareSettings = ref<ShareSettings | null>(null)
-const shareSaving = ref(false)
-const createdShareUrl = ref('')
-const newShareLabel = ref('')
-const sharesError = ref('')
-const creatingShare = ref(false)
-
-async function loadShares() {
-  sharesLoading.value = true
-  try {
-    const [list, settings] = await Promise.all([
-      apiGet<components['schemas']['ShareTokenList']>('/api/v1/share/tokens'),
-      apiGet<ShareSettings>('/api/v1/share/settings'),
-    ])
-    shares.value = list.tokens
-    shareSettings.value = settings
-  } catch (e: unknown) {
-    sharesError.value = e instanceof Error ? e.message : '分享设置加载失败'
-  } finally {
-    sharesLoading.value = false
-  }
+// ---- 只读输出 API ----
+const exportLoading = ref(false)
+const exportKeys = ref<ExportKey[]>([])
+const exportError = ref('')
+const exportLabel = ref('')
+const exportNodes = ref<string[]>([])
+const exportAll = ref(true)
+const createdKey = ref('')
+const exportBusy = ref(false)
+async function loadExports() {
+  exportLoading.value = true
+  try { exportKeys.value = (await apiGet<components['schemas']['ExportKeyList']>('/api/v1/export/keys')).keys }
+  catch (reason) { exportError.value = reason instanceof Error ? reason.message : '输出密钥加载失败' }
+  finally { exportLoading.value = false }
 }
-
-async function toggleShare() {
-  if (!shareSettings.value) return
-  shareSaving.value = true
-  sharesError.value = ''
+async function createExport() {
+  exportBusy.value = true
+  exportError.value = ''
+  createdKey.value = ''
   try {
-    shareSettings.value = await apiPut<ShareSettings>('/api/v1/share/settings', {
-      ...shareSettings.value, enabled: !shareSettings.value.enabled,
-    })
-  } catch (e: unknown) {
-    sharesError.value = e instanceof Error ? e.message : '分享开关保存失败'
-  } finally { shareSaving.value = false }
+    const result = await apiPost<components['schemas']['ExportKeyCreated']>('/api/v1/export/keys', { label: exportLabel.value.trim(), nodes: exportAll.value ? null : exportNodes.value })
+    createdKey.value = result.key
+    exportLabel.value = ''
+    await loadExports()
+  } catch (reason) { exportError.value = reason instanceof Error ? reason.message : '创建失败' }
+  finally { exportBusy.value = false }
 }
-
-async function createShare() {
-  if (!newShareLabel.value.trim()) return
-  creatingShare.value = true
-  sharesError.value = ''
-  try {
-    const result = await apiPost<components['schemas']['ShareTokenCreated']>('/api/v1/share/tokens', { label: newShareLabel.value.trim() })
-    createdShareUrl.value = `${window.location.origin}/share/${result.token}/`
-    newShareLabel.value = ''
-    await loadShares()
-  } catch (err: unknown) {
-    sharesError.value = err instanceof Error ? err.message : '创建失败'
-  } finally {
-    creatingShare.value = false
-  }
-}
-
-async function deleteShare(token: string) {
-  if (!confirm('确定删除此分享令牌？现有分享链接将立即失效。')) return
-  try {
-    await apiDelete(`/api/v1/share/tokens/${encodeURIComponent(token)}`)
-    await loadShares()
-  } catch (err: unknown) {
-    sharesError.value = err instanceof Error ? err.message : '删除失败'
-  }
+async function revokeExport(id: string) {
+  if (!confirm('撤销后，使用此密钥的客户端立即失去读取权限，是否继续？')) return
+  try { await apiDelete('/api/v1/export/keys/' + id); await loadExports() }
+  catch (reason) { exportError.value = reason instanceof Error ? reason.message : '撤销失败' }
 }
 
 // ---- 审计日志 ----
@@ -300,7 +266,7 @@ onMounted(() => {
 function onTabChange(tab: SettingsTab) {
   active.value = tab
   if (tab === 'themes' && themes.value.length === 0) loadThemes()
-  if (tab === 'share' && shares.value.length === 0) loadShares()
+  if (tab === 'export' && exportKeys.value.length === 0) loadExports()
   if (tab === 'audit' && auditLogs.value.length === 0) loadAudit()
 }
 
@@ -502,44 +468,28 @@ function formatDate(unixSecs: number): string {
       </div>
     </div>
 
-    <!-- =================== 分享令牌 =================== -->
-    <div v-else-if="active === 'share'" class="settings-section">
+    <!-- =================== 输出 API =================== -->
+    <div v-else-if="active === 'export'" class="settings-section">
       <div class="settings-group">
-        <h3 class="settings-group__title">分享令牌</h3>
-        <p class="settings-group__desc">每个令牌生成一个公开只读分享链接，令牌删除后链接立即失效。</p>
-        <div v-if="shareSettings" class="settings-row">
-          <span>公开分享：{{ shareSettings.enabled ? '已启用' : '已关闭' }}</span>
-          <Button variant="default" size="sm" :busy="shareSaving" @click="toggleShare">{{ shareSettings.enabled ? '关闭分享' : '启用分享' }}</Button>
+        <h3 class="settings-group__title">只读输出 API</h3>
+        <p class="settings-group__desc">JSON：<code>/api/v1/public/nodes</code>、<code>/api/v1/public/summary</code>；Prometheus：<code>/api/v1/public/metrics</code>。使用 <code>Authorization: Bearer &lt;API Key&gt;</code>，地址无需安全入口。</p>
+        <p class="settings-group__desc">输出仅包含公开字段与指标。隐藏、撤销或不在密钥范围内的节点不会返回。</p>
+        <p v-if="createdKey" class="settings-group__desc">密钥仅显示一次，请保存：<code>{{ createdKey }}</code></p>
+        <Input v-model="exportLabel" placeholder="密钥用途，例如 Prometheus" />
+        <label class="settings-row"><input v-model="exportAll" type="checkbox" />允许所有公开节点</label>
+        <div v-if="!exportAll" class="export-scope">
+          <label v-for="entry in workspace.state.nodeEntries.filter(entry => !entry.node.revoked)" :key="entry.node.id"><input v-model="exportNodes" type="checkbox" :value="entry.node.id" />{{ entry.node.name }}</label>
         </div>
-        <p v-if="createdShareUrl" class="settings-group__desc">此链接仅显示一次，请保存：<a :href="createdShareUrl" target="_blank" rel="noopener noreferrer">{{ createdShareUrl }}</a></p>
-
-        <!-- 创建 -->
-        <div class="settings-row settings-row--gap">
-          <Input v-model="newShareLabel" placeholder="标签（如：团队演示）" style="flex:1" />
-          <Button
-            variant="primary"
-            size="sm"
-            :busy="creatingShare"
-            :disabled="!newShareLabel.trim()"
-            @click="createShare"
-          >创建</Button>
-        </div>
-        <p v-if="sharesError" class="settings-error">{{ sharesError }}</p>
-
-        <!-- 令牌列表 -->
-        <div v-if="sharesLoading" class="share-list-skeleton">
-          <Skeleton v-for="i in 3" :key="i" height="48px" style="border-radius:var(--radius-md)" />
-        </div>
-        <div v-else class="share-list">
-          <div v-for="s in shares" :key="s.id" class="share-item">
-            <div class="share-item__info">
-              <span class="share-item__name">{{ s.label }}</span>
-              <span class="share-item__meta">创建于 {{ formatDate(s.created_at) }}</span>
-              <Badge :tone="s.revoked ? 'warning' : 'success'">{{ s.revoked ? '已撤销' : s.expires_at && s.expires_at <= Date.now() / 1000 ? '已过期' : '有效' }}</Badge>
-            </div>
-            <Button variant="ghost" size="sm" :disabled="s.revoked" @click="deleteShare(s.id)">撤销</Button>
+        <Button variant="primary" size="sm" :busy="exportBusy" :disabled="!exportLabel.trim()" @click="createExport">创建只读密钥</Button>
+        <p v-if="exportError" class="settings-error" role="alert">{{ exportError }}</p>
+        <p v-if="exportLoading">正在读取…</p>
+        <div v-else class="export-list">
+          <div v-for="key in exportKeys" :key="key.id" class="export-item">
+            <div class="export-item__info"><span class="export-item__name">{{ key.label }}</span><span class="export-item__meta">{{ key.nodes === null ? '所有公开节点' : key.nodes.length + ' 个节点' }} · {{ formatDate(key.created_at) }}</span></div>
+            <Badge :tone="key.revoked ? 'default' : 'success'">{{ key.revoked ? '已撤销' : '有效' }}</Badge>
+            <Button variant="ghost" size="sm" :disabled="key.revoked" @click="revokeExport(key.id)">撤销</Button>
           </div>
-          <p v-if="shares.length === 0" class="theme-empty">暂无分享令牌</p>
+          <p v-if="!exportKeys.length" class="theme-empty">暂无输出密钥</p>
         </div>
       </div>
     </div>
@@ -682,18 +632,18 @@ function formatDate(unixSecs: number): string {
 .release-item__tag { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-ink); }
 .release-item__asset { font-size: var(--text-xs); color: var(--color-muted); }
 
-/* 分享令牌 */
-.share-list, .share-list-skeleton { display: flex; flex-direction: column; gap: var(--sp-2); }
-.share-item {
+/* 输出 API */
+.export-list, .export-list-skeleton { display: flex; flex-direction: column; gap: var(--sp-2); }
+.export-item {
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
   padding: var(--sp-3) var(--sp-4);
   background: var(--color-surface);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
 }
-.share-item__info { display: flex; align-items: center; gap: var(--sp-2); flex: 1; min-width: 0; }
-.share-item__name { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--color-ink); }
-.share-item__meta { font-size: var(--text-xs); color: var(--color-muted); }
+.export-item__info { display: flex; align-items: center; gap: var(--sp-2); flex: 1; min-width: 0; }
+.export-item__name { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--color-ink); }
+.export-item__meta { font-size: var(--text-xs); color: var(--color-muted); }
 
 /* 审计日志 */
 .audit-skeleton { display: flex; flex-direction: column; gap: var(--sp-1); }

@@ -7,7 +7,7 @@
 import { computed, ref, nextTick } from 'vue'
 import type { DeepReadonly } from 'vue'
 import { workspace } from '../state/workspace'
-import { apiPost, apiDelete } from '../api/client'
+import { apiPost, apiDelete, apiPut } from '../api/client'
 import type { components } from '../api/generated'
 import { formatPercent, formatBytes, formatUptime, formatUnixTime } from '../utils/format'
 import Status from '../components/ui/Status.vue'
@@ -25,7 +25,7 @@ const downloaded = ref(false)
 const copyMessage = ref('')
 const commandField = ref<HTMLTextAreaElement | null>(null)
 const revoking = ref('')
-const draft = ref({ name: '', addresses: '', overlay: '', sshPort: 22, mode: 'host' as Registration['install_mode'] })
+const draft = ref({ name: '', mode: 'host' as Registration['install_mode'] })
 const pending = computed(() => workspace.state.enrollments)
 const registeredEntry = computed(() => workspace.state.nodeEntries.find(e => e.node.id === enrollment.value?.node_id))
 const expiredEntry = computed(() => pending.value.find(p => p.node_id === enrollment.value?.node_id && p.status === 'expired'))
@@ -38,7 +38,7 @@ const oneClickCommand = computed(() => {
 })
 
 async function openEnrollment() {
-  draft.value = { name: '', addresses: '', overlay: '', sshPort: 22, mode: 'host' }
+  draft.value = { name: '', mode: 'host' }
   enrollment.value = null
   enrollmentError.value = ''
   downloaded.value = false
@@ -61,9 +61,6 @@ async function createEnrollment() {
   try {
     const registration: Registration = {
       name: draft.value.name.trim(),
-      public_addresses: draft.value.addresses.split(/[\s,，]+/).filter(Boolean),
-      overlay_address: draft.value.overlay.trim() || null,
-      ssh_port: draft.value.sshPort,
       install_mode: draft.value.mode,
     }
     enrollment.value = await apiPost<EnrollmentToken>('/api/v1/enrollment-tokens', registration)
@@ -106,7 +103,7 @@ async function copyInstallCommand() {
 
 async function regenerateEnrollment(p: DeepReadonly<components['schemas']['EnrollmentSummary']>) {
   await openEnrollment()
-  draft.value = { name: p.name, addresses: p.public_addresses.join(', '), overlay: p.overlay_address || '', sshPort: p.ssh_port, mode: p.install_mode }
+  draft.value = { name: p.name, mode: p.install_mode }
   enrollmentBusy.value = true
   try {
     await apiDelete(`/api/v1/enrollment-tokens/${encodeURIComponent(p.node_id)}`)
@@ -148,6 +145,12 @@ const installCommand = computed(() => {
 
 const entry = computed(() => workspace.selectedEntry.value)
 const node = computed(() => entry.value?.node ?? null)
+const network = computed(() => workspace.state.network?.nodes.find(item => item.node_id === node.value?.id))
+async function setController() {
+  if (!node.value) return
+  try { await apiPut('/api/v1/network', {node_id: node.value.id}); await workspace.refreshNetwork() }
+  catch (reason) { enrollmentError.value = reason instanceof Error ? reason.message : '设置控制机失败' }
+}
 const metricsNode = computed(() =>
   node.value ? workspace.state.metrics[node.value.id] : null
 )
@@ -234,6 +237,14 @@ const diskPercent = computed(() => {
       </div>
       <div v-else class="nodes-page__offline">{{ metricsNode?.error || '尚未采集指标' }}</div>
     </template>
+    <section v-if="node" class="network-panel">
+      <div class="nodes-toolbar"><h2>控制线路与自动互信</h2><Button size="sm" :disabled="workspace.state.network?.directory.controller_node_id === node.id" @click="setController">{{ workspace.state.network?.directory.controller_node_id === node.id ? '当前 Hub 宿主节点' : '指定为 Hub 宿主节点' }}</Button></div>
+      <p>控制机 Agent 仍需手动安装。公网恢复稳定 15 秒后优先；节点间探测与 ET 直连、中继状态分别显示。</p>
+      <div class="network-paths"><div v-for="path in network?.connections.paths" :key="path.path"><strong>{{ path.path === 'public' ? '公网' : 'ET' }}</strong> · {{ path.connected ? '已连接' : '未连接' }}{{ network?.connections.active_path === path.path ? '（使用中）' : '' }} · {{ path.rtt_ms == null ? '—' : path.rtt_ms + ' ms' }}<span v-if="path.error"> · {{ path.error }}</span></div></div>
+      <p v-if="network?.applied">白名单：期望 {{ network.desired_revision ?? '未知' }} / 已应用 {{ network.applied.applied_revision }} · {{ network.applied.backend || '尚未应用' }}<span v-if="network.applied.error" class="enrollment-error"> · {{ network.applied.error }}</span></p>
+      <p v-else>尚未收到白名单应用结果；旧 Agent 不支持自动互信。</p>
+      <details><summary>地址观测与来源</summary><pre>{{ JSON.stringify(network?.addresses, null, 2) }}</pre></details>
+    </section>
     <Drawer :open="enrollmentOpen" title="添加节点" size="lg" @close="closeEnrollment">
       <p v-if="enrollmentError" class="enrollment-error" role="alert">{{ enrollmentError }}</p>
       <form v-if="!enrollment" id="node-enrollment-form" class="enrollment-form" @submit.prevent="createEnrollment">
@@ -244,13 +255,8 @@ const diskPercent = computed(() => {
           <option value="host">宿主机 Agent</option>
           <option value="docker">Docker Agent</option>
         </select>
-        <p class="enrollment-hint">{{ draft.mode === 'docker' ? 'Docker 模式提供容器管理与只读采集，不提供宿主机 systemd 和存储写入。' : '宿主机模式在 Linux 上运行，需要先安装 opsd-agent。' }}</p>
-        <label for="new-node-addresses">公网 IP（选填）</label>
-        <input id="new-node-addresses" v-model="draft.addresses" class="enrollment-input" placeholder="多个 IPv4 或 IPv6 地址用逗号分隔" />
-        <label for="new-node-overlay">覆盖网 IP（选填）</label>
-        <input id="new-node-overlay" v-model="draft.overlay" class="enrollment-input" placeholder="节点的内网或覆盖网地址" />
-        <label for="new-node-ssh-port">SSH 端口</label>
-        <input id="new-node-ssh-port" v-model.number="draft.sshPort" class="enrollment-input" type="number" min="1" max="65535" required />
+        <p class="enrollment-hint">{{ draft.mode === 'docker' ? 'Docker 模式提供只读采集；部署业务插件需要宿主机 Agent。' : '宿主机模式在 Linux 上运行，需要先安装 opsd-agent。' }}</p>
+        <p class="enrollment-hint">地址由 Agent 自动发现，ET 地址通过 ET 插件关联。宿主机模式支持插件节点动作与自动互信；Docker 模式仅保留现有只读能力。</p>
         <p class="enrollment-hint">创建后生成一次性令牌，10 分钟内有效。Agent 完成注册后才进入节点列表。</p>
       </form>
       <div v-else class="enrollment-result">
@@ -291,6 +297,8 @@ const diskPercent = computed(() => {
 </template>
 
 <style scoped>
+.network-panel { margin:24px 0;padding:20px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);font-size:13px; }
+.network-panel h2 { font-size:16px;margin:0; }.network-paths { display:grid;gap:10px; }.network-panel pre { white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px; }
 .nodes-page { display: flex; flex-direction: column; gap: var(--sp-5); }
 .nodes-toolbar { display: flex; align-items: center; justify-content: space-between; color: var(--color-muted); }
 .enrollment-pending { display: flex; flex-direction: column; gap: var(--sp-3); }

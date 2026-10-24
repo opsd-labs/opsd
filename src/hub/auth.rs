@@ -110,8 +110,7 @@ pub async fn login(
         expires: now() + 28800,
     };
     s.db.insert("sessions", &digest(&key), &session).await?;
-    // Cookie 的 Path 限定在安全入口之下：浏览器**不会**把它发给分享面，
-    // 这是"分享页拿不到控制台凭据"这条保证的落点，不能退化成 Path=/。
+    // Cookie 限定在安全入口内，独立输出 API 不携带控制台会话。
     let path = format!("/{}/", s.entrance_path());
     Ok((
         [(

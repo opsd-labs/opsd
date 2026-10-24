@@ -1,6 +1,6 @@
 //! 主题系统。
 //!
-//! 控制台完整前端、控制台样式覆盖、分享页主题分别选择。
+//! 控制台完整前端与样式覆盖分别选择。
 //! 完整控制台主题与内置前端使用相同的认证与 API，安装意味着信任其管理员侧代码。
 //!
 //! 安全边界：
@@ -8,10 +8,6 @@
 //! - 首版只支持 `configuration.type = "managed"`；**`raw` 不做**——它允许主题在管理区
 //!   渲染自带 HTML，等于在控制台里执行第三方代码。
 //! - 主题包沿用内容摘要与解包限制；完整控制台支持上传或公开 GitHub 发行版安装。
-//! - 分享页主题运行在 `/share/{令牌}/` 之下，与控制台**不同路径**，
-//!   控制台会话 Cookie 的 Path 限定在安全入口之下，因此主题拿不到它。
-//! - 分享页主题的响应带独立 CSP，默认禁止外联。
-//! - 分享页主题的配置**公开可读**，因此不得放密钥。
 use anyhow::{Context, Result};
 use opsd::{protocol::now, store::Store};
 use serde::{Deserialize, Serialize};
@@ -28,8 +24,7 @@ pub const BUCKET: &str = "themes";
 pub const SETTINGS_BUCKET: &str = "settings";
 pub const CONSOLE_ID: &str = "theme_console";
 pub const CONSOLE_FRONTEND_ID: &str = "theme_console_frontend";
-pub const SHARE_ID: &str = "theme_share";
-pub const CONSOLE_API_VERSION: u32 = 1;
+pub const CONSOLE_API_VERSION: u32 = 2;
 /// 内置主题的 `short`，不可删除。
 pub const DEFAULT: &str = "default";
 /// 单个主题包的体积上限。
@@ -82,7 +77,7 @@ impl Localized {
     }
 }
 
-/// 主题覆盖的界面。同时覆盖两者的主题也是合法的。
+/// 保留 Share 反序列化以读取历史清单；分享资源入口已移除。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Surface {
@@ -357,64 +352,6 @@ pub async fn install_console(db: &Store, manifest: Manifest, digest: String) -> 
         digest,
         installed_at: now(),
         has_assets: false,
-    };
-    db.put(BUCKET, &installed.manifest.short, &installed)
-        .await?;
-    Ok(installed)
-}
-
-/// 安装分享页主题：解压到资源目录，校验清单后登记。
-pub async fn install_share(
-    db: &Store,
-    data: &Path,
-    package: &[u8],
-    digest: String,
-) -> Result<Installed> {
-    anyhow::ensure!(
-        package.len() <= MAX_PACKAGE_BYTES,
-        "主题包超过 {} MB 上限",
-        MAX_PACKAGE_BYTES / 1024 / 1024
-    );
-    // 先解压到临时目录，校验通过后再就位，避免留下半个主题
-    let staging = data
-        .join("themes")
-        .join(format!(".staging-{}", opsd::protocol::id()));
-    let _ = std::fs::remove_dir_all(&staging);
-    let result = (|| -> Result<Manifest> {
-        extract(package, &staging)?;
-        let manifest = read_manifest(&staging)?;
-        validate(&manifest)?;
-        anyhow::ensure!(
-            manifest.surfaces.contains(&Surface::Share),
-            "该主题未声明支持分享页"
-        );
-        anyhow::ensure!(
-            staging.join("index.html").is_file(),
-            "分享页主题包根目录必须包含 index.html"
-        );
-        Ok(manifest)
-    })();
-    let manifest = match result {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(error);
-        }
-    };
-    let destination = asset_dir(data, &manifest.short);
-    if let Some(previous) = db.get::<Installed>(BUCKET, &manifest.short).await? {
-        if previous.manifest.console_frontend.is_some() {
-            let _ = std::fs::remove_dir_all(&staging);
-            anyhow::bail!("该标识已用于完整控制台前端");
-        }
-    }
-    let _ = std::fs::remove_dir_all(&destination);
-    std::fs::rename(&staging, &destination).context("主题资源就位失败")?;
-    let installed = Installed {
-        manifest,
-        digest,
-        installed_at: now(),
-        has_assets: true,
     };
     db.put(BUCKET, &installed.manifest.short, &installed)
         .await?;
@@ -712,21 +649,6 @@ pub async fn console_frontend_asset(
         .into_response()
 }
 
-/// 分享页主题的 CSP：默认禁止外联，只放行自身资源与内联样式。
-///
-/// 主题不得引用控制台接口，因此 `connect-src` 只允许同源。
-pub fn share_csp() -> &'static str {
-    "default-src 'none'; \
-     script-src 'self'; \
-     style-src 'self' 'unsafe-inline'; \
-     img-src 'self' data:; \
-     font-src 'self'; \
-     connect-src 'self'; \
-     base-uri 'none'; \
-     form-action 'none'; \
-     frame-ancestors 'none'"
-}
-
 /* ------------------------------------------------------------------ *
  * 处理函数
  * ------------------------------------------------------------------ */
@@ -773,11 +695,9 @@ pub async fn list_themes(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
 /// 读取两个界面各自启用的主题，以及控制台主题需要覆盖的令牌。
 pub async fn read_active(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
     let console = active(&s.db, CONSOLE_ID).await?;
-    let share = active(&s.db, SHARE_ID).await?;
     let frontend = active_frontend(&s).await?;
     Ok(Json(serde_json::json!({
         "console": describe(console),
-        "share": describe(share),
         "console_frontend": describe_frontend(frontend),
     })))
 }
@@ -911,22 +831,6 @@ pub async fn install_console_theme(
     ))
 }
 
-/// 安装分享页主题。请求体是主题包原始字节，便于用 curl 直接上传。
-pub async fn install_share_theme(
-    S(s): S<State>,
-    body: Bytes,
-) -> ApiResult<Json<serde_json::Value>> {
-    let _lock = s.gate.lock().await;
-    check(!body.is_empty(), "请求体为空")?;
-    // 摘要由主控自己计算，不信任调用方提供的任何校验值
-    let digest = opsd::protocol::digest(&body);
-    let installed = install_share(&s.db, &s.dir, &body, digest).await?;
-    Ok(Json(serde_json::json!({
-        "short": installed.manifest.short,
-        "digest": installed.digest,
-    })))
-}
-
 pub async fn remove_theme(
     S(s): S<State>,
     AxumPath(short): AxumPath<String>,
@@ -934,7 +838,7 @@ pub async fn remove_theme(
     let _lock = s.gate.lock().await;
     remove(&s.db, &s.dir, &short).await?;
     // 删掉的正好是启用中的主题时，回落到内置
-    for id in [CONSOLE_ID, CONSOLE_FRONTEND_ID, SHARE_ID] {
+    for id in [CONSOLE_ID, CONSOLE_FRONTEND_ID] {
         if s.db.get::<String>(SETTINGS_BUCKET, id).await?.as_deref() == Some(short.as_str()) {
             s.db.delete(SETTINGS_BUCKET, id).await?;
         }
@@ -945,7 +849,7 @@ pub async fn remove_theme(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Activate {
-    /// `console`、`console_frontend` 或 `share`。
+    /// `console` 或 `console_frontend`。
     surface: String,
     /// `default` 表示回到内置主题。
     short: String,
@@ -961,7 +865,6 @@ pub async fn activate(
     let id = match input.surface.as_str() {
         "console" => CONSOLE_ID,
         "console_frontend" => CONSOLE_FRONTEND_ID,
-        "share" => SHARE_ID,
         other => return Err(bad(&format!("未知界面：{other}"))),
     };
     if input.surface == "console_frontend" {
@@ -981,6 +884,14 @@ pub async fn activate(
             "该主题不是完整控制台前端",
         )?;
         check(
+            installed
+                .manifest
+                .console_frontend
+                .as_ref()
+                .is_some_and(|frontend| frontend.api_version == CONSOLE_API_VERSION),
+            "旧控制台主题需要适配核心 API v2，请先使用内置前端",
+        )?;
+        check(
             asset_dir(&s.dir, &input.short).join("index.html").is_file(),
             "控制台主题入口文件不存在",
         )?;
@@ -992,11 +903,7 @@ pub async fn activate(
         "完整控制台前端应通过 console_frontend 选择",
     )?;
     // 主题必须声明覆盖该界面，否则选了也不会有任何效果
-    let surface = if input.surface == "console" {
-        Surface::Console
-    } else {
-        Surface::Share
-    };
+    let surface = Surface::Console;
     check(
         installed.manifest.surfaces.contains(&surface),
         "该主题未声明支持这个界面",
@@ -1022,80 +929,6 @@ pub async fn activate(
         "short": input.short,
         "settings": settings,
     })))
-}
-
-/* ------------------------------------------------------------------ *
- * 分享面：公开的主题信息与主题资源
- * ------------------------------------------------------------------ */
-
-/// 分享页的主题设置是**公开可读**的，与 Komari 的 `theme_settings` 同理。
-/// 因此这里也必须在界面与文档中反复提示：**不得放入密钥**。
-pub async fn share_theme(S(s): S<State>) -> ApiResult<Json<serde_json::Value>> {
-    let active = active(&s.db, SHARE_ID).await?;
-    Ok(Json(describe(active)))
-}
-
-/// 分享页主题的静态资源。路径必须落在该主题的资源目录内。
-pub async fn share_theme_asset(
-    S(s): S<State>,
-    AxumPath((_token, path)): AxumPath<(String, String)>,
-) -> Response {
-    if path.contains("..") || path.starts_with('/') {
-        return (StatusCode::NOT_FOUND, "").into_response();
-    }
-    let Ok(Some((installed, _))) = active(&s.db, SHARE_ID).await else {
-        return (StatusCode::NOT_FOUND, "").into_response();
-    };
-    if !installed.has_assets {
-        return (StatusCode::NOT_FOUND, "").into_response();
-    }
-    let target = asset_dir(&s.dir, &installed.manifest.short).join(&path);
-    let Ok(bytes) = tokio::fs::read(&target).await else {
-        return (StatusCode::NOT_FOUND, "").into_response();
-    };
-    let mime = match target.extension().and_then(|e| e.to_str()) {
-        Some("js") | Some("mjs") => "text/javascript",
-        Some("css") => "text/css",
-        Some("html") => "text/html; charset=utf-8",
-        Some("svg") => "image/svg+xml",
-        Some("json") => "application/json",
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("webp") => "image/webp",
-        Some("woff2") => "font/woff2",
-        _ => "application/octet-stream",
-    };
-    (
-        [
-            (header::CONTENT_TYPE, mime),
-            // 主题资源一律注入独立 CSP：默认禁止外联
-            (header::CONTENT_SECURITY_POLICY, share_csp()),
-        ],
-        bytes,
-    )
-        .into_response()
-}
-
-/// 分享页主题的入口 HTML。未启用包级主题时由调用方回落到内置页面。
-pub async fn share_theme_index(S(s): S<State>) -> Option<Response> {
-    let Ok(Some((installed, _))) = active(&s.db, SHARE_ID).await else {
-        return None;
-    };
-    if !installed.has_assets {
-        return None;
-    }
-    let target = asset_dir(&s.dir, &installed.manifest.short).join("index.html");
-    let html = tokio::fs::read_to_string(&target).await.ok()?;
-    Some(
-        (
-            [
-                (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-                (header::CONTENT_SECURITY_POLICY, share_csp()),
-            ],
-            html,
-        )
-            .into_response(),
-    )
 }
 
 #[cfg(test)]
@@ -1178,7 +1011,7 @@ mod tests {
         validate(&m).unwrap();
         let input: ThemeManifestInput = serde_json::from_value(serde_json::json!({
             "short": "web", "name": "完整前端", "surfaces": ["console"],
-            "console_frontend": { "api_version": 1 }
+            "console_frontend": { "api_version": CONSOLE_API_VERSION }
         }))
         .unwrap();
         validate(&input.into()).unwrap();
@@ -1371,18 +1204,6 @@ mod tests {
         let error = extract(&buffer, &dir).unwrap_err().to_string();
         assert!(error.contains("越界"), "应拒绝越界路径：{error}");
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn 分享页的_csp_默认禁止外联() {
-        let csp = share_csp();
-        assert!(csp.contains("default-src 'none'"));
-        assert!(csp.contains("script-src 'self'"));
-        assert!(csp.contains("connect-src 'self'"));
-        assert!(csp.contains("frame-ancestors 'none'"));
-        // 不得出现任何允许任意外部来源的通配
-        assert!(!csp.contains("https:"), "CSP 不应放行任意外部来源");
-        assert!(!csp.contains("unsafe-eval"));
     }
 
     #[test]
