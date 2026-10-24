@@ -80,4 +80,4 @@ node tests/shots.mjs database ../../.data/screenshots/database
 - Web 通过 API 与 Hub 通信，不直接访问节点或数据目录。
 - 新功能应先明确能力边界、失败状态和审计要求，再实现跨层协议。
 
-插件位于 `plugins/`，正式包由现有 `Publish image` 工作流的 `plugins_only` 与 `plugin_id` 选择独立构建和发行，不重发 Hub／Agent。`tools/package-plugin.mjs` 组合平台程序与页面；CI 的 GNU 调试包仅供验收。正式 musl 双架构发行已通过，制品与部署边界见 [架构说明](architecture.md#正式发行与-c091-部署)。Agent 构建成功后若发行中断，可用 `reuse_agent_run` 引用该运行继续 Hub 发行，仅允许发布流程或 Markdown 改动；已开始的安装验收优先重跑失败作业。
+后端模块位于 `plugins/`，业务前端位于 `web/src/modules/` 并随内置控制台构建。正式包由现有 `Publish image` 工作流的 `plugins_only` 与 `plugin_id` 选择独立构建和发行，不重发 Hub／Agent。`tools/package-plugin.mjs` 组合平台程序、清单与业务契约，不再包含页面；CI 的 GNU 调试包仅供验收。当前实现与证据见 [架构说明](architecture.md#统一业务页面与模块初始化)。Agent 构建成功后若发行中断，可用 `reuse_agent_run` 引用该运行继续 Hub 发行，仅允许发布流程或 Markdown 改动；已开始的安装验收优先重跑失败作业。

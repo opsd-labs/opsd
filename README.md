@@ -5,11 +5,11 @@ opsd 是一个用于管理多台 Linux 服务器的主控系统，主要由以�
 - **Hub**：运行在主控上的 Rust 服务，负责认证、节点目录、任务调度、审计和 Web 控制台。
 - **Agent**：运行在被管理节点上的无头服务，主动通过 mTLS 连接 Hub，在本机执行结构化任务。
 - **Web 控制台**：Vue 3 管理界面，提供节点、指标、任务和运维视图。
-- **独立插件**：集成现有 EasyTier Web、Portainer 与 Silo，分别维护业务接口和页面。
+- **独立后端模块**：集成 EasyTier Web、Portainer 与 Silo，分别维护业务接口和节点执行器。
 
-Hub 不挂载 Docker socket。核心负责节点、双线路通信、任务和权限；ET、Docker／Portainer、Silo 由独立进程插件集成。插件页面独立分发，日常 Docker 业务统一通过 Portainer。
+Hub 不挂载 Docker socket。核心负责节点、双线路通信、任务和权限；ET、Docker／Portainer、Silo 由独立进程模块集成。Docker、网络、存储是固定一级页面，随内置控制台统一构建；日常 Docker 业务统一通过 Portainer。
 
-> **当前状态**：仍为开发／灰度版本。核心网络、独立插件和只读输出 API 已实现并通过本批云端验收；C091 Hub 与三个正式插件包已更新，发行与线上证据集中记录在 [架构说明](docs/architecture.md#正式发行与-c091-部署)。宿主机 Agent 仍由用户手动接入，真实磁盘与多节点 Silo 仍需单独部署验收。
+> **当前状态**：仍为开发／灰度版本。统一业务页面与 0.2.0 后端模块已完成源码和本批云端验收，当前发行及部署边界见 [架构说明](docs/architecture.md#统一业务页面与模块初始化)。宿主机 Agent 仍由用户手动接入，缺少 Docker 的完整初始化链路、真实首次多机组网与多节点 Silo 仍需单独验收。
 
 ## 快速入口
 
@@ -32,10 +32,10 @@ Hub 不挂载 Docker socket。核心负责节点、双线路通信、任务和�
 | --- | --- |
 | 节点注册、证书和 mTLS 通道 | 已实现，仍需生产规模验证 |
 | 节点指标、主机盘点和历史曲线 | 已实现，Linux 环境需实际验证 |
-| Docker／Portainer 插件 | 容器、Stack、镜像、网络、卷、日志与终端；多主机 Agent 接入待部署验收 |
+| Docker／Portainer 模块 | 独立 Engine／Compose 引导，容器、Stack、镜像、网络、卷、日志与终端；缺软件安装及多主机 Agent 接入待验收 |
 | 终端和文件操作 | 已实现，使用前需按安全边界配置 |
 | 数据库只读巡检 | 已实现解析和展示，真实集群回归未完成 |
-| ET 与 Silo 插件 | 现有 ET Web 适配；明确选盘、部署恢复和桶用户集成，真实 Silo 集群未验收 |
+| 网络与存储模块 | ET Web 部署及原容器恢复通过；首次组网、明确选盘、部署恢复和桶用户集成已实现，真实多机链路未验收 |
 | JSON 与 Prometheus 输出 | 独立只读 API Key、节点范围和字段白名单；分享页面已移除 |
 | 审计、任务记录、备份与恢复 | 已实现并有自动化覆盖 |
 | 防火墙发现与计划 | 默认可用 |
@@ -55,7 +55,7 @@ Hub 不挂载 Docker socket。核心负责节点、双线路通信、任务和�
 ```text
 src/                 Rust Hub 与 Agent
 web/                 唯一内置控制台（原 web3）
-plugins/             SDK、ET、Docker／Portainer、Silo 独立包与页面
+plugins/             SDK、ET、Docker／Portainer、Silo 独立后端包
 tools/               前端契约生成与检查工具
 themes/              本机独立主题仓库，主仓库与镜像忽略
 docs/api/openapi.yaml
