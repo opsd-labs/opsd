@@ -462,7 +462,7 @@ pub fn human_bytes(value: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opsd::protocol::{DriveRisk, ExistingStorage};
+    use opsd::protocol::{BlockDevice, DriveRisk, ExistingStorage};
 
     fn node(id: &str) -> Node {
         Node {
