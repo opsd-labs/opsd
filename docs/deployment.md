@@ -16,6 +16,10 @@ export OPSD_CONSOLE_BIND=0.0.0.0
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `OPSD_ORIGIN` | `https://localhost:65535` | 浏览器和 CSRF 校验使用的 Origin |
+| `OPSD_AGENT_ORIGIN` | 与 `OPSD_ORIGIN` 相同 | 新节点安装脚本使用的 Hub HTTPS 地址；远程接入时须使用目标节点可达且证书匹配的公网地址 |
+| `OPSD_ENROLLMENT_ORIGIN` | Agent Origin 主机的 `https` 8443 | 临时注册入口的公网地址；只承载一次性 Agent 注册 |
+| `OPSD_ENROLLMENT_BIND` | `0.0.0.0:8443` | 临时注册入口监听地址；无有效令牌时 Hub 不监听 |
+| `OPSD_ENROLLMENT_PORT` | `8443` | Compose 发布的临时注册端口；网络映射可常驻，Hub 应用监听随令牌开闭 |
 | `OPSD_CONSOLE_BIND` | `127.0.0.1` | Compose 在主机上绑定的控制台地址 |
 | `OPSD_CONSOLE_PORT` | `65535` | 控制台端口 |
 | `OPSD_AGENT_BIND` | `0.0.0.0` | Agent 通道在主机上的绑定地址 |
@@ -24,6 +28,8 @@ export OPSD_CONSOLE_BIND=0.0.0.0
 | `OPSD_DATA_DIR` | `/var/lib/opsd` | 容器内数据目录 |
 
 控制台默认只绑定主机回环地址。需要由反向代理或其他网络入口访问时，显式设置 `OPSD_CONSOLE_BIND`，并限制防火墙来源。
+
+`OPSD_AGENT_ORIGIN` 只提供 Agent 通道目标主机，Agent 使用同主机 WSS 8444；`OPSD_ENROLLMENT_ORIGIN` 提供独立 HTTPS 注册地址，默认端口 8443。控制台来源仍由 `OPSD_ORIGIN` 决定。公网部署须让目标节点访问临时注册 HTTPS 与 WSS 8444，证书需匹配这两个地址。
 
 ## 2. 构建镜像
 

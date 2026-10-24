@@ -117,7 +117,7 @@ pub type Shared = Arc<RwLock<String>>;
 /// 代价必须写明：这些路径会暴露自身存在（返回 401/400 而不是直接断连），
 /// 使扫描者能据此得知这是一个 opsd 主控。因此白名单必须**逐条精确匹配**，
 /// 绝不能写成前缀，否则会变成绕过门禁的通道。
-pub const AGENT_PATHS: &[&str] = &["/api/v1/enroll"];
+pub const AGENT_PATHS: &[&str] = &[];
 pub const EXPORT_PATHS: &[&str] = &[
     "/api/v1/public/nodes",
     "/api/v1/public/summary",

@@ -134,7 +134,7 @@ function shellQuote(value: string): string { return "'" + value.replace(/'/g, "'
 const installCommand = computed(() => {
   const e = enrollment.value
   if (!e) return ''
-  const hub = shellQuote(window.location.origin)
+  const hub = shellQuote(e.hub)
   const agentUrl = shellQuote(e.agent_url)
   const fingerprint = shellQuote(e.ca_fingerprint)
   if (e.install_mode === 'docker') {
@@ -274,11 +274,11 @@ const diskPercent = computed(() => {
         </template>
         <template v-else-if="enrollment.installation">
           <div class="enrollment-actions">
-            <Button variant="primary" @click="copyInstallCommand">复制一键安装命令</Button>
-            <Button @click="downloadScript">下载安装脚本</Button>
+            <Button variant="primary" @click="downloadScript">下载安装脚本</Button>
+            <Button @click="copyInstallCommand">复制一键安装命令</Button>
           </div>
-          <p>在目标机的 root Bash 终端粘贴命令即可，程序、CA 和令牌会自动准备。目标机需要能访问 GitHub、Hub；Docker 模式还需已有可用 Docker 并能访问 GHCR。</p>
-          <p>安装器会配置常驻服务，并等待 Hub 确认在线；下载脚本后也可执行 <code>bash opsd-install.sh</code>。</p>
+          <p>将脚本放到目标机，在 root Bash 终端运行 <code>bash opsd-install.sh</code>。脚本会自动准备程序、CA 和一次性令牌。目标机需能访问 Hub 公网地址与 GitHub；Docker 模式还需已有可用 Docker 并能访问 GHCR。</p>
+          <p>安装器会配置常驻服务，并等待 Hub 确认 Agent 在线。</p>
           <p v-if="copyMessage" role="status">{{ copyMessage }}</p>
           <label for="node-install-command">一键安装命令</label>
           <textarea id="node-install-command" ref="commandField" class="enrollment-command enrollment-copy-field" :value="oneClickCommand" rows="4" readonly spellcheck="false" @copy="downloaded = true" />

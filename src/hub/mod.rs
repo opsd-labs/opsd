@@ -50,10 +50,16 @@ enum Command {
         listen: std::net::SocketAddr,
         #[arg(long, default_value = "0.0.0.0:8444")]
         agent_listen: std::net::SocketAddr,
+        #[arg(long, env = "OPSD_ENROLLMENT_BIND", default_value = "0.0.0.0:8443")]
+        enrollment_listen: std::net::SocketAddr,
         #[arg(long, env = "OPSD_HEALTH_BIND", default_value = "127.0.0.1:65534")]
         health_listen: std::net::SocketAddr,
         #[arg(long, env = "OPSD_ORIGIN", default_value = "https://localhost:65535")]
         origin: String,
+        #[arg(long, env = "OPSD_AGENT_ORIGIN")]
+        agent_origin: Option<String>,
+        #[arg(long, env = "OPSD_ENROLLMENT_ORIGIN")]
+        enrollment_origin: Option<String>,
         #[arg(long, default_value = "web/dist")]
         web: PathBuf,
     },
@@ -94,6 +100,9 @@ pub struct State {
     pub db: Store,
     pub dir: PathBuf,
     pub origin: String,
+    pub agent_origin: String,
+    pub enrollment_origin: String,
+    pub enrollment_changed: tokio::sync::watch::Sender<()>,
     pub channels: Arc<RwLock<NodeChannels>>,
     pub events: broadcast::Sender<serde_json::Value>,
     pub streams: broadcast::Sender<(String, Frame)>,
@@ -270,8 +279,11 @@ pub async fn run() -> Result<()> {
         Command::Serve {
             listen,
             agent_listen,
+            enrollment_listen,
             health_listen,
             origin,
+            agent_origin,
+            enrollment_origin,
             web,
         } => {
             anyhow::ensure!(
@@ -289,10 +301,20 @@ pub async fn run() -> Result<()> {
                 Arc::new(std::sync::RwLock::new(entrance_value.clone()));
             let (events, _) = broadcast::channel(512);
             let (streams, _) = broadcast::channel(256);
+            let (enrollment_changed, enrollment_receiver) = tokio::sync::watch::channel(());
+            let agent_origin = agent_origin
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| origin.clone());
+            let enrollment_origin = enrollment_origin
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| enrollment_url(&agent_origin));
             let state = State {
                 db,
                 dir: args.data_dir.clone(),
                 origin,
+                agent_origin,
+                enrollment_origin,
+                enrollment_changed,
                 channels: Default::default(),
                 events,
                 streams,
@@ -368,7 +390,10 @@ pub async fn run() -> Result<()> {
                 )
                 .route("/api/v1/plugins", get(plugins::list))
                 .route("/api/v1/plugins/catalog", get(plugins::catalog))
-                .route("/api/v1/plugins/{plugin}/install", post(plugins::install_official))
+                .route(
+                    "/api/v1/plugins/{plugin}/install",
+                    post(plugins::install_official),
+                )
                 .route(
                     "/api/v1/plugins/{plugin}/{version}",
                     delete(plugins::uninstall),
@@ -441,11 +466,10 @@ pub async fn run() -> Result<()> {
                     get(api::read_entrance).put(api::update_entrance),
                 )
                 .route_layer(middleware::from_fn_with_state(state.clone(), auth::require));
-            // 控制台与 Agent 共用的注册端点挂在公开面；它同样位于安全入口之下。
+            // 管理登录仅挂在控制台安全入口之下。
             let public = Router::new().route("/api/v1/auth/login", post(auth::login));
-            // Agent 首次注册发生在它拿到客户端证书之前，无法走 mTLS 通道，
-            // 因此单独挂在入口之外，并列入门禁白名单。凭据是一次性注册令牌与 CA 指纹核对。
-            let agent_public = Router::new()
+            // 首次注册只在独立临时 HTTPS 监听上提供。
+            let enrollment = Router::new()
                 .route("/api/v1/enroll", post(api::enroll))
                 .with_state(state.clone());
             // 浏览器面：静态资源与全部 API 统一挂在 /{安全入口} 之下，
@@ -496,11 +520,17 @@ pub async fn run() -> Result<()> {
                 .layer(axum::extract::DefaultBodyLimit::max(128 * 1024 * 1024))
                 .with_state(state.clone());
             let module_upload = Router::new()
-                .route("/api/v1/plugins/{plugin}/package", post(plugins::install_target))
+                .route(
+                    "/api/v1/plugins/{plugin}/package",
+                    post(plugins::install_target),
+                )
                 .route_layer(middleware::from_fn_with_state(state.clone(), auth::require))
                 .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024))
                 .with_state(state.clone());
-            let console = console.merge(theme_upload).merge(plugin_upload).merge(module_upload);
+            let console = console
+                .merge(theme_upload)
+                .merge(plugin_upload)
+                .merge(module_upload);
             let prefix = format!("/{entrance_value}");
             let trimmed = prefix.clone();
             // nest 不会匹配裸的 `/{入口}/`，因此显式补一条根路由；
@@ -512,7 +542,6 @@ pub async fn run() -> Result<()> {
                 .route("/api/v1/public/metrics", get(export::metrics))
                 .with_state(state.clone());
             let app = Router::new()
-                .merge(agent_public)
                 .nest(&prefix, console)
                 // 分享面挂在入口之外，凭自己的令牌放行；门禁按令牌是否有效决定是否响应。
                 .merge(export_routes)
@@ -543,7 +572,13 @@ pub async fn run() -> Result<()> {
                 .route("/renew", post(api::renew))
                 .route("/verify", post(api::verify))
                 .with_state(state.clone());
-            tokio::spawn(channel::dispatch(state));
+            tokio::spawn(channel::dispatch(state.clone()));
+            tokio::spawn(enrollment_listener(
+                state.clone(),
+                enrollment_listen,
+                enrollment,
+                enrollment_receiver,
+            ));
             let pki_dir = args.data_dir.join("pki");
             let gate = transport::Gate {
                 entrance,
@@ -576,6 +611,79 @@ impl State {
             .unwrap_or_default()
     }
 }
+
+async fn enrollment_listener(
+    state: State,
+    address: std::net::SocketAddr,
+    router: Router,
+    mut changed: tokio::sync::watch::Receiver<()>,
+) {
+    loop {
+        let next_expiry = match api::next_enrollment_expiry(&state).await {
+            Ok(expiry) => expiry,
+            Err(error) => {
+                tracing::error!(%error, "注册入口状态读取失败");
+                None
+            }
+        };
+        let Some(expiry) = next_expiry else {
+            if changed.changed().await.is_err() {
+                return;
+            }
+            continue;
+        };
+        let remaining = expiry.saturating_sub(now());
+        if remaining <= 0 {
+            continue;
+        }
+        let serving =
+            transport::serve(address, &state.dir.join("pki"), false, router.clone(), None);
+        tokio::pin!(serving);
+        tokio::select! {
+            result = &mut serving => {
+                if let Err(error) = result {
+                    tracing::error!(%error, "临时注册入口监听失败");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+            result = tokio::time::timeout(
+                std::time::Duration::from_secs(remaining as u64),
+                changed.changed(),
+            ) => {
+                let _ = result;
+            }
+        }
+    }
+}
+
+fn enrollment_url(origin: &str) -> String {
+    origin
+        .parse::<reqwest::Url>()
+        .ok()
+        .and_then(|mut url| {
+            url.set_scheme("https").ok()?;
+            url.set_port(Some(8443)).ok()?;
+            url.set_path("/");
+            url.set_query(None);
+            url.set_fragment(None);
+            Some(url.to_string().trim_end_matches('/').to_owned())
+        })
+        .unwrap_or_else(|| "https://localhost:8443".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enrollment_url;
+
+    #[test]
+    fn 临时注册地址沿用公网主机并使用专用端口() {
+        assert_eq!(
+            enrollment_url("https://hub.example.com:65535/console/"),
+            "https://hub.example.com:8443"
+        );
+    }
+}
+
 #[derive(Debug)]
 pub struct ApiError(pub axum::http::StatusCode, pub String);
 impl axum::response::IntoResponse for ApiError {

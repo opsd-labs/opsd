@@ -6,8 +6,8 @@ info:
   description: |
     本文档是 OPSD 核心 HTTP 契约源文件，生成物为 web/src/api/generated.ts。
     
-    控制台接口位于 /{安全入口}/ 下，入口不匹配时直接断开连接。入口之外仅豁免一次性注册
-    /api/v1/enroll 与精确列出的只读输出 API /api/v1/public/nodes、summary、metrics。
+    控制台接口位于 /{安全入口}/ 下，入口不匹配时直接断开连接。独立临时注册监听只在令牌有效时提供
+    /api/v1/enroll；控制台入口之外另有精确列出的只读输出 API /api/v1/public/nodes、summary、metrics。
     会话 Cookie 限定在安全入口下，非 GET/HEAD 请求同时校验 Origin 与 x-csrf-token。
     输出 API 使用独立 Bearer 密钥，按节点范围及公开字段白名单返回结果。
     
@@ -637,14 +637,14 @@ paths:
         - agent
       summary: Agent 一次性注册
       description: |
-        入口之外的白名单路径，凭一次性令牌放行，不依赖会话。Agent 在拿到客户端证书之前调用。
-        成功后令牌立即失效（防重放），并签发 90 天客户端证书。
+        仅由专用临时 HTTPS 监听提供，不依赖控制台会话。至少有一枚有效令牌时该监听开放；
+        Agent 在取得客户端证书前调用。成功后令牌立即失效（防重放），并签发 90 天客户端证书。
       servers:
         - url: https://{host}
           variables:
             host:
-              default: localhost:65535
-              description: 主控 HTTPS 监听地址
+              default: localhost:8443
+              description: 临时 Agent 注册 HTTPS 监听地址
       security: []
       requestBody:
         required: true
@@ -5004,6 +5004,7 @@ components:
         - expires_at
         - install_mode
         - agent_url
+        - hub
         - agent_image
         - installation
       properties:
@@ -5027,6 +5028,10 @@ components:
           type: string
           format: uri
           description: Agent mTLS WebSocket 地址，路径固定为 /agent。
+        hub:
+          type: string
+          format: uri
+          description: 新节点安装及注册使用的 Hub HTTPS 地址。
         agent_image:
           type: string
           description: Agent 镜像引用；部署时应替换为固定 digest。

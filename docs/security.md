@@ -14,7 +14,7 @@ https://hub.example.com:65535/{安全入口}/
 
 ## Agent 注册例外
 
-Agent 在取得客户端证书前无法使用 mTLS，因此 `POST /api/v1/enroll` 是入口前缀之外的精确白名单路径。它使用一次性、十分钟有效的随机注册令牌，并要求 Agent 校验 Hub CA 指纹。
+Agent 在取得客户端证书前无法使用 mTLS，因此 `POST /api/v1/enroll` 只存在于独立临时 HTTPS 监听。该监听仅在至少一枚一次性注册令牌有效期间开放，不提供控制台或其他 API；令牌消费、撤销、到期后关闭，重启时由持久状态恢复。已注册 Agent 的 mTLS WSS 通道保持开放。注册使用十分钟有效令牌，并要求 Agent 校验 Hub CA 指纹。
 
 这条路径会暴露服务存在性。另有三个精确的只读输出路径 /api/v1/public/nodes、/api/v1/public/summary、/api/v1/public/metrics，使用独立 Bearer API Key。不要扩大为模糊前缀或向这些路径开放管理能力。
 

@@ -132,10 +132,14 @@ function launch() {
       `127.0.0.1:${base}`,
       "--agent-listen",
       "127.0.0.1:8444",
+      "--enrollment-listen",
+      "127.0.0.1:19443",
       "--health-listen",
       "127.0.0.1:19543",
       "--origin",
       `https://localhost:${base}`,
+      "--enrollment-origin",
+      "https://localhost:19443",
       "--web",
       "web/dist",
     ],
@@ -500,6 +504,72 @@ try {
   await expect(consolePage.getByText('服务地址不可达，等待核实', { exact: true })).toBeVisible();
   await expect(consolePage.getByRole('button', { name: '核实并继续原部署', exact: true })).toBeVisible();
   assert.equal(new URL(consolePage.url()).searchParams.get('page'), 'network');
+
+  let firewallTask = null;
+  let firewallTaskNumber = 0;
+  const firewallPolicy = {
+    backend: 'nftables', rules: [], peers: { version: 7, addresses: ['203.0.113.9'] },
+    input_policy: 'accept', output_policy: 'accept', forward_policy: 'accept', adopted: true,
+  };
+  const firewallNodes = ['firewall-one', 'firewall-two'].map((id, index) => ({
+    connected: true,
+    connections: { active_path: 'public', paths: [] },
+    node: {
+      id, name: `防火墙节点 ${index + 1}`, address_version: 7, public_addresses: [`203.0.113.${index + 9}`],
+      overlay_address: null, ssh_port: 22, revoked: false, last_seen: Math.floor(Date.now() / 1000),
+      capabilities: { plugins: true, dual_path: false, os: 'linux', docker: false, compose: false, systemd: true, firewall: ['nftables'] },
+      inventory: { firewall: { state: 'ok', data: { policy: { peers: { version: 7, addresses: ['203.0.113.9'] } } } },
+    },
+  }));
+  await consolePage.route(`**/${entrance}/api/v1/nodes`, route => route.fulfill({ json: firewallNodes }));
+  await consolePage.route(`**/${entrance}/api/v1/peer-addresses`, route => route.fulfill({ json: { version: 7, addresses: ['203.0.113.9'] } }));
+  await consolePage.route(`**/${entrance}/api/v1/tasks`, route => route.fulfill({ json: firewallTask ? [firewallTask] : [] }));
+  await consolePage.route(`**/${entrance}/api/v1/nodes/firewall-*/actions`, async route => {
+    const action = route.request().postDataJSON().action;
+    const id = `firewall-task-${++firewallTaskNumber}`;
+    let result = {};
+    let status = 'succeeded';
+    let error = null;
+    if (action.type === 'inspect') {
+      result = { collected_at: Math.floor(Date.now() / 1000), firewall: { state: 'ok', data: {
+        backend: 'nftables', fingerprint: 'fixture', policy: firewallPolicy, external_rules: { nft: 'table inet external {}' },
+        listeners: 'tcp LISTEN 0 128 0.0.0.0:22', maintenance_services: ['nftables.service'], docker_forwarding: '已读取 Docker 转发链',
+      } } };
+    } else if (action.type === 'firewall_plan' && action.operation.type === 'default_policy') {
+      status = 'failed'; error = '旧计划已失效，请重新盘点';
+    } else if (action.type === 'firewall_plan') {
+      const after = { ...firewallPolicy, rules: [action.operation.rule] };
+      result = { plan_id: 'fixture-plan', expires: Math.floor(Date.now() / 1000) + 300, before: firewallPolicy, after, requires_witness: action.operation.rule.action !== 'accept', rollback_seconds: 120, external_rules_preserved: true };
+    } else if (action.type === 'firewall_apply') {
+      result = { operation_id: 'fixture-operation', state: 'succeeded', peer_version: 7 };
+    }
+    firewallTask = { id, node_id: route.request().url().includes('firewall-two') ? 'firewall-two' : 'firewall-one', action, created_at: Math.floor(Date.now() / 1000), updated_at: Math.floor(Date.now() / 1000), digest: 'fixture', key: `fixture-${id}`, status, result, error };
+    await route.fulfill({ json: { task_id: id } });
+  });
+  await consolePage.getByRole('button', { name: '防火墙', exact: true }).click();
+  await expect(consolePage.getByText('自动节点互通', { exact: true })).toBeVisible();
+  await expect(consolePage.getByText('203.0.113.9', { exact: false }).first()).toBeVisible();
+  await consolePage.locator('.fw-node select').selectOption('firewall-two');
+  await consolePage.getByRole('button', { name: '新增规则', exact: true }).click();
+  await consolePage.getByLabel('规则编号').fill('allow-https');
+  await consolePage.getByLabel('端口').fill('443');
+  await consolePage.getByLabel('动作').selectOption('drop');
+  await consolePage.getByRole('button', { name: '生成规则计划', exact: true }).click();
+  await expect(consolePage.getByRole('heading', { name: '计划差异' })).toBeVisible();
+  await expect(consolePage.getByText('外部规则：保留', { exact: true })).toBeVisible();
+  await consolePage.getByLabel('在线见证节点').selectOption('firewall-one');
+  await consolePage.getByRole('button', { name: '应用计划', exact: true }).click();
+  await expect(consolePage.getByRole('status')).toContainText('fixture-operation');
+  await consolePage.locator('.fw-default-direction select').selectOption('output');
+  await consolePage.locator('.fw-defaults select').nth(1).selectOption('drop');
+  await consolePage.locator('.fw-heading').filter({ hasText: '默认策略' }).getByRole('button', { name: '生成计划', exact: true }).click();
+  await expect(consolePage.getByRole('alert')).toContainText('旧计划已失效');
+  await consolePage.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await consolePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), '防火墙页窄屏不应出现横向溢出');
+  await consolePage.unroute(`**/${entrance}/api/v1/nodes`);
+  await consolePage.unroute(`**/${entrance}/api/v1/peer-addresses`);
+  await consolePage.unroute(`**/${entrance}/api/v1/tasks`);
+  await consolePage.unroute(`**/${entrance}/api/v1/nodes/firewall-*/actions`);
   await consolePage.setViewportSize({ width: 390, height: 844 });
   for (const label of Object.values(modules)) {
     await consolePage.getByRole('button', { name: '打开导航', exact: true }).click();

@@ -87,13 +87,19 @@ mod tests {
             ca_pem: "公共证书\n第二行",
             fingerprint: "指纹",
             mode: &AgentInstallMode::Host,
-            hub: "https://localhost:65535",
+            hub: "https://localhost:8443",
             agent_url: "wss://localhost:8444/agent",
             agent_image: "ghcr.io/opsd-labs/opsd-agent:main",
         };
         assert!(render_release(input(), "main").is_none());
         let package = render_release(input(), &format!("agent-{}", "a".repeat(40))).unwrap();
         assert!(package.script.contains("token='一次性'\\''令牌'"));
+        assert!(package.script.contains("hub='https://localhost:8443'"));
+        assert!(
+            package
+                .script
+                .contains("agent_url='wss://localhost:8444/agent'")
+        );
         assert!(package.script.contains("ca_pem='公共证书\n第二行'"));
         assert!(!package.script.contains("__OPSD_INSTALL_CONFIG__"));
         assert!(

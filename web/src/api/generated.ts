@@ -3999,6 +3999,11 @@ export interface components {
             expires_at: number;
             /** @constant */
             expires_in: 600;
+            /**
+             * Format: uri
+             * @description 新节点安装及注册使用的 Hub HTTPS 地址。
+             */
+            hub: string;
             install_mode: components["schemas"]["AgentInstallMode"];
             /** @description 仅本次返回的专属安装信息；开发构建缺少固定发行版本或 Docker 固定摘要时为 null。 */
             installation: components["schemas"]["AgentInstallation"] | null;

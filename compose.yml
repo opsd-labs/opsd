@@ -11,6 +11,9 @@ services:
     restart: unless-stopped
     environment:
       OPSD_ORIGIN: ${OPSD_ORIGIN:-https://localhost:${OPSD_CONSOLE_PORT:-65535}}
+      OPSD_AGENT_ORIGIN: ${OPSD_AGENT_ORIGIN:-}
+      OPSD_ENROLLMENT_ORIGIN: ${OPSD_ENROLLMENT_ORIGIN:-}
+      OPSD_ENROLLMENT_BIND: ${OPSD_ENROLLMENT_BIND:-0.0.0.0:8443}
       OPSD_AGENT_IMAGE: ${OPSD_AGENT_IMAGE:-}
       # 独立 MariaDB 使用 mysql:// 格式，凭据通过部署环境注入。
       # OPSD_DATABASE_URL: ${OPSD_DATABASE_URL}
@@ -18,6 +21,7 @@ services:
       # 控制台端口。安全入口不受端口影响，端口号本身不是安全措施。
       - "${OPSD_CONSOLE_BIND:-127.0.0.1}:${OPSD_CONSOLE_PORT:-65535}:65535"
       - "${OPSD_AGENT_BIND:-0.0.0.0}:${OPSD_AGENT_PORT:-8444}:8444"
+      - "${OPSD_ENROLLMENT_BIND:-0.0.0.0}:${OPSD_ENROLLMENT_PORT:-8443}:8443"
     volumes:
       - ./data:/var/lib/opsd
     read_only: true

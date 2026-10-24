@@ -240,6 +240,25 @@ fn agent_url(origin: &str) -> String {
         .unwrap_or_else(|| "wss://localhost:8444/agent".into())
 }
 
+#[cfg(test)]
+mod origin_tests {
+    use super::{agent_url, earliest_valid_expiry};
+
+    #[test]
+    fn Agent地址使用配置的主机并固定端口与路径() {
+        assert_eq!(
+            agent_url("https://hub.example.com:65535/console/"),
+            "wss://hub.example.com:8444/agent"
+        );
+    }
+
+    #[test]
+    fn 只为尚未过期的注册令牌安排关闭时刻() {
+        assert_eq!(earliest_valid_expiry([50, 100, 1000], 100), Some(1000));
+        assert_eq!(earliest_valid_expiry([1, 2], 2), None);
+    }
+}
+
 fn agent_image() -> String {
     ["OPSD_AGENT_IMAGE", "OPSD_BUNDLED_AGENT_IMAGE"]
         .into_iter()
@@ -272,9 +291,10 @@ pub async fn token(
         },
     )
     .await?;
+    s.enrollment_changed.send_replace(());
     let ca_pem = std::fs::read_to_string(s.dir.join("pki/ca.pem")).map_err(anyhow::Error::from)?;
     let ca_fingerprint = pki::cert_fingerprint(&ca_pem)?;
-    let agent_url = agent_url(&s.origin);
+    let agent_url = agent_url(&s.agent_origin);
     let agent_image = agent_image();
     let installation = installation::render(installation::Input {
         node_id: &node_id,
@@ -283,7 +303,7 @@ pub async fn token(
         ca_pem: &ca_pem,
         fingerprint: &ca_fingerprint,
         mode: &r.install_mode,
-        hub: &s.origin,
+        hub: &s.enrollment_origin,
         agent_url: &agent_url,
         agent_image: &agent_image,
     });
@@ -298,6 +318,7 @@ pub async fn token(
             "ca_fingerprint": ca_fingerprint,
             "install_mode": r.install_mode,
             "agent_url": agent_url,
+            "hub": s.enrollment_origin,
             "agent_image": agent_image,
             "installation": installation,
         })),
@@ -315,6 +336,20 @@ pub struct EnrollmentSummary {
     status: String,
     created_at: i64,
     expires_at: i64,
+}
+
+pub async fn next_enrollment_expiry(s: &State) -> anyhow::Result<Option<i64>> {
+    Ok(earliest_valid_expiry(
+        s.db.list::<Enrollment>("enrollment")
+            .await?
+            .into_iter()
+            .map(|enrollment| enrollment.expires),
+        now(),
+    ))
+}
+
+fn earliest_valid_expiry(expires: impl IntoIterator<Item = i64>, at: i64) -> Option<i64> {
+    expires.into_iter().filter(|expires| *expires > at).min()
 }
 
 pub async fn enrollments(S(s): S<State>) -> ApiResult<Json<Vec<EnrollmentSummary>>> {
@@ -364,6 +399,7 @@ pub async fn revoke_enrollment(
         return Err(bad("pending enrollment not found"));
     };
     s.db.delete("enrollment", &key).await?;
+    s.enrollment_changed.send_replace(());
     let _ = s.events.send(json!({"type":"enrollment"}));
     Ok(Json(json!({"ok":true})))
 }
@@ -434,6 +470,7 @@ pub async fn enroll(
     ];
     s.db.commit_enrollment("enrollment", &token_key, &records, &task)
         .await?;
+    s.enrollment_changed.send_replace(());
     if let Err(error) = synchronize_peers(&s).await {
         tracing::warn!(%error, "节点接入后同步对端地址失败");
     }

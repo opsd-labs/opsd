@@ -21,9 +21,9 @@ const initOutput=await command('opsd-hub',['--data-dir',hubDir,'init','--passwor
 // 安全入口由初始化生成并打印，控制台只响应带入口的地址。
 const entrance=initOutput.match(/控制台安全入口：([A-Za-z0-9\-._~]{16})/)?.[1];
 assert.ok(entrance,'初始化输出中应包含 16 位安全入口');
-const ca=await readFile(path.join(hubDir,'pki','ca.pem'));let cookie='',csrf='';let base=19043,healthPort=19534;
+const ca=await readFile(path.join(hubDir,'pki','ca.pem'));let cookie='',csrf='';let base=19043,enrollmentPort=19443,healthPort=19534;
 /** 不带安全入口的根路径请求：用于验证门禁丢弃，以及 Agent 豁免与分享面。 */
-function ungated(route,method='GET',body,options={}){return new Promise(resolve=>{const data=body===undefined?undefined:JSON.stringify(body);const req=https.request({hostname:'localhost',port:base,path:route,method,ca,headers:{Origin:`https://localhost:${base}`,...(data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{}),...(options.headers||{})}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,headers:res.headers});});});req.on('error',e=>resolve({error:e.code||e.message}));req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));if(data)req.write(data);req.end();});}
+function ungated(route,method='GET',body,options={}){return new Promise(resolve=>{const data=body===undefined?undefined:JSON.stringify(body);const req=https.request({hostname:'localhost',port:options.port??base,path:route,method,ca,headers:{Origin:`https://localhost:${base}`,...(data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{}),...(options.headers||{})}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,data:value,headers:res.headers});});});req.on('error',e=>resolve({error:e.code||e.message}));req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));if(data)req.write(data);req.end();});}
 /** 明文回环健康检查，不经安全入口。 */
 function health(){return new Promise(resolve=>{const req=http.request({hostname:'127.0.0.1',port:healthPort,path:'/api/v1/health'},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>resolve({status:res.statusCode,text}));});req.on('error',e=>resolve({error:e.code||e.message}));req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));req.end();});}
 const contract=await loadContract(path.join(root,'docs','api','openapi.yaml'));
@@ -49,7 +49,7 @@ let hub,agent,etFixture;let portainerOwned=false;let fixtureOwned=false;let etWe
 function launch(name,args){const c=spawn(exe(name),args,{cwd:root,windowsHide:true});c.stdout.on('data',b=>logs.push(b.toString()));c.stderr.on('data',b=>logs.push(b.toString()));return c;}
 async function wait(fn,label,attempts=80){for(let i=0;i<attempts;i++){try{if(await fn())return}catch{}await new Promise(r=>setTimeout(r,200));}throw new Error(`${label} 超时\n${logs.join('').slice(-4000)}`);}
 async function stop(c){if(!c||c.exitCode!==null)return;const done=new Promise(r=>c.on('exit',r));c.kill();await done;}
-const serveArgs=dir=>['--data-dir',dir,'serve','--listen',`127.0.0.1:${base}`,'--agent-listen',overlayAddress+':19444','--health-listen',`127.0.0.1:${healthPort}`,'--origin',`https://localhost:${base}`];
+const serveArgs=dir=>['--data-dir',dir,'serve','--listen',`127.0.0.1:${base}`,'--agent-listen',overlayAddress+':19444','--enrollment-listen',`127.0.0.1:${enrollmentPort}`,'--health-listen',`127.0.0.1:${healthPort}`,'--origin',`https://localhost:${base}`,'--enrollment-origin',`https://localhost:${enrollmentPort}`];
 async function ownStatus(withIdentity=true){
  const identity=withIdentity?{cert:await readFile(path.join(agentDir,'client.pem')),key:await readFile(path.join(agentDir,'client-key.pem'))}:{};
  return new Promise(resolve=>{const req=https.request({hostname:'localhost',port:19444,path:'/status',ca,...identity},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>resolve({status:res.statusCode,data:JSON.parse(text)}));});req.on('error',e=>resolve({error:e.code||e.message}));req.setTimeout(5000,()=>req.destroy(new Error('请求超时')));req.end();});
@@ -108,17 +108,30 @@ try{
  const unknownField=await request('/auth/login','POST',{password,nope:1});
  assertHttpResponse(unknownField,{status:422,route:'/api/v1/auth/login',method:'post',kind:'plain',schema:responseSchema('/api/v1/auth/login','post',422,'text/plain'),contentType:'text/plain'});
  assert.equal((await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],ssh_port:22},{headers:{'X-CSRF-Token':'wrong'}})).status,403);
- const registration=await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],overlay_address:null,ssh_port:22});assert.equal(registration.status,200);
+ let registration=await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],overlay_address:null,ssh_port:22});assert.equal(registration.status,200);
  assertSchema(registration.data,responseSchema('/api/v1/enrollment-tokens','post',200));
+ assert.equal(registration.data.hub, `https://localhost:${enrollmentPort}`);
  assert.equal(registration.headers['cache-control'],'no-store');
  assert.equal(registration.data.installation,null,'未配置发行元数据的开发构建不生成安装信息');
  const pending=await request('/enrollment-tokens');assert.equal(pending.status,200);assert.equal(pending.data.some(e=>e.node_id===registration.data.node_id&&e.status==='pending'),true);assert.equal(JSON.stringify(pending.data).includes(registration.data.token),false);
+ await wait(async()=> (await ungated('/api/v1/enroll','POST',{token:'invalid',csr:'invalid'},{port:enrollmentPort})).status===401,'临时注册入口开放');
+ assert.equal((await ungated('/api/v1/auth/login','POST',{password},{port:enrollmentPort})).status,404,'临时入口不得提供其他 API');
+ assert.equal((await ungated('/api/v1/enroll','POST',{token:'invalid',csr:'invalid'})).status,undefined,'控制台入口不得提供 Agent 注册');
+ await stop(hub);hub=launch('opsd-hub',serveArgs(hubDir));await wait(async()=> (await health()).status===200,'重启后恢复临时注册入口');
+ await wait(async()=> (await ungated('/api/v1/enroll','POST',{token:'invalid',csr:'invalid'},{port:enrollmentPort})).status===401,'重启后仍接受待注册令牌');
+ const extra=await request('/enrollment-tokens','POST',{name:'撤销测试节点',public_addresses:[],overlay_address:null,ssh_port:22});assert.equal(extra.status,200);
+ assert.equal((await request(`/enrollment-tokens/${extra.data.node_id}`,'DELETE')).status,200);
+ await wait(async()=> (await ungated('/api/v1/enroll','POST',{token:'invalid',csr:'invalid'},{port:enrollmentPort})).status===401,'撤销一枚令牌后保留其他有效令牌的入口');
+ assert.equal((await request(`/enrollment-tokens/${registration.data.node_id}`,'DELETE')).status,200);
+ await wait(async()=> (await ungated('/api/v1/enroll','POST',{token:'invalid',csr:'invalid'},{port:enrollmentPort})).status===undefined,'撤销最后一枚有效令牌后关闭注册入口');
+ registration=await request('/enrollment-tokens','POST',{name:'测试节点',public_addresses:[],overlay_address:null,ssh_port:22});assert.equal(registration.status,200);
+ await wait(async()=> (await ungated('/api/v1/enroll','POST',{token:'invalid',csr:'invalid'},{port:enrollmentPort})).status===401,'重新创建令牌后开放注册入口');
  const tokenFile=path.join(run,'token');await writeFile(tokenFile,registration.data.token,{mode:0o600});
- await command('opsd-agent',['--data-dir',agentDir,'enroll','--hub',`https://localhost:${base}`,'--agent-url','wss://localhost:19444/agent','--ca',path.join(hubDir,'pki','ca.pem'),'--fingerprint',registration.data.ca_fingerprint,'--token-file',tokenFile]);
+ const available=await ungated('/api/v1/enroll','POST',{token:'invalid',csr:'invalid'},{port:enrollmentPort});assert.equal(available.status,401,'令牌有效时临时注册入口应只提供注册端点');
+ await command('opsd-agent',['--data-dir',agentDir,'enroll','--hub',registration.data.hub,'--agent-url','wss://localhost:19444/agent','--ca',path.join(hubDir,'pki','ca.pem'),'--fingerprint',registration.data.ca_fingerprint,'--token-file',tokenFile]);
  const afterEnroll=await request('/enrollment-tokens');assert.equal(afterEnroll.data.some(e=>e.node_id===registration.data.node_id),false);
- // Agent 豁免路径挂在入口之外，仍然受一次性令牌保护：无效 CSR 必须被拒绝。
- const badEnroll=await ungated('/api/v1/enroll','POST',{token:registration.data.token,csr:'invalid'});
- assert.equal(badEnroll.status,401,`无效 CSR 应被拒绝，实际 ${badEnroll.status}`);
+ // 临时注册入口在消费凭据后关闭，不再对无效 CSR 作出响应。
+ await wait(async()=> (await ungated('/api/v1/enroll','POST',{token:registration.data.token,csr:'invalid'},{port:enrollmentPort})).status===undefined,'令牌消费后关闭临时注册入口');
  const oldCertificate=await readFile(path.join(agentDir,'client.pem'),'utf8');
  await command('opsd-agent',['--data-dir',agentDir,'renew-certificate']);
  assert.notEqual(await readFile(path.join(agentDir,'client.pem'),'utf8'),oldCertificate);

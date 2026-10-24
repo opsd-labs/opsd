@@ -197,6 +197,35 @@ fn strip_counters(v: &mut Value) {
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 仅会改变已有连接可达性的计划需要见证() {
+        let before = Policy::default();
+        let mut allow_rule = before.clone();
+        allow_rule.rules.push(Rule {
+            id: "allow-https".into(),
+            family: 4,
+            direction: "input".into(),
+            protocol: "tcp".into(),
+            source: None,
+            destination: None,
+            ports: vec![443],
+            action: "accept".into(),
+            enabled: true,
+        });
+        assert!(!requires_witness(&before, &allow_rule));
+
+        let mut restrictive = before.clone();
+        restrictive.input_policy = "drop".into();
+        assert!(requires_witness(&before, &restrictive));
+        assert!(requires_witness(&allow_rule, &before));
+    }
+}
+
 pub async fn inspect(ctx: &ContextState) -> Result<Value> {
     let (backend, raw) = detect().await?;
     let policy = ctx
@@ -313,9 +342,25 @@ pub async fn plan(ctx: &ContextState, operation: &Value) -> Result<Value> {
         operation: operation.clone(),
     };
     ctx.db.insert("firewall_plans", &p.id, &p).await?;
+    let requires_witness = requires_witness(&p.before, &p.after);
     Ok(
-        json!({"plan_id":p.id,"expires":p.expires,"before":p.before,"after":p.after,"requires_witness":true,"rollback_seconds":120,"external_rules_preserved":true}),
+        json!({"plan_id":p.id,"expires":p.expires,"before":p.before,"after":p.after,"requires_witness":requires_witness,"rollback_seconds":120,"external_rules_preserved":true}),
     )
+}
+fn requires_witness(before: &Policy, after: &Policy) -> bool {
+    after.input_policy == "drop"
+        || after.output_policy == "drop"
+        || after.forward_policy == "drop"
+        || after
+            .rules
+            .iter()
+            .any(|rule| rule.enabled && rule.action != "accept")
+        || before.rules.iter().any(|rule| !after.rules.contains(rule))
+        || before
+            .peers
+            .addresses
+            .iter()
+            .any(|address| !after.peers.addresses.contains(address))
 }
 fn validate_backend(p: &Policy, raw: &BTreeMap<String, String>) -> Result<()> {
     anyhow::ensure!(p.rules.len() <= 512, "受管规则超过首版上限");
@@ -351,19 +396,7 @@ pub async fn apply(ctx: &ContextState, plan_id: &str, witness: Option<&str>) -> 
     );
     let (_, raw) = detect().await?;
     anyhow::ensure!(p.base == fingerprint(&raw), "规则已变化，请重新生成计划");
-    let requires_witness = p.after.input_policy == "drop"
-        || p.after.output_policy == "drop"
-        || p.after.forward_policy == "drop"
-        || p.after
-            .rules
-            .iter()
-            .any(|r| r.enabled && r.action != "accept")
-        || p.before.rules.iter().any(|r| !p.after.rules.contains(r))
-        || p.before
-            .peers
-            .addresses
-            .iter()
-            .any(|ip| !p.after.peers.addresses.contains(ip));
+    let requires_witness = requires_witness(&p.before, &p.after);
     anyhow::ensure!(
         Path::new("/run/systemd/system").exists(),
         "独立 systemd 回滚不可用"
