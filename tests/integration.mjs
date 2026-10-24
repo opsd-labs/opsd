@@ -292,8 +292,6 @@ try{
   const existingName='opsd-integration-existing';
   await command('docker',['run','-d','--name',existingName,'--label','io.opsd.integration=true','alpine:3.22','sh','-c','echo opsd-existing; sleep 1200']);fixtureOwned=true;
   const before=JSON.parse(await command('docker',['inspect',existingName]))[0];
-  assert.equal((await upload('/'+entrance+'/api/v1/plugins/package',await readFile(path.join(root,'.release/plugins/docker-0.2.0.zip')))).status,200);
-  assert.equal((await request('/plugins/docker/selection','PUT',{version:'0.2.0',enabled:true})).status,200);
   assert.equal((await request('/plugins/docker/configuration','PUT',{config:{},secrets:{admin_password:randomBytes(18).toString('hex'),agent_secret:randomBytes(18).toString('hex')}})).status,200);
   assert.equal((await request('/network','PUT',{node_id:node})).status,200);
   async function dockerJob(path,input){

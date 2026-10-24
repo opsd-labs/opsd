@@ -102,11 +102,10 @@ jobs:
           pattern: plugin-binaries-*
           path: .release/plugin-binaries
           merge-multiple: true
-      - name: 准备页面依赖与独立发行包
+      - name: 准备独立后端发行包
         env:
           PLUGIN_ID: ${{ inputs.plugin_id }}
         run: |
-          npm ci --prefix web
           for plugin in et docker silo; do
             if [ "$PLUGIN_ID" = all ] || [ "$PLUGIN_ID" = "$plugin" ]; then node tools/package-plugin.mjs "$plugin"; fi
           done
@@ -123,7 +122,7 @@ jobs:
               echo "插件 $plugin $version 已发行，请提升版本后发布。" >&2
               exit 1
             fi
-            gh release create "$tag" ".release/plugins/$plugin-$version.zip" --target "$GITHUB_SHA" --title "$plugin $version" --notes "独立插件包，包含 Linux x64、ARM64 程序、业务契约和页面资源。"
+            gh release create "$tag" ".release/plugins/$plugin-$version.zip" --target "$GITHUB_SHA" --title "$plugin $version" --notes "独立后端模块包，包含 Linux x64、ARM64 程序与业务契约。业务页面随内置控制台发布。"
           done
 
   agent:
