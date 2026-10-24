@@ -227,6 +227,8 @@ async fn handle(request: Request) -> Result<Response> {
     }
     *CONTEXT.get_or_init(Default::default).lock().await = Some(context.clone());
     if request.method == "INIT" {
+        // 保存连接信息后立即重新读取，避免旧账号的缓存掩盖认证失败。
+        CACHE.get_or_init(Default::default).lock().await.clear();
         PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
         return Ok(Response::ok(json!({})));
     }

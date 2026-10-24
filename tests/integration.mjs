@@ -259,6 +259,9 @@ try{
  const configuredPlugin=await request('/plugins/et/configuration');
  assert.deepEqual(configuredPlugin.data.secret_names,['password']);assert.ok(!JSON.stringify(configuredPlugin.data).includes(etPassword));
  const machineList=await request('/plugins/et/api/machines');assert.equal(machineList.status,200);assert.ok(!JSON.stringify(machineList.data).includes(etPassword));
+ assert.equal((await request('/plugins/et/configuration','PUT',{config:{url:etUrl,username:'fixture'},secrets:{password:'wrong-password'}})).status,200);
+ assert.equal((await request('/plugins/et/api/setup')).data.state,'unavailable','修改凭据后不能用旧缓存把认证失败显示为就绪');
+ assert.equal((await request('/plugins/et/configuration','PUT',{config:{url:etUrl,username:'fixture'},secrets:{password:etPassword}})).status,200);
  const binding=await request('/plugins/et/api/bind','POST',{machine_id:machineId,instance_id:instanceId,node_id:node,idempotency_key:'bind-fixture'});assert.equal(binding.status,202);
  await wait(async()=> (await request('/tasks/'+binding.data.task_id)).data.status==='succeeded','ET 实例经实际接口与节点网卡核对后关联');
  await wait(async()=> (await request('/network')).data.nodes[0].connections.paths.every(path=>path.connected),'同一节点的公网与 ET 控制连接并存');

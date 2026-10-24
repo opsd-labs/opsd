@@ -196,6 +196,7 @@ jobs:
         if: ${{ !contains(inputs.reuse_passed, 'negative') }}
         run: node tests/negative-gates.mjs
       - name: 控制台与业务页面浏览器验收
+        if: ${{ !contains(inputs.reuse_passed, 'console-browser') }}
         run: node tests/console-e2e.mjs
 
   docker-smoke:

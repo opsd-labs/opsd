@@ -4,10 +4,11 @@ use opsd_plugin_sdk::{self as sdk, Request};
 use serde_json::{Value, json};
 use std::path::Path;
 
-const IMAGE: &str = "easytier/easytier:2.6.4";
+const IMAGE: &str = "easytier/easytier:v2.6.4";
 
 async fn docker(args: &[String]) -> Result<String> {
     sdk::command("docker", args, &[], None, 600).await
+        .map_err(|error| anyhow::anyhow!("网络模块执行 Docker {} 失败：{error}", args.first().map(String::as_str).unwrap_or("未知操作")))
 }
 
 fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str> {
