@@ -156,7 +156,7 @@ async fn isolated_tcp_network_policy() -> Result<()> {
         )?;
         return Ok(());
     }
-    command(
+    let output = command(
         "/usr/bin/python3",
         &[
             "tests/firewall-netns.py",
@@ -167,6 +167,7 @@ async fn isolated_tcp_network_policy() -> Result<()> {
         600,
     )
     .await?;
+    println!("{output}");
     Ok(())
 }
 pub async fn iptables_policy(ctx: &ContextState, p: &Policy) -> Result<()> {

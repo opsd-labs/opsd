@@ -52,7 +52,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nftables iptables ufw firewalld dbus iproute2
-          sudo env "PATH=$PATH" "CARGO_HOME=$CARGO_HOME" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN=1.95.0 OPSD_LAB=1 cargo test --locked --bin opsd-agent isolated_tcp_network_policy -- --ignored --nocapture
+          backend=''
+          if [ "${{ contains(inputs.reuse_passed, 'acl-common') }}" = true ]; then backend=firewalld; fi
+          sudo env "PATH=$PATH" "CARGO_HOME=$CARGO_HOME" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" "OPSD_NETWORK_BACKEND=$backend" RUSTUP_TOOLCHAIN=1.95.0 OPSD_LAB=1 cargo test --locked --bin opsd-agent isolated_tcp_network_policy -- --ignored --nocapture
 
   web-contract:
     name: Web 与契约

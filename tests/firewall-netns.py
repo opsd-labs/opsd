@@ -54,7 +54,12 @@ with tempfile.TemporaryDirectory(prefix="opsd-network-") as temporary:
     defaults=directory/"ufw-default"
     shutil.copyfile("/etc/default/ufw",defaults)
     run("mount","--bind",str(defaults),"/etc/default/ufw")
-    for backend in ["nftables","iptables","ufw","firewalld"]:
+    backends=["nftables","iptables","ufw","firewalld"]
+    selected=os.environ.get("OPSD_NETWORK_BACKEND")
+    if selected:
+        if selected not in backends:raise ValueError("未知的隔离后端")
+        backends=[selected]
+    for backend in backends:
         prefix="opsd-"+uuid.uuid4().hex[:8]
         target,peer,sink=[prefix+s for s in ["t","p","s"]]
         created=[]; processes=[]; env=dict(os.environ,LC_ALL="C",OPSD_AGENT_MODE="host",DBUS_SYSTEM_BUS_ADDRESS="unix:path="+str(directory/"no-host-bus"))

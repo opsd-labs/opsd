@@ -143,9 +143,44 @@ async fn prepare(allow_install: bool) -> Result<()> {
             } else {
                 "docker-compose"
             };
+            // 只补 Compose；包管理器若计划改动已有 Engine 或其运行时，就停止。
+            let changes = sdk::command(
+                "apt-get",
+                &sdk::strings(&["--simulate", "--no-remove", "install", package]),
+                &[("LC_ALL".into(), "C".into())],
+                None,
+                60,
+            )
+            .await?;
+            ensure!(
+                !changes
+                    .lines()
+                    .filter(|line| line.starts_with("Inst ") || line.starts_with("Remv "))
+                    .any(|line| {
+                        line.split_whitespace().nth(1).is_some_and(|name| {
+                            [
+                                "docker.io",
+                                "docker-ce",
+                                "docker-ce-cli",
+                                "containerd",
+                                "containerd.io",
+                                "moby-engine",
+                                "moby-cli",
+                            ]
+                            .contains(&name.split(':').next().unwrap_or(name))
+                        })
+                    }),
+                "安装 Compose 需要改动已有 Docker 组件，请手动处理后重试"
+            );
             sdk::command(
                 "apt-get",
-                &sdk::strings(&["install", "-y", "--no-install-recommends", package]),
+                &sdk::strings(&[
+                    "install",
+                    "-y",
+                    "--no-install-recommends",
+                    "--no-remove",
+                    package,
+                ]),
                 &[("DEBIAN_FRONTEND".into(), "noninteractive".into())],
                 None,
                 300,
@@ -154,7 +189,7 @@ async fn prepare(allow_install: bool) -> Result<()> {
         } else {
             sdk::command(
                 "dnf",
-                &sdk::strings(&["install", "-y", "docker-compose-plugin"]),
+                &sdk::strings(&["install", "-y", "--exclude=docker-ce,docker-ce-cli,docker.io,containerd.io,moby-engine,moby-cli", "docker-compose-plugin"]),
                 &[],
                 None,
                 300,

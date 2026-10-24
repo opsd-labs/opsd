@@ -391,7 +391,7 @@ pub async fn configure(
         None,
     )
     .await?;
-    configuration(S(s), Path(plugin)).await
+    configuration(S(s.clone()), Path(plugin)).await
 }
 
 async fn runtime(s: &State, record: &Installed) -> ApiResult<PathBuf> {
